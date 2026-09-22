@@ -307,7 +307,7 @@ internal fun ComposerAttachmentAction(
     onDismiss: () -> Unit,
     onPickImage: (() -> Unit)?,
     onPickVideo: (() -> Unit)?,
-    onCaptureVideo: (() -> Unit)? = null,
+    onCapture: (() -> Unit)? = null,
     onPickFile: (() -> Unit)?,
     onPasteAsset: (() -> Boolean)?,
     compact: Boolean = false,
@@ -338,7 +338,7 @@ internal fun ComposerAttachmentAction(
                         pick()
                     }
                 },
-                onCaptureVideo = onCaptureVideo?.let { capture ->
+                onCapture = onCapture?.let { capture ->
                     {
                         onDismiss()
                         capture()

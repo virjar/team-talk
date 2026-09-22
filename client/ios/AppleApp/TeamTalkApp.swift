@@ -47,7 +47,38 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
                 DispatchQueue.main.async { application.registerForRemoteNotifications() }
             }
         }
+        registerChatCameraBridge()
         return true
+    }
+
+    /// 应用内相机桥：Kotlin 触发呈现，三个回调恰好其一被调用（nil 取消走 onCancel）。
+    private func registerChatCameraBridge() {
+        IosApplicationRuntime.shared.openChatCamera = { onImage, onVideo, onCancel in
+            let controller = IosChatCameraController()
+            controller.onResult = { url, isImage in
+                if let url {
+                    if isImage { onImage(url.path) } else { onVideo(url.path) }
+                } else {
+                    onCancel()
+                }
+            }
+            Self.topmostViewController()?.present(controller, animated: true)
+        }
+        IosApplicationRuntime.shared.dismissChatCamera = {
+            if let camera = Self.topmostViewController() as? IosChatCameraController {
+                camera.dismiss(animated: true)
+            }
+        }
+    }
+
+    private static func topmostViewController() -> UIViewController? {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive } ?? UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }.first
+        var controller = scene?.keyWindow?.rootViewController
+        while let presented = controller?.presentedViewController { controller = presented }
+        return controller
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {

@@ -14,6 +14,8 @@ import platform.darwin.NSObject
 internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCloseable {
     private var pickerDelegate: NSObject? = null
     private var presented: UIViewController? = null
+    private var cameraResultHandler: ((EmbeddedAssetLocalSelection) -> Unit)? = null
+    private var cameraPresented = false
     private var exportLease: IosMediaLease? = null
     private var preview: UIDocumentInteractionController? = null
     private var previewDelegate: NSObject? = null
@@ -22,8 +24,47 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
     private var closed = false
     private val temporary = resources.stagingDirectory
 
-    private fun canPresent(): Boolean = !closed && resources.canDeliverUiResult() &&
+    private fun canPresent(): Boolean = !closed && !cameraPresented && resources.canDeliverUiResult() &&
         presented == null && preview == null && preparingExport == null
+
+    /**
+     * 应用内相机：点按拍照/长按录像，物理方向判定与震动在 Swift 控制器内完成。
+     * 结果复用选择器管线：照片进嵌入资产导入（与相册选图同链路），视频按文件发送。
+     */
+    fun capture(selected: (EmbeddedAssetLocalSelection) -> Unit) {
+        if (!canPresent()) return
+        cameraResultHandler = selected
+        cameraPresented = true
+        IosApplicationRuntime.openChatCamera(
+            { path -> deliverCameraResult(path, isImage = true) },
+            { path -> deliverCameraResult(path, isImage = false) },
+            {
+                cameraPresented = false
+                cameraResultHandler = null
+            },
+        )
+    }
+
+    private fun deliverCameraResult(path: String, isImage: Boolean) {
+        cameraPresented = false
+        val handler = cameraResultHandler
+        cameraResultHandler = null
+        if (handler == null) return
+        val file = PlatformFile(path)
+        if (!file.exists()) return
+        val name = if (isImage) "拍摄照片.jpg" else "拍摄视频.mp4"
+        handler(
+            EmbeddedAssetLocalSelection(
+                localReference = path,
+                displayName = name,
+                contentType = iosContentType(name),
+                size = file.length(),
+                presentation = if (isImage) EmbeddedAssetPresentation.IMAGE else EmbeddedAssetPresentation.FILE,
+                source = EmbeddedAssetImportSource.IOS_PICKER,
+                deleteAfterImport = true,
+            ),
+        )
+    }
 
     fun select(presentation: EmbeddedAssetPresentation, selected: (EmbeddedAssetLocalSelection) -> Unit) {
         if (!canPresent()) return

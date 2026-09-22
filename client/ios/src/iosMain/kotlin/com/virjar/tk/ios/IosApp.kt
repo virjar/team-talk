@@ -32,6 +32,19 @@ internal data class IosPushToken(val token: String, val environment: String)
 /** Swift delegates application events only; authenticated business ownership stays in Kotlin. */
 object IosApplicationRuntime {
     internal var rootViewController: UIViewController? = null
+
+    /**
+     * 应用内相机桥：Swift 壳启动时注册（AppleApp/IosChatCameraController.swift），
+     * Kotlin 只触发呈现。三个回调恰好其一被调用：onImage/onVideo 携带沙箱临时文件路径，
+     * onCancel 表示取消或失败。public 是 Kotlin/Swift 边界的需要，聊天 UI 之外不得依赖。
+     */
+    public var openChatCamera: (
+        onImage: (String) -> Unit,
+        onVideo: (String) -> Unit,
+        onCancel: () -> Unit,
+    ) -> Unit = { _, _, _ -> }
+    public var dismissChatCamera: (() -> Unit)? = null
+
     internal val foreground = MutableStateFlow(false)
     internal val pushToken = MutableStateFlow<IosPushToken?>(null)
     internal val notification = MutableStateFlow<IosNotificationTarget?>(null)

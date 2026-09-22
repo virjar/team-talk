@@ -11,6 +11,12 @@
 			"path" = "AppleApp/TeamTalkApp.swift";
 			"sourceTree" = "<group>";
 		};
+		"7A1C4E5F60B2D8A93C10EE44" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "AppleApp/IosChatCameraController.swift";
+			"sourceTree" = "<group>";
+		};
 		"4B94B1D9760C4B9EE6CB8C9B" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "text.xcconfig";
@@ -40,6 +46,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "FFD29E0FD36301DFFECF36B2";
 		};
+		"8B2D5F6071C3E9BA4D21FF55" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "7A1C4E5F60B2D8A93C10EE44";
+		};
 		"B815E5509DFE6DA611F71AAB" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = "B61BF4D165DAD77953B51ABD";
@@ -60,6 +70,7 @@
 			"isa" = "PBXGroup";
 			"children" = (
 				"FFD29E0FD36301DFFECF36B2",
+				"7A1C4E5F60B2D8A93C10EE44",
 				"B61BF4D165DAD77953B51ABD",
 				"F1F4C7736D9F02A437B028B8",
 				"4B94B1D9760C4B9EE6CB8C9B",
@@ -87,6 +98,7 @@
 			"buildActionMask" = 2147483647;
 			"files" = (
 				"F0358B13FB28466FB608AC4D",
+				"8B2D5F6071C3E9BA4D21FF55",
 			);
 			"runOnlyForDeploymentPostprocessing" = 0;
 		};

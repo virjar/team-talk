@@ -41,6 +41,8 @@ import com.virjar.tk.app.ui.component.GalleryItem
 import com.virjar.tk.app.ui.component.GalleryMediaType
 import com.virjar.tk.app.ui.component.OfficeRefPickerDialog
 import com.virjar.tk.app.ui.component.PlatformMediaActions
+import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportSource
+import com.virjar.tk.app.ui.bridge.EmbeddedAssetLocalSelection
 import com.virjar.tk.app.ui.component.rememberEmbeddedMediaClickHandler
 import com.virjar.tk.app.ui.component.rememberMediaClickHandler
 import com.virjar.tk.app.ui.screen.ChatPanel
@@ -62,6 +64,7 @@ import com.virjar.tk.app.telemetry.recordingFeedbackCode
 import com.virjar.tk.app.telemetry.uploadFeedbackCode
 import com.virjar.tk.app.viewmodel.ChatViewModel
 import com.virjar.tk.app.viewmodel.MessageFocusTarget
+import kotlinx.coroutines.launch
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -397,6 +400,30 @@ internal fun AndroidChatScreen(
         }
     }
 
+    // ── 应用内相机（点按拍照/长按录像；CameraX 不可用时回落系统相机录制）──
+    val cameraFeedbackScope = rememberCoroutineScope()
+    var chatCameraVisible by remember { mutableStateOf(false) }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            chatCameraVisible = true
+        } else {
+            // 权限拒绝只影响拍摄入口，聊天与其它媒体能力不受影响。
+            cameraFeedbackScope.launch { mediaSnackbar.showSnackbar("未授予相机权限，无法拍摄") }
+        }
+    }
+
+    fun startChatCamera() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            chatCameraVisible = true
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
     fun startVoiceRecording() {
         if (!mediaSession.isCurrentOwner()) return
         if (voiceRecording.isActive) return
@@ -641,7 +668,7 @@ internal fun AndroidChatScreen(
             null
         },
         onPickVideo = videoPicker,
-        onCaptureVideo = { startVideoCapture() },
+        onCapture = { startChatCamera() },
         onVoiceModeEntered = { prepareVoiceMode() },
         onVoiceRecord = { if (it) startVoice() else stopVoice() },
         onVoiceRecordCancel = { cancelVoiceRecording() },
@@ -712,6 +739,42 @@ internal fun AndroidChatScreen(
             telemetry = telemetry,
             onSaveCurrent = { attachment -> fileDownloads.exportToUserLocation(attachment) },
         )
+
+        // 应用内相机与拍摄确认；照片走嵌入资产导入（同相册选图），视频复用既有发送管线。
+        if (chatCameraVisible) {
+            AndroidChatCameraDialog(
+                cacheDirectory = mediaCacheDirectory(context.cacheDir, mediaCacheScope, "captured").apply { mkdirs() },
+                onResult = { result ->
+                    chatCameraVisible = false
+                    when (result) {
+                        is ChatCameraResult.Photo -> embeddedAssetImports.import(
+                            EmbeddedAssetLocalSelection(
+                                localReference = result.file.path,
+                                displayName = "拍摄照片.jpg",
+                                contentType = "image/jpeg",
+                                size = result.file.length(),
+                                presentation = EmbeddedAssetPresentation.IMAGE,
+                                source = EmbeddedAssetImportSource.ANDROID_PICKER,
+                                deleteAfterImport = true,
+                            ),
+                        )
+
+                        is ChatCameraResult.Video -> sendVideoFromUri(ownedFile = result.file) {
+                            androidx.core.content.FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                result.file,
+                            )
+                        }
+                    }
+                },
+                onUnavailable = {
+                    chatCameraVisible = false
+                    startVideoCapture()
+                },
+                onDismiss = { chatCameraVisible = false },
+            )
+        }
     }
 
 }

@@ -13,6 +13,7 @@ import com.virjar.tk.app.navigation.feature.OfficeReferenceKind
 import com.virjar.tk.app.navigation.feature.chat.OutgoingMediaSender
 import com.virjar.tk.app.navigation.feature.chat.UploadedVideoMedia
 import com.virjar.tk.app.ui.bridge.ChatMediaConfig
+import com.virjar.tk.app.ui.bridge.EmbeddedAssetLocalSelection
 import com.virjar.tk.app.ui.component.*
 import com.virjar.tk.app.ui.screen.*
 import com.virjar.tk.app.viewmodel.MessageFocusTarget
@@ -73,24 +74,39 @@ internal fun IosChatScreen(route: IosRoute, ui: IosSessionUi) {
     val onMedia = rememberMediaClickHandler(messages, mediaActions)
     val onEmbedded = rememberEmbeddedMediaClickHandler(messages, mediaActions)
     val sender = remember(data) { OutgoingMediaSender(data.telemetry) }
-    fun selectVideo(camera: Boolean) {
-        ui.native.selectVisual(video = true, camera = camera) { selection ->
-            val job = data.launchCancellableAdmittedUiAction {
-                sender.sendVideo(chatId, data.userSession.uid, viewModel) { progress ->
-                    val result = ui.media.repository.uploadWithMeta(PlatformFile(selection.localReference).asUploadSource(),
-                        selection.displayName, selection.contentType, progress).getOrThrow()
-                    UploadedVideoMedia(result.file, result.durationSec ?: 0, result.width, result.height, result.thumbnail)
-                }
+    fun sendVideoSelection(selection: EmbeddedAssetLocalSelection) {
+        val job = data.launchCancellableAdmittedUiAction {
+            sender.sendVideo(chatId, data.userSession.uid, viewModel) { progress ->
+                val result = ui.media.repository.uploadWithMeta(PlatformFile(selection.localReference).asUploadSource(),
+                    selection.displayName, selection.contentType, progress).getOrThrow()
+                UploadedVideoMedia(result.file, result.durationSec ?: 0, result.width, result.height, result.thumbnail)
             }
-            if (job == null) releaseIosEmbeddedAssetSelection(selection)
-            else job.invokeOnCompletion { releaseIosEmbeddedAssetSelection(selection) }
+        }
+        if (job == null) releaseIosEmbeddedAssetSelection(selection)
+        else job.invokeOnCompletion { releaseIosEmbeddedAssetSelection(selection) }
+    }
+
+    fun selectVideo() {
+        ui.native.selectVisual(video = true, camera = false) { selection ->
+            sendVideoSelection(selection)
+        }
+    }
+
+    /** 应用内相机产物：照片与相册选图同链路导入正文，视频复用既有发送管线。 */
+    fun captureFromCamera() {
+        ui.native.capture { selection ->
+            if (selection.presentation == EmbeddedAssetPresentation.IMAGE) {
+                ui.imports.import(selection)
+            } else {
+                sendVideoSelection(selection)
+            }
         }
     }
     val media = ChatMediaConfig(
         fileDownloads = ui.files,
         imageContent = { attachment, modifier -> IosAttachmentImage(attachment, ui.media, modifier) },
         embeddedAssetImports = ui.imports, onPasteEmbeddedAsset = { ui.native.importClipboard(ui.imports) },
-        onPickVideo = { selectVideo(false) }, onCaptureVideo = { selectVideo(true) },
+        onPickVideo = { selectVideo() }, onCapture = { captureFromCamera() },
         onPickDocument = { officePicker = OfficeReferenceKind.DOCUMENT },
         onPickGroupFile = if (chatType == ChatType.GROUP.code) { { officePicker = OfficeReferenceKind.GROUP_FILE } } else null,
         onPickTask = { taskPicker = true },

@@ -186,6 +186,12 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.material.icons.extended)
+    // 应用内相机（点按拍照/长按录像）；五构件必须同版本。
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.video)
+    implementation(libs.androidx.camera.view)
     implementation(libs.slf4j.jdk14)
     // 媒体展示依赖（上传已收敛到 shared 流式 transport）
     implementation(libs.media3.exoplayer)
