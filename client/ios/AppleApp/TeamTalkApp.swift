@@ -53,8 +53,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     /// 应用内相机桥：Kotlin 触发呈现，三个回调恰好其一被调用（nil 取消走 onCancel）。
     private func registerChatCameraBridge() {
-        IosApplicationRuntime.shared.openChatCamera = { onImage, onVideo, onCancel in
-            let controller = IosChatCameraController()
+        IosApplicationRuntime.shared.openChatCamera = { captureDirectory, onImage, onVideo, onCancel in
+            let controller = IosChatCameraController(captureDirectory: URL(fileURLWithPath: captureDirectory))
             controller.onResult = { url, isImage in
                 if let url {
                     if isImage { onImage(url.path) } else { onVideo(url.path) }

@@ -15,7 +15,7 @@ ClientSession、SQLite、同步与可靠发送。Swift 仅提供启动入口、�
 | `IosHomeScreen`、`IosChatScreen`、`IosFeatureScreens` | 五个一级栏目、聊天、账号及群管理页面 |
 | `IosWorkspaceHosts`、`IosDocumentDraftPersistence` | 文档/任务工作台、文件材料、文档草稿持久化 |
 | `IosNativeMedia`、`IosVoiceRecorder`、`IosMediaResources` | 系统选择器、权限、录制、文件分享、本地播放与资源退役 |
-| `AppleApp/IosChatCameraController.swift` | 应用内相机（AVCaptureSession）：点按拍照、长按录像、物理方向元数据、震动与预览确认，经 `IosApplicationRuntime.openChatCamera` 桥呈现 |
+| `AppleApp/IosChatCameraController.swift` | 应用内相机（AVCaptureSession）：点按拍照、长按录像、物理方向元数据、震动与预览确认，经 `IosApplicationRuntime.openChatCamera` 桥呈现；拍摄产物写入 Kotlin 侧指定的账号媒体树 `staging/captured` 目录（与 Android `captured` 类别对齐，纳入启动清理与账号清理） |
 | `client/shared/src/iosMain` | Network.framework TCP/TLS、URLSession HTTP、Keychain、Native SQLite、私有文件 |
 | `client/app/src/iosMain` | 剪贴板、主题、字符分类、拼音及返回处理 |
 | `client/richeditor/src/iosMain` | 受控上游编辑器的 iOS 实现，归属见 `FORK.md` |

@@ -37,6 +37,17 @@ final class IosChatCameraController: UIViewController {
     private let retakeButton = UIButton(type: .system)
     private let sendButton = UIButton(type: .system)
     private let countdownTotal: TimeInterval = 60
+    /// 拍摄产物目录：账号媒体树 staging/captured，由 Kotlin 侧创建并传入；
+    /// 与 Android captured 类别对齐，纳入启动清理与账号清理，不写系统 tmp。
+    private let captureDirectory: URL
+
+    init(captureDirectory: URL) {
+        self.captureDirectory = captureDirectory
+        super.init(nibName: nil, bundle: nil)
+        try? FileManager.default.createDirectory(at: captureDirectory, withIntermediateDirectories: true)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -167,7 +178,7 @@ final class IosChatCameraController: UIViewController {
         }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         applyOrientation()
-        let url = FileManager.default.temporaryDirectory
+        let url = captureDirectory
             .appendingPathComponent("capture-\(UUID().uuidString).mov")
         recordingURL = url
         movieOutput.startRecording(to: url, recordingDelegate: self)
@@ -389,7 +400,7 @@ extension IosChatCameraController: AVCapturePhotoCaptureDelegate {
         error: Error?
     ) {
         guard error == nil, let data = photo.fileDataRepresentation() else { return }
-        let url = FileManager.default.temporaryDirectory
+        let url = captureDirectory
             .appendingPathComponent("capture-\(UUID().uuidString).jpg")
         do {
             try data.write(to: url)

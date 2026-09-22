@@ -35,43 +35,6 @@ import platform.Foundation.CFBridgingRetain
 import platform.Foundation.NSURL
 import platform.UIKit.*
 
-internal class IosFileDownloads(private val resources: IosMediaResources, private val native: IosNativeMedia) : FileDownloadController {
-    override val states: SnapshotStateMap<String, FileDownloadState> = mutableStateMapOf()
-    override val automaticDownloadLedger = AutomaticFileDownloadLedger()
-    private val scope = resources.childScope("file-download")
-    override fun ensure(attachment: Attachment) {
-        if (states.containsKey(attachment.path) || !resources.canDeliverUiResult()) return
-        states[attachment.path] = FileDownloadState.Checking
-        scope.launch {
-            val cached = resources.isCached(attachment)
-            if (resources.canDeliverUiResult()) states[attachment.path] = if (cached) FileDownloadState.Done else FileDownloadState.Idle
-        }
-    }
-    override fun download(attachment: Attachment) { obtain(attachment, false) }
-    override fun openOrDownload(attachment: Attachment) { obtain(attachment, true) }
-    override fun exportToUserLocation(attachment: Attachment): Boolean {
-        if (!resources.canDeliverUiResult()) return false
-        obtain(attachment, true, export = true)
-        return true
-    }
-    private fun obtain(attachment: Attachment, open: Boolean, export: Boolean = false) {
-        if (!resources.canDeliverUiResult()) return
-        scope.launch {
-            try {
-                states[attachment.path] = FileDownloadState.Downloading(0f)
-                val lease = resources.acquire(attachment) { progress ->
-                    scope.launch { if (resources.canDeliverUiResult()) states[attachment.path] = FileDownloadState.Downloading(progress) }
-                }
-                if (!resources.canDeliverUiResult()) { lease.close(); return@launch }
-                states[attachment.path] = FileDownloadState.Done
-                if (export) native.share(lease, attachment.name) else if (open) native.preview(lease, attachment.name) else lease.close()
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { if (resources.canDeliverUiResult()) states[attachment.path] = FileDownloadState.Failed("下载或打开失败，请重试") }
-        }
-    }
-    override fun close() { scope.cancel(); states.clear() }
-}
-
 @Composable
 internal fun IosAttachmentImage(attachment: Attachment, resources: IosMediaResources, modifier: Modifier) {
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
@@ -213,7 +176,7 @@ private fun IosAttachmentVideo(attachment: Attachment, active: Boolean, resource
 
 internal data class IosGalleryRequest(val items: List<GalleryItem>, val index: Int)
 @Composable
-internal fun IosGallery(request: IosGalleryRequest, resources: IosMediaResources, files: IosFileDownloads, dismiss: () -> Unit) {
+internal fun IosGallery(request: IosGalleryRequest, resources: IosMediaResources, files: IosFileDownloadController, dismiss: () -> Unit) {
     val foreground by IosApplicationRuntime.foreground.collectAsState()
     Dialog(onDismissRequest = dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         MediaGallery(visible = true, items = request.items, initialIndex = request.index, onDismiss = dismiss,

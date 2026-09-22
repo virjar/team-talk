@@ -131,6 +131,9 @@ internal fun AndroidChatScreen(
     val mediaSession = mediaResources.mediaSession
     val mediaCacheScope = mediaSession.cacheNamespace
     val fileDownloads = requireNotNull(mediaResources.fileDownloads)
+    val voiceController = remember(resourceOwner, chatId, myUid, viewModel, mediaSession) {
+        AndroidChatVoiceController(context, chatId, myUid, viewModel, telemetry, { mediaSession }, voiceRecording, voicePermissionGate)
+    }
     var isUploading by remember { mutableStateOf(false) }
     var mediaError by remember { mutableStateOf<UserFeedbackNotice?>(null) }
     val mediaSnackbar = remember { SnackbarHostState() }
@@ -161,6 +164,7 @@ internal fun AndroidChatScreen(
         )
     }
 
+
     fun reportMediaFailure(
         mediaKind: ClientMediaKind,
         operation: MediaOperation,
@@ -187,6 +191,20 @@ internal fun AndroidChatScreen(
         )
     }
 
+    voiceController.wiring = AndroidChatVoiceController.Wiring(
+        queueMediaFeedback = { code, action, origin ->
+            queueMediaFeedback(code, action, origin)
+        },
+        reportMediaFailure = { kind, operation, error ->
+            reportMediaFailure(kind, operation, error)
+        },
+        launchOwnedMediaSource = { ownedFile, action ->
+            launchWithOwnedMediaSource(ownedFile, launchAdmittedAction, action)
+        },
+        onUploadingChanged = { value ->
+            actionAdmission.runIfOpen { isUploading = value }
+        },
+    )
     var officePickerKind by remember(chatId) { mutableStateOf<OfficeReferenceKind?>(null) }
     var taskPickerVisible by remember(chatId) { mutableStateOf(false) }
     officeRefHost?.let { host ->
@@ -303,24 +321,7 @@ internal fun AndroidChatScreen(
     val recordAudioPermission = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
-        actionAdmission.runIfOpen {
-            // 权限结果只更新准备状态，不续接已被系统弹窗取消的长按手势。
-            voicePermissionGate.onPermissionResult(granted)
-            if (!granted) {
-                telemetry.recordMedia(
-                    ClientUiPage.CHAT,
-                    ClientMediaKind.AUDIO,
-                    MediaOperation.RECORD,
-                    ClientActionOutcome.FAILED,
-                    MediaFailureReason.PERMISSION,
-                )
-                queueMediaFeedback(
-                    UserFeedbackCode.MICROPHONE_PERMISSION_REQUIRED,
-                    ClientUiAction.START_VOICE_RECORDING,
-                    FeedbackOrigin.SNACKBAR,
-                )
-            }
-        }
+        actionAdmission.runIfOpen { voiceController.onPermissionResult(granted) }
     }
 
     // ── 文件选择器 ──
@@ -441,206 +442,6 @@ internal fun AndroidChatScreen(
         }
     }
 
-    fun startVoiceRecording() {
-        if (!mediaSession.isCurrentOwner()) return
-        if (voiceRecording.isActive) return
-        var partialFile: File? = null
-        var recorder: MediaRecorder? = null
-        try {
-            telemetry.recordMedia(
-                ClientUiPage.CHAT,
-                ClientMediaKind.AUDIO,
-                MediaOperation.RECORD,
-                ClientActionOutcome.STARTED,
-            )
-            val directory = mediaCacheDirectory(
-                context.cacheDir,
-                mediaCacheScope,
-                "outgoing-voice",
-            ).apply { mkdirs() }
-            val file = File.createTempFile("voice-", ".aac", directory)
-            partialFile = file
-            val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(context)
-            } else {
-                @Suppress("DEPRECATION")
-                val legacyRecorder = MediaRecorder()
-                legacyRecorder
-            }
-            recorder = rec
-            rec.apply {
-                setAudioSource(MediaRecorder.AudioSource.MIC)
-                setOutputFormat(MediaRecorder.OutputFormat.AAC_ADTS)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioSamplingRate(16000)
-                setAudioEncodingBitRate(32000)
-                setOutputFile(file.absolutePath)
-            }
-            rec.prepare()
-            rec.start()
-            check(voiceRecording.attach(rec, file, System.currentTimeMillis())) {
-                "录音资源已被占用"
-            }
-        } catch (failure: Throwable) {
-            val terminalFailure = cleanupFailedVoiceRecordingStart(
-                startFailure = failure,
-                stop = {
-                    recorder?.stop()
-                },
-                release = {
-                    recorder?.release()
-                },
-                deletePartial = {
-                    deleteVoiceRecordingFile(partialFile)
-                },
-            )
-            if (isFatalAndroidLifecycleFailure(terminalFailure)) throw terminalFailure
-            reportMediaFailure(ClientMediaKind.AUDIO, MediaOperation.RECORD, terminalFailure)
-        }
-    }
-
-    fun hasVoicePermission(): Boolean = ContextCompat.checkSelfPermission(
-        context,
-        Manifest.permission.RECORD_AUDIO,
-    ) == PackageManager.PERMISSION_GRANTED
-
-    fun prepareVoiceMode() {
-        when (voicePermissionGate.enterVoiceMode(hasVoicePermission())) {
-            VoicePermissionDecision.REQUEST_PERMISSION -> {
-                recordAudioPermission.launch(Manifest.permission.RECORD_AUDIO)
-            }
-            VoicePermissionDecision.NO_ACTION,
-            VoicePermissionDecision.START_RECORDING -> Unit
-        }
-    }
-
-    fun startVoice() {
-        when (voicePermissionGate.requestStart(hasVoicePermission())) {
-            VoicePermissionDecision.START_RECORDING -> startVoiceRecording()
-            VoicePermissionDecision.REQUEST_PERMISSION -> {
-                recordAudioPermission.launch(Manifest.permission.RECORD_AUDIO)
-            }
-            VoicePermissionDecision.NO_ACTION -> Unit
-        }
-    }
-
-    fun stopVoice() {
-        // 用户在系统权限弹窗期间松手时，录音器尚未创建；也必须取消待续接动作，
-        // 避免授权结果返回后在手指已经离开时意外启动麦克风。
-        voicePermissionGate.clear()
-        val finishedAt = System.currentTimeMillis()
-        val completed = when (
-            val result = voiceRecording.finishForSend(
-                stop = { recorder -> recorder.stop() },
-                release = { recorder -> recorder.release() },
-            )
-        ) {
-            VoiceRecordingFinishResult.Inactive -> return
-            is VoiceRecordingFinishResult.Failed -> {
-                result.stopFailure?.let { Log.w("Chat", "Voice recorder stop failed", it) }
-                result.releaseFailure?.let { Log.w("Chat", "Voice recorder release failed", it) }
-                result.deleteFailure?.let {
-                    Log.w("Chat", "Voice recording fragment cleanup failed", it)
-                }
-                val primaryFailure = result.stopFailure ?: result.releaseFailure
-                val tooShort = result.isTooShort(finishedAt)
-                val reason = when {
-                    primaryFailure != null -> classifyAndroidMediaFailure(primaryFailure)
-                    tooShort -> MediaFailureReason.SIZE_VALIDATION
-                    else -> MediaFailureReason.IO
-                }
-                telemetry.recordMedia(
-                    ClientUiPage.CHAT,
-                    ClientMediaKind.AUDIO,
-                    MediaOperation.RECORD,
-                    ClientActionOutcome.FAILED,
-                    reason,
-                )
-                queueMediaFeedback(
-                    if (tooShort) {
-                        UserFeedbackCode.VOICE_TOO_SHORT
-                    } else {
-                        UserFeedbackCode.VOICE_RECORDING_FAILED
-                    },
-                    ClientUiAction.SEND_VOICE_RECORDING,
-                )
-                return
-            }
-            is VoiceRecordingFinishResult.Ready -> result
-        }
-        val file = completed.file
-        val durationMillis = (finishedAt - completed.startedAt).coerceAtLeast(0L)
-        if (durationMillis < MINIMUM_VOICE_RECORDING_DURATION_MILLIS) {
-            telemetry.recordMedia(
-                ClientUiPage.CHAT,
-                ClientMediaKind.AUDIO,
-                MediaOperation.RECORD,
-                ClientActionOutcome.FAILED,
-                MediaFailureReason.SIZE_VALIDATION,
-            )
-            queueMediaFeedback(
-                UserFeedbackCode.VOICE_TOO_SHORT,
-                ClientUiAction.SEND_VOICE_RECORDING,
-            )
-            try {
-                deleteVoiceRecordingFile(file)
-            } catch (error: Exception) {
-                Log.w("Chat", "Voice recording temporary file cleanup failed", error)
-            }
-            return
-        }
-        telemetry.recordMedia(
-            ClientUiPage.CHAT,
-            ClientMediaKind.AUDIO,
-            MediaOperation.RECORD,
-            ClientActionOutcome.SUCCEEDED,
-        )
-        val duration = (durationMillis / 1_000L).toInt().coerceAtLeast(1)
-        launchWithOwnedMediaSource(file, launchAdmittedAction) {
-            OutgoingMediaSender(telemetry).sendVoice(
-                chatId = chatId,
-                myUid = myUid,
-                viewModel = viewModel,
-                durationSeconds = duration,
-                onUploadingChanged = { value -> actionAdmission.runIfOpen { isUploading = value } },
-                classifyFailure = ::classifyAndroidMediaFailure,
-                reportFailure = { _, reason ->
-                    queueMediaFeedback(reason.uploadFeedbackCode, ClientUiAction.UPLOAD_MEDIA)
-                },
-            ) {
-                if (file.length() > MAX_SELECTED_MEDIA_BYTES) throw SelectedMediaTooLargeException(MAX_SELECTED_MEDIA_BYTES)
-                MediaHelper.uploadFile(file, file.name, "audio/aac", mediaSession)
-            }
-        }
-    }
-
-    fun cancelVoiceRecording() {
-        voicePermissionGate.clear()
-        when (val result = voiceRecording.discard(
-            stop = { recorder -> recorder.stop() },
-            release = { recorder -> recorder.release() },
-        )) {
-            VoiceRecordingDiscardResult.Inactive -> Unit
-            VoiceRecordingDiscardResult.Discarded -> telemetry.recordMedia(
-                ClientUiPage.CHAT,
-                ClientMediaKind.AUDIO,
-                MediaOperation.RECORD,
-                ClientActionOutcome.CANCELLED,
-            )
-            is VoiceRecordingDiscardResult.Failed -> {
-                if (isFatalAndroidLifecycleFailure(result.failure)) throw result.failure
-                Log.w("Chat", "Voice recording cancellation failed", result.failure)
-                telemetry.recordMedia(
-                    ClientUiPage.CHAT,
-                    ClientMediaKind.AUDIO,
-                    MediaOperation.RECORD,
-                    ClientActionOutcome.FAILED,
-                    classifyAndroidMediaFailure(result.failure),
-                )
-            }
-        }
-    }
-
     // 离开聊天页和应用退到后台都必须释放麦克风；后台录音不自动发送残片。
     var chatRouteResumed by remember(routeLifecycleOwner) {
         mutableStateOf(routeLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
@@ -652,8 +453,8 @@ internal fun AndroidChatScreen(
         routeLifecycleOwner.lifecycle.addObserver(observer)
         onDispose { routeLifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    val latestCancelVoice by rememberUpdatedState(newValue = { cancelVoiceRecording() })
-    DisposableEffect(activity, voiceRecording) {
+    val latestCancelVoice by rememberUpdatedState(newValue = { voiceController.cancelVoiceRecording() })
+    DisposableEffect(activity, voiceController.lease) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP || event == Lifecycle.Event.ON_DESTROY) {
                 latestCancelVoice()
@@ -686,9 +487,9 @@ internal fun AndroidChatScreen(
         },
         onPickMedia = albumPicker,
         onCapture = { startChatCamera() },
-        onVoiceModeEntered = { prepareVoiceMode() },
-        onVoiceRecord = { if (it) startVoice() else stopVoice() },
-        onVoiceRecordCancel = { cancelVoiceRecording() },
+        onVoiceModeEntered = { voiceController.prepareVoiceMode { recordAudioPermission.launch(Manifest.permission.RECORD_AUDIO) } },
+        onVoiceRecord = { if (it) voiceController.startVoice { recordAudioPermission.launch(Manifest.permission.RECORD_AUDIO) } else voiceController.stopVoice() },
+        onVoiceRecordCancel = { voiceController.cancelVoiceRecording() },
         onMentionClick = onMentionClick,
         onUrlClick = onUrlClick,
         imageContent = { attachment, mod ->

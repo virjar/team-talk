@@ -35,14 +35,17 @@ object IosApplicationRuntime {
 
     /**
      * 应用内相机桥：Swift 壳启动时注册（AppleApp/IosChatCameraController.swift），
-     * Kotlin 只触发呈现。三个回调恰好其一被调用：onImage/onVideo 携带沙箱临时文件路径，
-     * onCancel 表示取消或失败。public 是 Kotlin/Swift 边界的需要，聊天 UI 之外不得依赖。
+     * Kotlin 只触发呈现并指定拍摄产物目录（账号媒体树 staging/captured，
+     * 与 Android captured 类别对齐，纳入启动清理与账号清理）。三个回调恰好其一被调用：
+     * onImage/onVideo 携带产物文件路径，onCancel 表示取消或失败。
+     * public 是 Kotlin/Swift 边界的需要，聊天 UI 之外不得依赖。
      */
     public var openChatCamera: (
+        captureDirectory: String,
         onImage: (String) -> Unit,
         onVideo: (String) -> Unit,
         onCancel: () -> Unit,
-    ) -> Unit = { _, _, _ -> }
+    ) -> Unit = { _, _, _, _ -> }
     public var dismissChatCamera: (() -> Unit)? = null
 
     internal val foreground = MutableStateFlow(false)

@@ -36,7 +36,9 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
         if (!canPresent()) return
         cameraResultHandler = selected
         cameraPresented = true
+        val capturedDirectory = temporary.resolve("captured").also { check(it.mkdirs() || it.isDirectory) }
         IosApplicationRuntime.openChatCamera(
+            capturedDirectory.path,
             { path -> deliverCameraResult(path, isImage = true) },
             { path -> deliverCameraResult(path, isImage = false) },
             {
