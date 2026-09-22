@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.shared.update.DesktopUpdateSession
 import com.virjar.tk.shared.update.DesktopUpdateUiState
+import com.virjar.tk.app.ui.platform.formatUiFileSize
 import java.net.URI
 
 /**
@@ -106,7 +107,7 @@ internal fun DesktopUpdateDialog(
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "${formatBytes(s.completedBytes)} / ${formatBytes(s.totalBytes)}",
+                            "${formatUiFileSize(s.completedBytes)} / ${formatUiFileSize(s.totalBytes)}",
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
@@ -160,12 +161,6 @@ internal fun DesktopUpdateDialog(
             }
         },
     )
-}
-
-private fun formatBytes(bytes: Long): String = when {
-    bytes >= 1024L * 1024 * 1024 -> String.format("%.2f GB", bytes / 1024.0 / 1024 / 1024)
-    bytes >= 1024L * 1024 -> String.format("%.1f MB", bytes / 1024.0 / 1024)
-    else -> "${(bytes.coerceAtLeast(0) / 1024.0).toInt()} KB"
 }
 
 private fun openDownloadPage(serverBaseUrl: String) {

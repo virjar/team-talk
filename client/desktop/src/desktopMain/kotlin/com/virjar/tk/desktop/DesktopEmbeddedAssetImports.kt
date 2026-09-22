@@ -2,6 +2,7 @@ package com.virjar.tk.desktop
 
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.desktop.media.DesktopSessionResources
+import com.virjar.tk.app.media.attachmentContentType
 import com.virjar.tk.app.ui.bridge.ChatAssetImportDelegate
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEventSink
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportGateway
@@ -30,7 +31,7 @@ internal fun desktopEmbeddedAssetSelection(
     return EmbeddedAssetLocalSelection(
         localReference = file.absolutePath,
         displayName = displayName,
-        contentType = desktopContentType(file.name),
+        contentType = attachmentContentType(file.name),
         size = file.length(),
         presentation = presentation,
         source = source,
@@ -54,7 +55,7 @@ internal fun importDesktopDroppedAssetUris(
             val uri = java.net.URI(rawUri)
             uri.takeIf { it.scheme.equals("file", ignoreCase = true) }?.let(::File)
         }.getOrNull()?.takeIf(File::isFile) ?: return@forEach
-        val presentation = if (desktopContentType(file.name).startsWith("image/", ignoreCase = true)) {
+        val presentation = if (attachmentContentType(file.name).startsWith("image/", ignoreCase = true)) {
             EmbeddedAssetPresentation.IMAGE
         } else {
             EmbeddedAssetPresentation.FILE
@@ -81,7 +82,7 @@ internal fun importDesktopClipboardAsset(gateway: EmbeddedAssetImportGateway): B
             .filterIsInstance<File>()
             .filter(File::isFile)
         files.forEach { file ->
-            val presentation = if (desktopContentType(file.name).startsWith("image/", ignoreCase = true)) {
+            val presentation = if (attachmentContentType(file.name).startsWith("image/", ignoreCase = true)) {
                 EmbeddedAssetPresentation.IMAGE
             } else {
                 EmbeddedAssetPresentation.FILE

@@ -30,6 +30,7 @@ import com.virjar.tk.desktop.media.DesktopSessionResources
 import com.virjar.tk.protocol.model.ChatType
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.User
+import com.virjar.tk.app.media.attachmentContentType
 import com.virjar.tk.app.telemetry.ClientActionOutcome
 import com.virjar.tk.app.telemetry.ClientMediaKind
 import com.virjar.tk.app.telemetry.ClientUiPage
@@ -233,7 +234,7 @@ internal fun ChatPanelWrapper(
         onPasteEmbeddedAsset = { importDesktopClipboardAsset(embeddedAssetImports) },
         onPickMedia = {
             DesktopFilePicker.chooseMedia()?.let { file ->
-                if (desktopContentType(file.name).startsWith("video/", ignoreCase = true)) {
+                if (attachmentContentType(file.name).startsWith("video/", ignoreCase = true)) {
                     resources.videoSender.sendVideoFile(file, chatId, myUid, viewModel)
                 } else {
                     embeddedAssetImports.import(

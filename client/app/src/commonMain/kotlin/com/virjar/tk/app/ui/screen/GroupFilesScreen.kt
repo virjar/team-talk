@@ -61,6 +61,7 @@ import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.GroupFileEntry
 import com.virjar.tk.protocol.model.GroupFileVersion
 import com.virjar.tk.app.ui.component.ScreenHeader
+import com.virjar.tk.app.ui.platform.formatUiFileSize
 
 /** 群文件空间。平台壳负责文件选择、上传与系统打开，本组件只表达业务交互。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -289,7 +290,7 @@ private fun GroupFileRow(
         supportingContent = {
             Text(
                 if (entry.kind == GroupFileEntry.KIND_FOLDER) "文件夹"
-                else "${formatBytes(entry.attachment?.size ?: 0)} · v${entry.contentVersion}",
+                else "${formatUiFileSize(entry.attachment?.size ?: 0)} · v${entry.contentVersion}",
             )
         },
         trailingContent = {
@@ -493,7 +494,7 @@ private fun VersionDialog(
                     items(versions, key = { it.version }) { version ->
                         ListItem(
                             headlineContent = { Text("版本 ${version.version}") },
-                            supportingContent = { Text("${formatBytes(version.attachment.size)} · ${version.attachment.name}") },
+                            supportingContent = { Text("${formatUiFileSize(version.attachment.size)} · ${version.attachment.name}") },
                             trailingContent = {
                                 TextButton(
                                     onClick = { onOpen(version.attachment) },
@@ -514,11 +515,4 @@ private fun VersionDialog(
             TextButton(onClick = onDismiss, modifier = Modifier.testTag("group.files.versions.close")) { Text("关闭") }
         },
     )
-}
-
-private fun formatBytes(bytes: Long): String = when {
-    bytes >= 1024L * 1024 * 1024 -> "${bytes / (1024L * 1024 * 1024)} GB"
-    bytes >= 1024L * 1024 -> "${bytes / (1024L * 1024)} MB"
-    bytes >= 1024L -> "${bytes / 1024L} KB"
-    else -> "$bytes B"
 }

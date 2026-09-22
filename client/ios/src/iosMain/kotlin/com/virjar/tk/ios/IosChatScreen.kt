@@ -121,7 +121,7 @@ internal fun IosChatScreen(route: IosRoute, ui: IosSessionUi) {
             else ui.recorder.finish()?.let { recording ->
                 val job = data.launchCancellableAdmittedUiAction {
                     sender.sendVoice(chatId, data.userSession.uid, viewModel, recording.durationSeconds) {
-                        ui.media.repository.upload(recording.file.asUploadSource(), "语音.m4a", "audio/mp4").getOrThrow()
+                        ui.media.repository.upload(recording.file.asUploadSource(), "voice-${platformRandomUuid()}.m4a", "audio/mp4").getOrThrow()
                     }
                 }
                 if (job == null) recording.file.delete() else job.invokeOnCompletion { recording.file.delete() }

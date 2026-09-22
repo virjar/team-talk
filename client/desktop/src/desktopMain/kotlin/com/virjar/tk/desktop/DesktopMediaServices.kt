@@ -23,6 +23,7 @@ import com.virjar.tk.app.telemetry.ClientMediaKind
 import com.virjar.tk.app.telemetry.ClientUiPage
 import com.virjar.tk.app.telemetry.MediaFailureReason
 import com.virjar.tk.app.telemetry.MediaOperation
+import com.virjar.tk.app.media.attachmentContentType
 import com.virjar.tk.app.telemetry.UserFeedbackCode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -64,10 +65,6 @@ internal object DesktopFilePicker {
         name.substringAfterLast('.', "").lowercase() in imageExtensions
     }
 
-    fun chooseVideo(): File? = choose("选择视频") { _, name ->
-        name.substringAfterLast('.', "").lowercase() in videoExtensions
-    }
-
     fun chooseMedia(): File? = choose("选择图片或视频") { _, name ->
         val extension = name.substringAfterLast('.', "").lowercase()
         extension in imageExtensions || extension in videoExtensions
@@ -90,34 +87,6 @@ internal object DesktopFilePicker {
         }
     }
 }
-
-/** 文件类型推导是纯规则，不与文件选择或网络传输耦合。 */
-internal fun desktopContentType(fileName: String): String = when (fileName.extensionLowercase()) {
-    "txt" -> "text/plain"
-    "md", "markdown" -> "text/markdown"
-    "png" -> "image/png"
-    "jpg", "jpeg" -> "image/jpeg"
-    "gif" -> "image/gif"
-    "webp" -> "image/webp"
-    "bmp" -> "image/bmp"
-    "pdf" -> "application/pdf"
-    "zip" -> "application/zip"
-    "apk" -> "application/vnd.android.package-archive"
-    "mp4" -> "video/mp4"
-    "mov" -> "video/quicktime"
-    "avi" -> "video/x-msvideo"
-    "mkv" -> "video/x-matroska"
-    "webm" -> "video/webm"
-    "mp3" -> "audio/mpeg"
-    "m4a" -> "audio/mp4"
-    "aac" -> "audio/aac"
-    "ogg" -> "audio/ogg"
-    "wav" -> "audio/wav"
-    "amr" -> "audio/amr"
-    else -> "application/octet-stream"
-}
-
-private fun String.extensionLowercase(): String = substringAfterLast('.', "").lowercase()
 
 /** 只负责可信本地文件的系统打开；不会把带认证语义的远端 URL 交给浏览器。 */
 internal object DesktopExternalFileOpener {
@@ -152,7 +121,7 @@ internal object DesktopImageCodec {
 internal class DesktopFileTransfer(
     private val resources: DesktopSessionResources,
 ) {
-    suspend fun upload(file: File, contentType: String = desktopContentType(file.name)): Attachment {
+    suspend fun upload(file: File, contentType: String = attachmentContentType(file.name)): Attachment {
         resources.ensureOpen()
         require(file.isFile) { "文件不存在: ${file.name}" }
         val result = resources.fileRepository
@@ -213,7 +182,7 @@ internal class DesktopVideoSender(
         scope.launch {
             resources.ensureOpen()
             coroutineContext.ensureActive()
-            val contentType = desktopContentType(file.name)
+            val contentType = attachmentContentType(file.name)
             mediaSender.sendVideo(
                 chatId = chatId,
                 myUid = myUid,

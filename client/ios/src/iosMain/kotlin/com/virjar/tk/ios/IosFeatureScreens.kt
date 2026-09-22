@@ -303,7 +303,7 @@ private fun IosGroupDetailScreen(chatId: String, actions: IosFeatureActions) {
     fun open(page: IosPage) { ui.navigation.open(IosRoute(page, chatId)) }
     GroupDetailScreen(chat = chat, members = members, isOwner = role == 2, myUid = data.userSession.uid,
         groupAvatar = avatars[chatId], onEditGroupAvatar = if (role >= 1) admission.guard {
-            if (!avatarBusy) ui.native.selectVisual(false, false) { selection -> actions.selected(selection) {
+            if (!avatarBusy) ui.native.selectImage(false) { selection -> actions.selected(selection) {
                 avatarBusy = true
                 var prepared: IosPreparedAvatar? = null
                 try {
@@ -340,7 +340,7 @@ private fun IosEditProfileScreen(actions: IosFeatureActions) {
     DisposableEffect(actions) { onDispose { avatar?.close(); avatar = null } }
     fun select(camera: Boolean) {
         if (processing || uploading) return
-        ui.native.selectVisual(false, camera) { selection -> actions.selected(selection) {
+        ui.native.selectImage(camera) { selection -> actions.selected(selection) {
             processing = true
             failure = null
             var prepared: IosPreparedAvatar? = null

@@ -256,15 +256,11 @@ fun rememberVideoPlayer(
     Box(modifier = modifier.background(Color.Black)) {
         AndroidView(
             factory = { ctx ->
-                val policy = androidMediaGalleryPolicy
-                val playerView = when (policy.videoSurfaceType) {
-                    AndroidGalleryVideoSurfaceType.TEXTURE_VIEW ->
-                        LayoutInflater.from(ctx).inflate(
-                            R.layout.teamtalk_gallery_player_view,
-                            null,
-                            false,
-                        ) as PlayerView
-                }
+                val playerView = LayoutInflater.from(ctx).inflate(
+                    R.layout.teamtalk_gallery_player_view,
+                    null,
+                    false,
+                ) as PlayerView
                 check(playerView.videoSurfaceView is TextureView) {
                     "Gallery PlayerView must use TextureView so it follows Compose layout coordinates"
                 }

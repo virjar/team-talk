@@ -14,25 +14,9 @@ import com.virjar.tk.app.ui.component.MediaGallery
 import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
 
 /**
- * Android 画廊必须脱离聊天页的 IME padding 和 NavHost 转场单独占用一个窗口。
- * 视频纹理层也不参与 Compose 缩放动画，避免部分设备在窗口切换时出现坐标错位或穿透。
+ * Android 画廊必须脱离聊天页的 IME padding 和 NavHost 转场单独占用一个窗口；
+ * 不响应点击外部关闭，退出动画由聊天页转场统一承担。
  */
-internal data class AndroidMediaGalleryPolicy(
-    val dismissOnBackPress: Boolean = true,
-    val dismissOnClickOutside: Boolean = false,
-    val usePlatformDefaultWidth: Boolean = false,
-    val decorFitsSystemWindows: Boolean = false,
-    val animateEnterExit: Boolean = false,
-    val videoSurfaceType: AndroidGalleryVideoSurfaceType = AndroidGalleryVideoSurfaceType.TEXTURE_VIEW,
-)
-
-internal enum class AndroidGalleryVideoSurfaceType {
-    /** TextureView 与普通 View 一样参与 Compose/Dialog/Pager 的测量、裁剪和坐标变换。 */
-    TEXTURE_VIEW,
-}
-
-internal val androidMediaGalleryPolicy = AndroidMediaGalleryPolicy()
-
 /**
  * 先完成输入法收起动作，再发布画廊可见状态。这样系统返回键不会先被残留 IME 消费。
  */
@@ -59,14 +43,13 @@ internal fun AndroidMediaGalleryDialog(
 ) {
     if (!visible || items.isEmpty()) return
 
-    val policy = androidMediaGalleryPolicy
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
-            dismissOnBackPress = policy.dismissOnBackPress,
-            dismissOnClickOutside = policy.dismissOnClickOutside,
-            usePlatformDefaultWidth = policy.usePlatformDefaultWidth,
-            decorFitsSystemWindows = policy.decorFitsSystemWindows,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
         ),
     ) {
         // Dialog 是独立 Compose 窗口，必须在这里重新开启 testTag → resourceId 映射。
@@ -101,7 +84,7 @@ internal fun AndroidMediaGalleryDialog(
                             modifier = mod,
                         )
                     },
-                    animateEnterExit = policy.animateEnterExit,
+                    animateEnterExit = false,
                     onSaveCurrent = onSaveCurrent,
                 )
             }

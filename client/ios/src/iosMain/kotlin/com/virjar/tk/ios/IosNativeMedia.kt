@@ -1,6 +1,7 @@
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 package com.virjar.tk.ios
 
+import com.virjar.tk.app.media.attachmentContentType
 import com.virjar.tk.app.ui.bridge.*
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.shared.platform.*
@@ -57,7 +58,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
             EmbeddedAssetLocalSelection(
                 localReference = path,
                 displayName = name,
-                contentType = iosContentType(name),
+                contentType = attachmentContentType(name),
                 size = file.length(),
                 presentation = if (isImage) EmbeddedAssetPresentation.IMAGE else EmbeddedAssetPresentation.FILE,
                 source = EmbeddedAssetImportSource.IOS_PICKER,
@@ -68,7 +69,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
 
     fun select(presentation: EmbeddedAssetPresentation, selected: (EmbeddedAssetLocalSelection) -> Unit) {
         if (!canPresent()) return
-        if (presentation == EmbeddedAssetPresentation.IMAGE) selectVisual(false, false, selected)
+        if (presentation == EmbeddedAssetPresentation.IMAGE) selectImage(false, selected)
         else {
             val picker = UIDocumentPickerViewController(forOpeningContentTypes = listOf(UTTypeItem), asCopy = true)
             picker.allowsMultipleSelection = false
@@ -136,7 +137,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
         show(picker)
     }
 
-    fun selectVisual(video: Boolean, camera: Boolean, selected: (EmbeddedAssetLocalSelection) -> Unit) {
+    fun selectImage(camera: Boolean, selected: (EmbeddedAssetLocalSelection) -> Unit) {
         if (!canPresent()) return
         val source = if (camera) UIImagePickerControllerSourceType.UIImagePickerControllerSourceTypeCamera
             else UIImagePickerControllerSourceType.UIImagePickerControllerSourceTypePhotoLibrary
@@ -146,13 +147,12 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
         }
         val picker = UIImagePickerController()
         picker.sourceType = source
-        picker.mediaTypes = listOf(if (video) "public.movie" else "public.image")
-        if (video) picker.videoQuality = UIImagePickerControllerQualityTypeHigh
+        picker.mediaTypes = listOf("public.image")
         val delegate = object : NSObject(), UIImagePickerControllerDelegateProtocol, UINavigationControllerDelegateProtocol {
             override fun imagePickerController(picker: UIImagePickerController, didFinishPickingMediaWithInfo: Map<Any?, *>) {
-                val url = didFinishPickingMediaWithInfo[if (video) UIImagePickerControllerMediaURL else UIImagePickerControllerImageURL] as? NSURL
+                val url = didFinishPickingMediaWithInfo[UIImagePickerControllerImageURL] as? NSURL
                 if (url != null) {
-                    deliver(url, if (video) EmbeddedAssetPresentation.FILE else EmbeddedAssetPresentation.IMAGE, selected)
+                    deliver(url, EmbeddedAssetPresentation.IMAGE, selected)
                 } else {
                     val image = didFinishPickingMediaWithInfo[UIImagePickerControllerOriginalImage] as? UIImage
                     val data = image?.let { UIImageJPEGRepresentation(it, 0.95) }
@@ -203,7 +203,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
         selected: (EmbeddedAssetLocalSelection) -> Unit) {
         if (!resources.canDeliverUiResult()) { file.delete(); return }
         try {
-            selected(EmbeddedAssetLocalSelection(file.path, name, iosContentType(name), file.length(), presentation,
+            selected(EmbeddedAssetLocalSelection(file.path, name, attachmentContentType(name), file.length(), presentation,
                 EmbeddedAssetImportSource.IOS_PICKER, deleteAfterImport = true))
         } catch (failure: Throwable) {
             file.delete()
@@ -327,14 +327,6 @@ private fun iosExportFileName(name: String): String {
     return stem + extension
 }
 
-internal fun iosContentType(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
-    "jpg", "jpeg" -> "image/jpeg"; "png" -> "image/png"; "gif" -> "image/gif"; "webp" -> "image/webp"
-    "heic", "heif" -> "image/heic"; "mov" -> "video/quicktime"; "mp4", "m4v" -> "video/mp4"
-    "m4a", "aac" -> "audio/mp4"; "mp3" -> "audio/mpeg"; "wav" -> "audio/wav"
-    "pdf" -> "application/pdf"; "txt", "md", "log" -> "text/plain"; "json" -> "application/json"
-    "apk" -> "application/vnd.android.package-archive"
-    else -> "application/octet-stream"
-}
 internal fun iosPresenter(): UIViewController {
     var controller = checkNotNull(IosApplicationRuntime.rootViewController)
     while (controller.presentedViewController != null) controller = checkNotNull(controller.presentedViewController)
