@@ -250,10 +250,11 @@ class FileDownloadCore<L>(
             }
             val reason = adapter.classifyFailure(e)
             adapter.warn("附件下载失败: ${reason.code}")
-            publishFailure(key, reason, MediaOperation.DOWNLOAD, admission = admission)
+            adapter.onDownloadFailedDiagnostic()
+            val failedMessage = publishFailure(key, reason, MediaOperation.DOWNLOAD, admission = admission)
             if (pendingAction != null) {
                 recordAction(pendingAction, ClientActionOutcome.FAILED, reason)
-                adapter.onPendingActionFailed(pendingAction, attachment, e)
+                adapter.onPendingActionFailed(pendingAction, attachment, failedMessage)
             }
         } finally {
             downloadedLease?.let(adapter::closeLease)
@@ -283,12 +284,17 @@ class FileDownloadCore<L>(
             } catch (cancelled: CancellationException) {
                 recordActionCancelled(action)
                 throw cancelled
+            } catch (expired: AppError.AuthExpired) {
+                // 认证终态由会话 owner 统一退休，不能降级成可重试的"打开失败"。
+                recordActionCancelled(action)
+                return false
             } catch (_: Exception) {
                 if (closed.get() || !adapter.isOwnerCurrent()) {
                     recordActionCancelled(action)
                     return false
                 }
                 adapter.warn("附件打开失败: unsupported")
+                adapter.onOpenFailedDiagnostic()
                 publishFailure(
                     key = attachment.path,
                     reason = MediaFailureReason.UNSUPPORTED,
@@ -469,7 +475,7 @@ class FileDownloadCore<L>(
         operation: MediaOperation,
         feedbackCode: UserFeedbackCode = reason.downloadFeedbackCode,
         admission: FileOperationAdmission? = null,
-    ) {
+    ): String {
         val notice = UserFeedbackNotice(
             feedbackCode = feedbackCode,
             page = telemetryPage,
@@ -494,6 +500,7 @@ class FileDownloadCore<L>(
                 onPublished = { telemetry.recordUserNotice(notice) },
             )
         }
+        return notice.publicMessage
     }
 
     private fun recordActionStarted(action: FileDownloadPendingAction?) {
@@ -509,16 +516,13 @@ class FileDownloadCore<L>(
         outcome: ClientActionOutcome,
         reason: MediaFailureReason? = null,
     ) {
-        when (action) {
-            FileDownloadPendingAction.EXPORT -> telemetry.recordMedia(
-                telemetryPage,
-                ClientMediaKind.FILE,
-                MediaOperation.DOWNLOAD,
-                outcome,
-                reason,
-            )
-            else -> recordMedia(MediaOperation.OPEN, outcome, reason)
+        val operation = when (action) {
+            // 导出复用下载遥测；导出本身是用户可见文件操作，不占用预览/打开语义。
+            FileDownloadPendingAction.EXPORT -> MediaOperation.DOWNLOAD
+            FileDownloadPendingAction.PREVIEW -> MediaOperation.PREVIEW
+            FileDownloadPendingAction.OPEN, null -> MediaOperation.OPEN
         }
+        recordMedia(operation, outcome, reason)
     }
 
     private fun recordMedia(
@@ -576,6 +580,12 @@ interface FileDownloadCoreAdapter<L> {
     /** 核心关闭时释放平台持有的跨动作资源（如系统打开租约）。 */
     fun onClosed() {}
 
-    /** 待处理动作失败时的平台侧通知（如桌面预览窗口失败事件）。 */
-    fun onPendingActionFailed(action: FileDownloadPendingAction, attachment: Attachment, failure: Throwable) {}
+    /** 下载失败诊断事件（如桌面会话诊断）。 */
+    fun onDownloadFailedDiagnostic() {}
+
+    /** 打开/预览动作失败诊断事件。 */
+    fun onOpenFailedDiagnostic() {}
+
+    /** 待处理动作失败时的平台侧通知（如桌面预览窗口失败事件），携带用户可见文案。 */
+    fun onPendingActionFailed(action: FileDownloadPendingAction, attachment: Attachment, message: String) {}
 }
