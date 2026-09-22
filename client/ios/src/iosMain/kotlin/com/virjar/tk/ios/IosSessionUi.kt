@@ -24,7 +24,7 @@ internal class IosSessionUi(
     val navigation = IosNavigator()
     val media = IosMediaResources(data)
     val native = IosNativeMedia(media)
-    val files = IosFileDownloadController(media, native)
+    val files = IosFileDownloadController(media, native, data.telemetry)
     val recorder = IosVoiceRecorder(media)
     val voice = IosVoicePlayback(media, recorder::close)
     val imports = IosEmbeddedAssetImportGateway(media, IosFileTransfer(media), native,

@@ -53,6 +53,11 @@ internal class IosMediaResources(private val dataState: AppDataState) : AutoClos
         }?.let { ".$it" }.orEmpty()
         return root.resolve(platformSha256Hex("${attachment.path}\n${attachment.size}".encodeToByteArray()) + suffix)
     }
+    /** 缓存命中时取得租约（置顶 + 计入租借）；未命中返回 null。 */
+    suspend fun cachedLease(attachment: Attachment): IosMediaLease? = withContext(Dispatchers.IO) {
+        synchronized(leaseLock) { cachedLease(target(attachment), attachment.size) }
+    }
+
     suspend fun isCached(attachment: Attachment): Boolean = withContext(Dispatchers.IO) {
         synchronized(leaseLock) {
             target(attachment).let { it.isFile && !it.isSymbolicLink() && it.length() == attachment.size }
