@@ -123,7 +123,7 @@
 - Desktop 页面先选择工作区、检查器、模态、任务窗口或确认框。
 - 缺后端能力时显示明确空态，不放假按钮/假数据。
 - 稳定交互添加 testTag；已有 tag 非必要不改名。
-- Desktop Enter 换行、Cmd/Ctrl+Enter 发送。
+- Desktop 可视化输入器 Enter 发送、Cmd/Ctrl+Enter 换行（常见 IM 交互，2026-09 内测反馈）；Markdown 源码模式保持 Enter 换行。
 
 ## 7. 配置
 

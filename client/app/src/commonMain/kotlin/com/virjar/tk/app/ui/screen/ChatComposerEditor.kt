@@ -35,7 +35,9 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import com.virjar.tk.app.ui.platform.enterKeySendsChatMessage
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
@@ -110,7 +112,16 @@ internal fun ComposerEditor(
                         val command = event.isMetaPressed || event.isCtrlPressed
                         when {
                             event.key == Key.V && command && media.onPasteEmbeddedAsset?.invoke() == true -> true
+                            // 桌面按常见 IM 交互：无修饰键 Enter 发送（内测反馈，2026-09）。
+                            // 命令键+Enter 插入换行（与物理 Enter 的换行路径一致，行尾空段落
+                            // 在继续输入后可见）；Shift+Enter 不消费，走编辑器默认换行。
+                            // @ 候选弹层激活时让位给候选选中；移动端软键盘 Enter 保持换行。
                             event.key == Key.Enter && command -> {
+                                richState.addTextAfterSelection("\n")
+                                true
+                            }
+                            event.key == Key.Enter && !command && !event.isShiftPressed &&
+                                enterKeySendsChatMessage && richState.activeTriggerQuery == null -> {
                                 sendAction()
                                 true
                             }
@@ -181,6 +192,8 @@ internal fun ComposerEditor(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 BasicTextField(
                     value = sourceInput,
+                    // Markdown 源码模式刻意保留 Enter 换行、Cmd/Ctrl+Enter 发送：
+                    // 多行源码的逐行编辑依赖裸 Enter，与可视化模式的全局交互不同。
                     onValueChange = { candidate ->
                         if (acceptsChatSourceInput(candidate)) onSourceInputChange(candidate)
                     },

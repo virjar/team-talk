@@ -790,7 +790,7 @@ fun ChatPanel(
         }
     }
 
-    // ── 发送动作（按钮与 Cmd/Ctrl+Enter 共用）──
+    // ── 发送动作（按钮与桌面裸 Enter 共用；Markdown 源码模式仍为 Cmd/Ctrl+Enter）──
     fun validatedMessageOrReport(message: Message) = canonicalizeChatMessageOrReport(message, viewModel::onError)
     val performSend: () -> Unit = sendAction@{
         // 语音模式没有挂载编辑器，也不能发送不可见的文字草稿。

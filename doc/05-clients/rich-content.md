@@ -26,7 +26,7 @@
 - `toMarkdown()` 生成消息源。聊天草稿在本机保存完整 Markdown、资产 sidecar、光标、模式和回复目标，
   进程重启后恢复；已 READY 的完整内容同步到同账号其他设备，未上传源只由本安装保存，边界见下文。
 - 链接对话框只接受 `http`、`https`、`mailto` 或可补全为 HTTPS 的域名，选择文字后可直接加链。
-- Desktop Enter 换行，Cmd/Ctrl+Enter 发送。
+- Desktop 可视化输入 Enter 发送、Cmd/Ctrl+Enter 换行；Markdown 源码模式保持 Enter 换行。
 - 窄屏聊天把行内代码、删除线和列表收进“更多格式”，常用入口不会被横向裁掉。
 - 表情插入当前光标并恢复焦点。
 - 编辑已有文字消息时重新载入 Markdown，高级内容自动进入源码模式；编辑会话与
