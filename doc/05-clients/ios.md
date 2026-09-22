@@ -2,7 +2,8 @@
 
 iOS 使用 `client/ios` 平台壳，复用 `app` 的业务页面、ViewModel 和编辑器，以及 `shared` 的
 ClientSession、SQLite、同步与可靠发送。Swift 仅提供启动入口、系统生命周期和 APNs 回调。
-最低系统为 iOS 16，包含 iPhone/iPad；当前是待验收源码，不属于已发行 0.0.4 的制品范围。
+最低系统为 iOS 16，包含 iPhone/iPad。iOS 已通过 Apple Silicon 模拟器全链路验收，列为
+开发者预览受支持平台；真机签名、APNs 与设备级验收尚未完成，不属于已发行 0.0.4 的制品范围。
 
 ## 源码与平台边界
 
@@ -121,6 +122,30 @@ Debug 默认 `aps-environment=development`，Release 默认 `production`；实�
 不一致时使用正确的 `APNS_ENVIRONMENT` 重新构建，不能只修改已签名的 plist。
 现有发布注册中心的 iOS 平台枚举用于描述制品，不负责绕过 Apple 签名安装或应用内下载 IPA。
 
+## 分发与安装渠道
+
+iOS 没有"下载即装"的制品：任何安装都经过 Apple 签名。发布注册中心（`clientType/platform/
+arch/channel` 通用模型）可登记 `ios` 平台的版本指针用于描述制品，但不承载 IPA 直接下载；
+发布流水线当前也不产 iOS 产物。可选渠道与结论如下。
+
+| 渠道 | 适用场景 | 前置条件 | 边界 |
+| --- | --- | --- | --- |
+| TestFlight | 公版内测、私有组织内测（默认选择） | Apple Developer Program、签名材料入 `deployment-local`、构建上传 App Store Connect | 内部测试 ≤100 人；外部公开链接 ≤10,000 人且需 Beta 审核；构建 90 天有效 |
+| App Store | 正式发行 | 同上，另加 App 审核 | 正式产品发行另行由用户确认 |
+| Ad-hoc | 少量指定设备调试 | 开发者账号 + 逐台登记 UDID 重签 | 每类设备每年 100 台上限，不适合持续内测 |
+| 企业 In-House | 组织内部专用应用 | Apple Developer Enterprise Program | Apple 严格限制适用范围且存在吊销风险，不用于公开分发 |
+
+第三方内测平台（蒲公英、fir.im 等）的结论是**不引入**：分发 ad-hoc 包并不能免除 Apple 签名
+与开发者账号，反而净增流程复杂度——自动重签需要把签名私钥（p12）托管给第三方；逐台收集
+UDID 属个人信息，合规责任（PIPL）在应用方；平台自身有实名与监管整改历史，服务稳定性不可控。
+TestFlight 以官方渠道覆盖同等能力（免 UDID 登记、人数上限高、支持公开邀请链接），是内测
+分发的默认选择；私有发行由组织使用自己的 Apple 账号走 TestFlight，或经 Apple Business
+Manager 分发自定义 App。
+
+部署站点下载页（`/downloads`）当前固定渲染 Windows/macOS/Linux/Android/无头卡片。iOS 的
+表示原则：不提供 IPA 下载卡片；在取得签名与 TestFlight 材料后，增加 iOS 卡片承载 TestFlight
+公开链接（或私有部署的邀请引导文案）。注册中心接入在实施时一并补齐。
+
 HTTP 使用 URLSession 的系统证书验证与 ATS；公开部署使用 HTTPS。私有 TCP 证书使用部署配置的
 显式证书及目标主机验证，不接受无条件信任。配置明确选用 HTTP 时，生成器只对该服务的精确主机
 生成 ATS 例外，不包含子域或全局放行；iOS 17 起直连 IP 也使用该精确例外。
@@ -219,4 +244,5 @@ OTHER_LDFLAGS 链接的静态框架，否则改动 Kotlin 后会静默运行旧�
 Keychain 以 -34018 失败、无法进入登录页；真实验收使用默认 ad-hoc 签名构建。
 默认关闭、本地启用、命令行覆盖和 CI 环境变量启用均已验证；关闭时 Android/Desktop 编译、
 JVM 回归、架构和协议基线检查通过。会话交互、离线与媒体行为，以及签名与 APNs 真机验收
-尚未完成；当前不把 iOS 标为已发布或已通过设备验收。
+尚未完成；iOS 列为开发者预览受支持平台，不标为已发布或已通过设备验收，内测安装渠道见
+[分发与安装渠道](#分发与安装渠道)。
