@@ -50,7 +50,7 @@
 3. body 实现 AttachmentBody 并声明匹配 MessageType。
 4. SDK canonicalize；服务端 ACK 前查询 AttachmentService/FileStore。
 5. 下载器携带 access token；新附件 body 必须进入 MessageStore 的 attachment→chat 索引。
-6. Desktop/Android 分别设计缓存、进度、打开/播放。
+6. Desktop/Android/iOS 分别设计缓存、进度、打开/播放。
 7. 覆盖不存在路径、伪造 size/type、大文件失败、跨用户引用和匿名下载。
 
 ## 5. 增加领域字段
@@ -99,7 +99,7 @@
 - [ ] 受影响模块编译通过。
 - [ ] 本地边界测试通过。
 - [ ] 真实业务验收覆盖跨模块变化。
-- [ ] Desktop/Android 交互按需验证。
+- [ ] Desktop/Android 交互按需验证；涉及 iOS 时加跑 iOS 模拟器检查。
 - [ ] 没有 secret、临时截图或运行数据进入提交。
 - [ ] 权威文档、reference 状态和链接已更新。
 - [ ] `git diff --check` 无问题。

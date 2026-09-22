@@ -36,7 +36,7 @@ JavaCV `1.5.12` 依赖 FFmpeg `7.1.1-1.5.12`；版本目录与各 classifier 使
 JNI 随 JAR 分发不代表系统库也全部内嵌；Linux 的动态库准备与加载异常定位见
 [Linux 媒体测试环境](../09-testing/local-tests.md#linux-媒体测试环境)。
 
-Ktor、Netty 等多模块框架使用相应 BOM/约束保持一致，并查看服务端、SDK、Android/Desktop 的实际依赖图。
+Ktor、Netty 等多模块框架使用相应 BOM/约束保持一致，并查看服务端、SDK、Android/Desktop（启用 iOS 时含 iOS target）的实际依赖图。
 不要用全局强制版本隐藏不兼容，也不要为升级自动切换传输协议、媒体在线播放或数据存储架构。
 跨代迁移拆分见[路线图](../10-reference/roadmap.md#基础软件的独立迁移)。
 

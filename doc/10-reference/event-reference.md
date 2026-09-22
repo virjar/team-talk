@@ -130,7 +130,7 @@ MESSAGE_ACK。过载或 transport 未就绪时信号直接丢弃，不进入发�
 3. 多次收到同一结果必须安全，缓存写入使用 upsert 或最大水位。
 4. payload 解码、投影或游标落盘失败时不请求下一批，并关闭异常连接；自动重连后从已持久游标重试。
 5. MESSAGE 既有 chat seq，也有用户事件 eventId：seq 用于聊天历史，eventId 用于跨领域离线补偿，两者不能混用。
-6. 新增 NotifyType 必须追加稳定 code、登记 `NotifyContracts`、实现双端处理并通过完备性测试。
+6. 新增 NotifyType 必须追加稳定 code、登记 `NotifyContracts`、实现各图形端处理并通过完备性测试。
 7. 同一 dataset 内的 `SYNC_RESET` 只用 checkpoint 替换紧凑服务器投影；outgoing、Bot inbox、
    会话草稿/已读 outbox 和独立
    文档草稿 store 不属于该边界，必须保留。若认证得到不同 `datasetId`，独立文档 store 必须切换

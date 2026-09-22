@@ -8,7 +8,7 @@ TeamTalk 处于开发者预览阶段，兼容评审以正式 tag 为基线，不
 
 | 身份 | 当前值与来源 | 用途 | 递增时机 |
 |---|---|---|---|
-| 统一展示版本 | `teamtalk.releaseVersion=0.0.4` | Server、SDK、Android、Desktop、MCP 使用同一字符串，配合 commit 排查构建范围 | 用户明确确认正式产品发行后推进；内测 snapshot 保持它不变，不从它推导协议能力 |
+| 统一展示版本 | `teamtalk.releaseVersion=0.0.4` | Server、SDK、Android、Desktop、iOS、MCP 使用同一字符串，配合 commit 排查构建范围 | 用户明确确认正式产品发行后推进；内测 snapshot 保持它不变，不从它推导协议能力 |
 | 协议数字版本 | 发行冻结 `0.3`（ID 3），源码待发布 `0.4`（ID 4），最低支持 `0.0`（ID 0）；`id=(major << 16) \| minor` | 连接协商、协议注解、支持窗口与升级提示 | 正式发行后首次新增契约开启下一 minor，同一发行周期共用它；新 major 从 minor 0 开始 |
 | 正式构建计数 | 根 `teamtalk.releaseBuildNumber=4` | Android `versionCode=buildNumber+1`；正式 Desktop revision 同样映射为 `buildNumber+1` | 正式发行时由用户确认推进；内测 snapshot 不修改它，Android 保持当前 code 手动覆盖 |
 | 内测 Desktop 修订号 | `desktopRevision=完整 Git first-parent 提交数+根构建号+1` | 区分同一展示版本的不同 Desktop 安装包，记录在内测清单与安装元数据中 | 手动 snapshot 交付时自动计算，不写回配置、不依赖 tag；同展示版本的后续 snapshot 从已分发源码的后代构建，原字节重试复用原号 |

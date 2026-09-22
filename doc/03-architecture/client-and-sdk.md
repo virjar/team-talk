@@ -351,7 +351,7 @@ retry-wait、terminal-failed、最老 active 年龄和最大 attempt。遥测仅
 ### 2.9 UI 动作与会话作用域
 
 Feature controller 组织跨 Repository 的页面用例与短期 UI 状态，但不拥有连接、数据库和平台导航。
-Android/Desktop 壳消费同一业务动作，各自决定全屏、弹窗、抽屉和返回逻辑。新增功能先选择已有
+Android/Desktop/iOS 壳消费同一业务动作，各自决定全屏、弹窗、抽屉和返回逻辑。新增功能先选择已有
 feature；只有形成独立业务能力和状态生命周期时才新增 feature，不能把动作重新堆回
 `AppDataState`。
 
@@ -671,7 +671,7 @@ RPC 与消息 ACK 在未就绪、发送窗口断线或等待回包时断线，�
 ### 4.4 群文件：可靠命令与增量投影
 
 选择群文件前，`GroupFilesFeature.captureUploadTarget` 固定群、父目录以及追加版本的 entry/revision。
-三端上传完成都用 `completeUpload` 提交这个目标；期间切群或切目录不会改变文件归属，也不会把旧结果
+各图形端上传完成都用 `completeUpload` 提交这个目标；期间切群或切目录不会改变文件归属，也不会把旧结果
 填入新目录。
 
 `GroupFileRepository` 是这条通用路径中的可靠命令边界。面向 app 的创建目录、发布文件、追加版本、重命名和删除
@@ -1073,7 +1073,7 @@ iOS 在 SQLDelight Native driver 打开前只读检查 SQLite 版本与完整性
 保留 deployment、dataset、owner generation 与协议拒绝事实，不把 refresh bearer 写入数据库或普通文件。
 
 [附件 spool](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/repository/DurableChatAssetSpool.kt)
-由三端共用同一份容量预留、发布、校验和读租约规则；平台只适配私有文件 IO 与流式摘要。
+由各端共用同一份容量预留、发布、校验和读租约规则；平台只适配私有文件 IO 与流式摘要。
 沿用已发行账号目录和不可变 sourceId/digest 文件名。导入按 64 KiB 块写入，fsync 后原子改名；
 重新打开的源在发送任何字节前先分块校验摘要。删除被正在读取的源时等待读租约结束，未完成导入只清理
 没有活跃 reservation 的 partial。封禁清理覆盖数据库、chat-assets、文档草稿、媒体和账号诊断范围。
@@ -1090,7 +1090,7 @@ Desktop GUI 每次打开都先执行 `PRAGMA quick_check`，对已存在的数�
 当前 deployment + dataset + uid 的私有账号 namespace，并创建干净替代库；其他账号和 deployment 不受影响。
 headless JVM 的账号库与 GUI 使用同一恢复路径：确认损坏时移出旧库并重建。
 
-三端媒体缓存共用 app 的 `MediaCacheBudget`，统一字节、4,096 条目、并发预留和 consumer pin；
+各图形端媒体缓存共用 app 的 `MediaCacheBudget`，统一字节、4,096 条目、并发预留和 consumer pin；
 `MediaCacheTargetCoordinator` 只让同一文件等待已有下载，缓存命中和其他文件不排在全局网络锁后面。
 目录枚举、文件校验、认证下载和原子改名仍由平台适配器负责，已发行缓存格式保持不变。
 媒体缓存使用与 SQLite 不同的生命周期：deployment + dataset + uid 仍决定命中目录，但同一物理媒体根只有一份
@@ -1267,10 +1267,10 @@ HTTP 基址命名目录，也不能各自维护全局目录、匿名协程或重
 
 “代码能共享”不是共享的充分理由。交互模型不一致时，应共享业务动作和视觉令牌，分别实现容器。
 
-### 三端资源生命周期对照
+### 各端资源生命周期对照
 
-Desktop、Android 和 Headless 复用 `shared` 的 `ClientSession` / `LocalCache`。
-`AuthController` 位于 `app`，只有两个图形客户端复用；Headless 用 `AgentService` 自行组装认证
+Desktop、Android、iOS 和 Headless 复用 `shared` 的 `ClientSession` / `LocalCache`。
+`AuthController` 位于 `app`，三个图形客户端复用；Headless 用 `AgentService` 自行组装认证
 与会话，不依赖 Compose 或认证 UI。图形端可从
 [DesktopAuthenticatedUiOwner](../../client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/DesktopAuthenticatedUiRetirement.kt)
 和 [AndroidAppDataStateHolder](../../client/android/src/main/kotlin/com/virjar/tk/android/AndroidAppDataStateHolder.kt)

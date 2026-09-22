@@ -31,7 +31,7 @@ Android 与 iOS 是单屏触控应用；平台壳负责各自的导航、权限�
 
 聊天里的收藏、办公引用候选加载和目标读取由 `navigation/feature/MessageActionsFeature` 负责，
 生命周期随登录会话，不随当前聊天切换。引用选择器直接使用带 `spaceId/targetId` 的 `OfficeRefBody`，
-双端共用 `OfficeRefPickerDialog`，选中后交给当前 `ChatViewModel.sendMessage`，与普通消息共用持久
+各图形端共用 `OfficeRefPickerDialog`，选中后交给当前 `ChatViewModel.sendMessage`，与普通消息共用持久
 发送队列、重试和失败气泡。平台负责开关和打开目标后的导航，不另造候选身份模型或 ACK 等待路径。
 
 独立任务由 `navigation/feature/task/TaskFeature` 编排，`TaskWorkspaceScreen` 共享列表、编辑器、详情、
@@ -123,14 +123,14 @@ READY 完整草稿通过独立 `ChatDraftRpc` 在同账号设备间同步。打�
 
 ### 版本协商与升级提示
 
-发行版本、协议版本和本地数据 schema 是三个不同的事实。Android、Desktop、SDK 使用相同的
+发行版本、协议版本和本地数据 schema 是三个不同的事实。Android、iOS、Desktop、SDK 使用相同的
 `TeamTalkBuild.RELEASE_VERSION` 三段发行字符串；它用于显示和诊断，不按字符串大小判断兼容。
 连接兼容由独立的协议 `major/minor` 及双方实际保留的 minor 窗口决定；完整规则见
 [协议与契约](../04-protocol/README.md)。
 
 每条 TCP 连接先发 `NEGOTIATE`，收到并验证 `NEGOTIATE_RESP` 后才发送 AUTH 凭据。
 [AuthSyncCoordinator](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/client/AuthSyncCoordinator.kt)
-持有协商结果，`ImClient`/`ClientSession` 只读发布，`AuthState` 把同一个结果交给双端壳；连接仍使用
+持有协商结果，`ImClient`/`ClientSession` 只读发布，`AuthState` 把同一个结果交给各图形端壳；连接仍使用
 `CONNECTED → SYNCHRONIZING → AUTHENTICATED`，不为横幅另造连接状态机。
 
 | 已知事实 | 客户端表现 |

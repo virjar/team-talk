@@ -69,7 +69,7 @@
 
 ### 05 · 客户端
 
-解释共享 UI 与平台壳的边界、Desktop/Android 交互模型、设计语言和富文本体系。
+解释共享 UI 与平台壳的边界、Desktop/Android/iOS 交互模型、设计语言和富文本体系。
 
 - [客户端总览](05-clients/README.md)
 - [Desktop](05-clients/desktop.md)
@@ -143,7 +143,7 @@
 | 产品定位、能力边界 | `02-product/` |
 | 模块职责、所有权与数据流 | `03-architecture/` |
 | 线上帧、字段顺序、认证和事件语义 | `04-protocol/` + `protocol` 模块中的协议/IDL 代码 |
-| Desktop/Android 交互和视觉规则 | `05-clients/` |
+| Desktop/Android/iOS 交互和视觉规则 | `05-clients/` |
 | 服务端领域与存储实现 | `06-server/` |
 | 环境变量、目录、部署和排障 | `07-operations/` |
 | 编码约束与扩展步骤 | `08-development/` |

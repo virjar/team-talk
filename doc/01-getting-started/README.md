@@ -8,7 +8,7 @@
 最小可用环境包含：
 
 ```text
-Android 或 Desktop 客户端
+Android 或 Desktop 客户端（iOS 为开发者预览，需自行构建）
         │
         ├── TCP（默认 5100）：认证、RPC、消息、通知、心跳
         └── HTTP(S)：文件、静态页面、日志、健康检查

@@ -103,7 +103,7 @@ Lucene 的 analyzer、directory、writer 和 searcher manager 先在局部启动
 [Vite 7 迁移说明](https://v7.vite.dev/guide/migration#default-browser-target-change)。
 构建环境与依赖升级方法见[依赖维护](../08-development/dependency-maintenance.md)。
 
-组织路由 `/api/admin/organization/**` 是管理写控制面；普通 Android/Desktop 目录读取不复用这些
+组织路由 `/api/admin/organization/**` 是管理写控制面；普通 Android/Desktop/iOS 目录读取不复用这些
 JSON 响应，而是走 `OrganizationRpc` 的二进制 revision-fenced 分页。控制面提交成功后可以广播一个
 不含目录行的瞬时 revision 提示，不能把该提示或 HTTP 返回当成终端本地投影的权威快照。
 删除当前负责人的直属归属会返回 409 且不修改任何事实；管理员必须先编辑组织节点变更或清空负责人，

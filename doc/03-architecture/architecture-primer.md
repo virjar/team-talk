@@ -27,7 +27,7 @@ flowchart TB
     Testkit["shared-testkit · 仅测试复用"] --> SDK
 ```
 
-`richeditor` 不依赖 SDK；它由 `app` 引入。Android/Desktop 也直接声明 SDK 依赖，以组装平台资源。
+`richeditor` 不依赖 SDK；它由 `app` 引入。Android/Desktop 也直接声明 SDK 依赖，以组装平台资源（启用 iOS 时 `:client:ios` 亦在图中）。
 `admin` 的静态资源构建边和 KSP 生成边不是业务运行时调用。服务端测试可以依赖 SDK/testkit，生产代码不可以。
 实际依赖以 [settings.gradle.kts](../../settings.gradle.kts) 和各模块构建文件为准。
 

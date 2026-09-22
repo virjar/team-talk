@@ -36,7 +36,7 @@ TeamTalk 选择的是“可理解、可部署、可演进”的单体架构，�
 - 文档空间、Markdown 编辑、评论与版本历史，支持空间权限、文档树和桌面多标签。
 - 待办工作台、群固定卡片与执行人提醒，支持每 N 周/月重复、关联文档和附件、延期理由与处理指标。
 - 内嵌文件服务；附件始终由 TeamTalk 服务端管理，不依赖第三方对象存储。
-- Android、macOS、Windows、Linux Desktop 客户端，以及可用于自动化和 AI 接入的无头 SDK。
+- Android、iOS、macOS、Windows、Linux Desktop 客户端，以及可用于自动化和 AI 接入的无头 SDK。
 - 可配置的私有化部署、管理后台、健康检查、客户端日志和真实部署验收。
 
 能力的实现状态与已知缺口见[功能状态](doc/10-reference/feature-status.md)。
@@ -190,7 +190,7 @@ TLS 是传输配置；当前客户端和部署组合的边界见上面的配置�
 | 判断为什么选择 TeamTalk | [与飞书、钉钉、企业微信的选择逻辑](doc/02-product/why-teamtalk.md) |
 | 理解模块、数据流和可靠性 | [系统架构](doc/03-architecture/README.md) |
 | 对接 SDK 或实现其他语言客户端 | [协议与契约](doc/04-protocol/README.md) |
-| 修改 Desktop、Android 或富文本体验 | [客户端](doc/05-clients/README.md) |
+| 修改 Desktop、Android、iOS 或富文本体验 | [客户端](doc/05-clients/README.md) |
 | 修改领域服务或存储 | [服务端](doc/06-server/README.md) |
 | 部署、监控和排障 | [运维](doc/07-operations/README.md) |
 | 增加 RPC、消息类型或业务能力 | [开发与扩展](doc/08-development/README.md) |

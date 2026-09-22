@@ -1,6 +1,6 @@
 # 无头客户端与自动化接入
 
-无头客户端是 TeamTalk 的一种正式客户端形态：它使用与 Desktop、Android 相同的协议、认证、Repository、事件和附件安全链路，但不创建 UI。适合机器人、业务桥接、测试对端和 AI 工具。
+无头客户端是 TeamTalk 的一种正式客户端形态：它使用与 Desktop、Android、iOS 相同的协议、认证、Repository、事件和附件安全链路，但不创建 UI。适合机器人、业务桥接、测试对端和 AI 工具。
 
 ## 1. 组件关系
 

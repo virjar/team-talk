@@ -453,7 +453,7 @@ Android 发布验收还必须覆盖 **release APK × 非 loopback HTTP 地址**�
 上传/下载和群机器人列表。报告分别记录 HTTP 与 TCP 的目标和信任方式；历史 WebPKI 验收不能替代
 自签 TCP 验收，两者都不能证明远程明文 TCP 可用。认证请求仍不跟随重定向。
 
-自签 IP 部署另须验证：公共 PEM 随部署配置注入 Android、Desktop 和无头 SDK，私钥未进入产物；
+自签 IP 部署另须验证：公共 PEM 随部署配置注入 Android、Desktop、iOS 和无头 SDK，私钥未进入产物；
 错误证书与错误 SAN 均失败，默认公版仍使用平台 WebPKI；重复生成与普通服务器升级保留原证书私钥，
 升级前后原客户端继续连接。按[连接矩阵](../07-operations/configuration.md#传输配置边界)记录各端实际结果，
 不把证书工具测试写成真实双端验收已通过。
