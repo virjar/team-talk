@@ -73,6 +73,8 @@ private val BASELINE_PAGE_CODES = setOf(
     "documents",
     "tasks",
     "chat_tools",
+    "chat_history_search",
+    "chat_history_browser",
     "join_by_invite",
     "settings",
     "chat",
