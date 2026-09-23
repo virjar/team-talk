@@ -20,10 +20,20 @@ import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.Outcome
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import platform.UIKit.*
 
 fun MainViewController(): UIViewController = ComposeUIViewController {
-    AppTheme(touchDensity = true) { IosAppRoot() }
+    // Compose 的 isSystemInDarkTheme 在纯 UIKit 宿主中不可靠：系统深色事实源
+    // 由 Swift 壳推送（systemDarkMode），应用内覆盖（浅色/深色）仍由 TkTheme 裁决。
+    val systemDark by IosApplicationRuntime.systemDarkMode.collectAsState()
+    val darkTheme = when (com.virjar.tk.app.ui.theme.TkTheme.mode) {
+        com.virjar.tk.app.ui.theme.ThemeMode.LIGHT -> false
+        com.virjar.tk.app.ui.theme.ThemeMode.DARK -> true
+        else -> systemDark
+    }
+    AppTheme(darkTheme = darkTheme, touchDensity = true) { IosAppRoot() }
 }.also { IosApplicationRuntime.rootViewController = it }
 
 internal data class IosNotificationTarget(val chatId: String, val deployment: String, val dataset: String, val uid: String)
@@ -32,6 +42,15 @@ internal data class IosPushToken(val token: String, val environment: String)
 /** Swift delegates application events only; authenticated business ownership stays in Kotlin. */
 object IosApplicationRuntime {
     internal var rootViewController: UIViewController? = null
+
+    /**
+     * 系统深色模式事实源：SwiftUI `@Environment(\.colorScheme)` 由 Swift 壳推送
+     * （TeamTalkApp.swift）。Compose 的 isSystemInDarkTheme 在纯 UIKit 宿主中不可靠。
+     * public 是 Kotlin/Swift 边界的需要。
+     */
+    private val systemDark = MutableStateFlow(false)
+    public val systemDarkMode: StateFlow<Boolean> = systemDark.asStateFlow()
+    public fun setSystemDark(dark: Boolean) { systemDark.value = dark }
 
     /**
      * 应用内相机桥：Swift 壳启动时注册（AppleApp/IosChatCameraController.swift），

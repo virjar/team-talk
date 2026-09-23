@@ -12,7 +12,7 @@ struct TeamTalkApp: App {
         WindowGroup {
             // Compose 自行消费 safeDrawing insets（含键盘）；SwiftUI 若默认按安全区收缩
             // 承载视图，状态栏与底部手势条会被避让两次，页面标题出现双倍留白。
-            TeamTalkView().ignoresSafeArea()
+            ThemeAwareHost()
                 .onAppear {
                     if scenePhase == .active { appDelegate.resumeForeground() }
                 }
@@ -24,6 +24,21 @@ struct TeamTalkApp: App {
                     }
                 }
         }
+    }
+}
+
+/// SwiftUI 环境的系统深色事实源推送：纯 UIKit 宿主中 Compose 的
+/// isSystemInDarkTheme 不可靠，iOS 的系统深色跟随以本桥为准。
+private struct ThemeAwareHost: View {
+    @Environment(\.colorScheme) private var colorScheme
+    var body: some View {
+        TeamTalkView().ignoresSafeArea()
+            .onAppear {
+                IosApplicationRuntime.shared.setSystemDark(dark: colorScheme == .dark)
+            }
+            .onChange(of: colorScheme) { newValue in
+                IosApplicationRuntime.shared.setSystemDark(dark: newValue == .dark)
+            }
     }
 }
 
