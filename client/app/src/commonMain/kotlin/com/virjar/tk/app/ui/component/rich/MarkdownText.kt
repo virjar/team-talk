@@ -483,10 +483,11 @@ private fun List<MdSpan>.toAnnotated(
     onUrlClick: ((String) -> Unit)?,
     onMentionClick: ((String) -> Unit)?,
 ): AnnotatedString {
-    // 深色表面上的浅色正文不能继续使用 primary 蓝；链接/提及改用白色系（F20）。
+    // 深色表面上的浅色正文不能继续使用 primary 蓝；链接/提及改用浅蓝链接色——
+    // 纯白与正文无区分度（F20 初版改白的补充：保留可读性同时恢复"链接"视觉身份）。
     val onDarkSurface = LocalContentColor.current.luminance() > 0.5f
-    val linkColor = if (onDarkSurface) Color.White else MaterialTheme.colorScheme.onPrimaryContainer
-    val mentionBg = if (onDarkSurface) Color.White.copy(alpha = 0.2f)
+    val linkColor = if (onDarkSurface) Color(0xFF9DC1FF) else MaterialTheme.colorScheme.onPrimaryContainer
+    val mentionBg = if (onDarkSurface) Color(0xFF5B8DFF).copy(alpha = 0.25f)
     else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
     val inlineCodeBg = LocalContentColor.current.copy(alpha = 0.12f)
     return buildAnnotatedString {
