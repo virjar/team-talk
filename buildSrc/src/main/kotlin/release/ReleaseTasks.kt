@@ -185,8 +185,9 @@ fun registerReleaseTasks(
                 ReleaseBundle.verify(bundle, identity, notes)
                 if ("site" in targets) {
                     val token = option("clientReleaseToken", "TEAMTALK_CLIENT_RELEASE_TOKEN")!!
-                    val result = release.publish.ClientReleasePublisher(config.serverUrl, token)
-                        .publish(bundle, identity)
+                    val result = release.publish.ClientReleasePublisher(config.serverUrl, token) {
+                        project.logger.lifecycle(it)
+                    }.publish(bundle, identity)
                     project.logger.lifecycle(
                         "Client release registry publication ({} targets): {}",
                         result.uploaded.size, result.uploaded.joinToString(),

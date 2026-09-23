@@ -14,6 +14,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
@@ -27,9 +28,17 @@ import java.util.zip.ZipOutputStream
 class ClientReleasePublisher(
     private val serverBaseUrl: String,
     private val token: String,
+    private val log: (String) -> Unit = {},
 ) {
 
     class PublicationResult(val uploaded: List<String>)
+
+    private companion object {
+        const val UPLOAD_ATTEMPTS = 3
+        const val RETRY_BACKOFF_MILLIS = 15_000L
+        /** 外层硬超时须长于请求自身 timeout，正常路径不受影响。 */
+        val UPLOAD_DEADLINE = Duration.ofMinutes(31)
+    }
 
     fun publish(bundle: File, identity: BundleIdentity): PublicationResult {
         val channel = when (identity.distributionKind) {
@@ -209,11 +218,44 @@ class ClientReleasePublisher(
             .timeout(Duration.ofMinutes(30))
             .POST(body)
             .build()
-        val response = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build().send(request, HttpResponse.BodyHandlers.ofString())
-        check(response.statusCode() == 200) {
-            "client release upload ($label) failed: HTTP ${response.statusCode()} ${response.body().take(500)}"
+        var lastFailure: Throwable? = null
+        repeat(UPLOAD_ATTEMPTS) { attempt ->
+            if (attempt > 0) {
+                log("client release upload ($label) retry ${attempt + 1}/$UPLOAD_ATTEMPTS after: $lastFailure")
+                Thread.sleep(RETRY_BACKOFF_MILLIS * attempt)
+            }
+            // HTTP/1.1 + 外层硬超时：JDK HttpClient 在 h2 大 body 上传被对端重置时，
+            // 同步 send 会忽略 request timeout 永久挂起；服务端对原字节重试幂等。
+            val client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(30))
+                .version(HttpClient.Version.HTTP_1_1)
+                .build()
+            try {
+                val pending = client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                val response = try {
+                    pending.get(UPLOAD_DEADLINE.toMinutes(), TimeUnit.MINUTES)
+                } catch (e: Exception) {
+                    pending.cancel(true)
+                    throw e
+                }
+                check(response.statusCode() == 200) {
+                    "client release upload ($label) failed: HTTP ${response.statusCode()} ${response.body().take(500)}"
+                }
+                return label
+            } catch (interrupted: InterruptedException) {
+                throw interrupted
+            } catch (rejected: IllegalStateException) {
+                // 服务端语义拒绝（HTTP 非 200）：重试无意义，直接失败。
+                throw rejected
+            } catch (timeout: java.util.concurrent.TimeoutException) {
+                lastFailure = timeout
+            } catch (wrapped: java.util.concurrent.ExecutionException) {
+                lastFailure = wrapped.cause ?: wrapped
+            } catch (transport: java.io.IOException) {
+                lastFailure = transport
+            }
         }
-        return label
+        throw IllegalStateException("client release upload ($label) failed after $UPLOAD_ATTEMPTS attempts", lastFailure)
     }
 
 }
