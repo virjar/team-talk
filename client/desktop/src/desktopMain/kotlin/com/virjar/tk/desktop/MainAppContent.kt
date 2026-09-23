@@ -334,7 +334,14 @@ internal fun WindowScope.MainAppContent(
     }
 
     // ── 应用壳层 + 三栏常驻布局 ──
-    Box(modifier = Modifier.fillMaxSize().testTag("main.home")) {
+    // 根容器必须铺主题背景：窗格间的透明拖拽手柄（6dp）会露出原生窗口的白底，
+    // 深色模式下形成刺眼亮条。
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .testTag("main.home"),
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
             DesktopTitleBar(
                 query = nav.globalSearchQuery,
