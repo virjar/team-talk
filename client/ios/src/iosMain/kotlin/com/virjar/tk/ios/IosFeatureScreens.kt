@@ -9,6 +9,8 @@ import com.virjar.tk.app.navigation.ScreenDataKey
 import com.virjar.tk.app.ui.UiActionAdmission
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetLocalSelection
 import com.virjar.tk.app.ui.screen.*
+import com.virjar.tk.app.viewmodel.ChatHistoryCategory
+import com.virjar.tk.app.viewmodel.ChatHistorySenderOption
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.protocol.body.OfficeRefBody
 import com.virjar.tk.protocol.model.*
@@ -100,12 +102,87 @@ internal fun IosFeatureScreen(route: IosRoute, ui: IosSessionUi) = key(ui, route
             } ?: "当前会话"
             ChatToolsScreen(
                 chatName = name, isGroup = conversation?.chatType == ChatType.GROUP.code,
+                onOpenHistorySearch = admission.guard {
+                    ui.navigation.open(IosRoute(IosPage.CHAT_HISTORY_SEARCH, route.id))
+                },
                 onCreateGroup = admission.guard {
                     ui.navigation.open(IosRoute(IosPage.CREATE_GROUP, conversation?.peerUid.orEmpty()))
                 },
                 onClearHistory = { actions.run({ "会话已关闭" }) { data.chat.clearChatHistory(route.id) } },
                 onFinished = actions.back, onBack = actions.back,
             )
+        }
+        IosPage.CHAT_HISTORY_SEARCH -> {
+            val conversations by data.conversationViewModel.conversations.collectAsState()
+            val peers by data.conversationViewModel.peerUsers.collectAsState()
+            val contacts by data.contactViewModel.contacts.collectAsState()
+            val conversation = conversations.firstOrNull { it.chatId == route.id }
+            val remarks = remember(contacts) { contactRemarks(contacts) }
+            val name = conversation?.let {
+                conversationIdentityPresentation(it, it.peerUid?.let(peers::get), it.peerUid?.let(remarks::get)).name
+            } ?: "当前会话"
+            ChatHistorySearchHubScreen(
+                chatName = name,
+                onSearchAll = { keyword ->
+                    ui.navigation.chatHistoryBrowser(
+                        ChatHistoryBrowserRequest(route.id, name, ChatHistoryCategory.CHAT_RECORDS, keyword),
+                    )
+                },
+                onOpenCategory = { category ->
+                    ui.navigation.chatHistoryBrowser(ChatHistoryBrowserRequest(route.id, name, category))
+                },
+                onBack = actions.back,
+            )
+        }
+        IosPage.CHAT_HISTORY_BROWSER -> {
+            val request = ui.navigation.requestedChatHistoryBrowser
+            if (request == null) {
+                // 路由存在但请求参数缺失（如进程恢复丢状态）：直接退回上一页。
+                LaunchedEffect(Unit) { actions.back() }
+            } else {
+                val conversations by data.conversationViewModel.conversations.collectAsState()
+                val conversation = conversations.firstOrNull { it.chatId == request.chatId }
+                val isGroup = conversation?.chatType == ChatType.GROUP.code
+                val members by data.chat.observeChatMembers(request.chatId).collectAsState(emptyList())
+                val senderOptions = remember(request.chatId, isGroup, members, conversation) {
+                    buildList {
+                        if (isGroup) {
+                            members.forEach { member ->
+                                add(
+                                    ChatHistorySenderOption(
+                                        uid = member.uid,
+                                        name = member.user?.name?.takeIf(String::isNotBlank)
+                                            ?: member.user?.username
+                                            ?: member.nickname?.takeIf(String::isNotBlank)
+                                            ?: member.uid.take(8),
+                                    ),
+                                )
+                            }
+                        }
+                        add(
+                            ChatHistorySenderOption(
+                                uid = data.userSession.uid,
+                                name = data.userSession.name?.takeIf(String::isNotBlank)
+                                    ?: data.userSession.username?.takeIf(String::isNotBlank)
+                                    ?: "我",
+                            ),
+                        )
+                    }.distinctBy { it.uid }
+                }
+                val clearedBeforeSeq = remember(request.chatId) {
+                    data.chat.chatHistoryClearedBefore(request.chatId)
+                }
+                ChatHistoryBrowserScreen(
+                    category = request.category,
+                    chatName = request.chatName,
+                    initialKeyword = request.initialKeyword,
+                    senderOptions = senderOptions,
+                    clearedBeforeSeq = clearedBeforeSeq,
+                    scanPage = { fromSeq, limit -> data.chat.queryHistoryPage(request.chatId, fromSeq, limit) },
+                    onMessageClick = { message -> actions.chat(message.chatId, message.serverSeq) },
+                    onBack = actions.back,
+                )
+            }
         }
         IosPage.SEARCH -> IosSearchScreen(actions)
         IosPage.SEARCH_USERS -> SearchUsersScreen(

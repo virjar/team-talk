@@ -111,6 +111,8 @@ private fun iosTelemetryPage(route: IosRoute, tab: MainTab): ClientUiPage = when
     }
     IosPage.CHAT -> ClientUiPage.CHAT
     IosPage.CHAT_TOOLS -> ClientUiPage.CHAT_TOOLS
+    IosPage.CHAT_HISTORY_SEARCH -> ClientUiPage.CHAT_HISTORY_SEARCH
+    IosPage.CHAT_HISTORY_BROWSER -> ClientUiPage.CHAT_HISTORY_BROWSER
     IosPage.SEARCH -> ClientUiPage.SEARCH_MESSAGES
     IosPage.SEARCH_USERS -> ClientUiPage.SEARCH_USERS
     IosPage.CREATE_GROUP -> ClientUiPage.CREATE_GROUP
