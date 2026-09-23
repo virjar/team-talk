@@ -44,6 +44,14 @@ h1 { font-size: clamp(40px, 3.85vw, 52px); line-height: 1.3; letter-spacing: -2p
 .button-primary:hover { background: #1b4bb6; color: #fff; }
 .button-outline { border-color: #ccd6e7; background: #fff; }
 .button-outline:hover { background: var(--surface); }
+.hero-ai-hint {
+    margin: 14px 0 0;
+    color: #67758a;
+    font-size: 13px;
+    line-height: 1.6;
+}
+.hero-ai-hint a { color: #3370ff; text-decoration: none; }
+.hero-ai-hint a:hover { text-decoration: underline; }
 .hero-platforms { margin-top: 19px; color: #67758a; font-size: 12px; }
 .hero-platforms span { margin: 0 6px; }
 .workflow { background: var(--surface); border: 1px solid #dbe3ef; border-radius: 18px; box-shadow: 0 22px 65px -36px #254d8a50; overflow: hidden; }
