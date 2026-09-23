@@ -601,6 +601,9 @@ interface LocalCache : LocalDocumentProjection {
      */
     fun clearChatHistory(chatId: String)
 
+    /** 读取本机清空水位（0 = 未清空）；服务端只读查询（搜索等）用它排除已清空消息。 */
+    fun clearedChatHistoryBefore(chatId: String): Long = 0L
+
     /**
      * 为一次服务端会话全量请求分配唯一代次。必须在发起 RPC 之前调用。
      *

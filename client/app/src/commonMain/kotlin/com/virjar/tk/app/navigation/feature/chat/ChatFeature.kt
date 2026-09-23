@@ -122,6 +122,29 @@ class ChatFeature(
     /** 首次收集直接呈现 SDK 的持久投影；UI 不另建头像映射或事件桥。 */
     val chatAvatars = localData.projection(session.localCache::observeChatAvatars)
 
+    /** 观察会话成员（含已解析用户）；聊天记录搜索的发送人筛选项来源。 */
+    fun observeChatMembers(chatId: String) =
+        localData.projection { session.localCache.observeMembers(chatId) }
+
+    /** 本机清空水位：聊天记录搜索用它排除已清空消息（服务端读取不经过本地落库路径）。 */
+    fun chatHistoryClearedBefore(chatId: String): Long =
+        destroyGate.readIfOpen { session.localCache.clearedChatHistoryBefore(chatId) } ?: 0L
+
+    /**
+     * 只读倒序历史页（不写本地缓存、不触碰常驻窗口）；聊天记录扫描器使用。
+     * 失败向上抛出，由调用方区分“到底”与“失败”。
+     */
+    suspend fun queryHistoryPage(
+        chatId: String,
+        fromSeq: Long,
+        limit: Int,
+    ): List<com.virjar.tk.protocol.model.Message> {
+        if (!destroyGate.acceptsWork) return emptyList()
+        return localData.run {
+            session.messageRepo.queryHistory(chatId, fromSeq, limit).getOrThrow()
+        }
+    }
+
     /** 群头像设置：owner/管理员经既认证 staging 上传后调用；本地投影即时更新。 */
     fun setGroupAvatar(chatId: String, attachment: com.virjar.tk.protocol.model.Attachment?) {
         destroyGate.runIfOpen {

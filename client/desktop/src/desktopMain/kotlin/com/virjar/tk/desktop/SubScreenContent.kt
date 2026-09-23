@@ -10,6 +10,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import com.virjar.tk.shared.repository.ResolvedContentSearchHit
+import com.virjar.tk.app.viewmodel.ChatHistoryCategory
+import com.virjar.tk.app.viewmodel.ChatHistorySenderOption
 
 /**
  * 单个子屏幕的渲染器（参数驱动，不读写全局导航状态）。
@@ -177,6 +179,9 @@ internal fun SubScreenContent(
             chatName = screen.chatName,
             isGroup = com.virjar.tk.protocol.model.ChatType.fromCode(screen.chatType) ==
                 com.virjar.tk.protocol.model.ChatType.GROUP,
+            onOpenHistorySearch = {
+                navigateIfOpen(SubScreen.ChatHistorySearch(screen.chatId, screen.chatName))
+            },
             onCreateGroup = {
                 navigateIfOpen(
                     SubScreen.CreateGroup(screen.peerUid?.let { uid -> setOf(uid) } ?: emptySet()),
@@ -190,6 +195,85 @@ internal fun SubScreenContent(
             onFinished = backIfOpen,
             onBack = onBack,
         )
+
+        is SubScreen.ChatHistorySearch -> ChatHistorySearchHubScreen(
+            chatName = screen.chatName,
+            onSearchAll = { keyword ->
+                navigateIfOpen(
+                    SubScreen.ChatHistoryBrowser(
+                        chatId = screen.chatId,
+                        chatName = screen.chatName,
+                        category = ChatHistoryCategory.CHAT_RECORDS,
+                        initialKeyword = keyword,
+                    ),
+                )
+            },
+            onOpenCategory = { category ->
+                navigateIfOpen(
+                    SubScreen.ChatHistoryBrowser(screen.chatId, screen.chatName, category),
+                )
+            },
+            onBack = onBack,
+        )
+
+        is SubScreen.ChatHistoryBrowser -> {
+            val conversation = conversations.firstOrNull { it.chatId == screen.chatId }
+            val isGroup = conversation?.chatType == com.virjar.tk.protocol.model.ChatType.GROUP.code
+            val members by data.chat.observeChatMembers(screen.chatId).collectAsState(emptyList())
+            val senderOptions = remember(screen.chatId, isGroup, members, conversation, conversationPeerUsers) {
+                buildList {
+                    if (isGroup) {
+                        members.forEach { member ->
+                            add(
+                                ChatHistorySenderOption(
+                                    uid = member.uid,
+                                    name = member.user?.name?.takeIf(String::isNotBlank)
+                                        ?: member.user?.username
+                                        ?: member.nickname?.takeIf(String::isNotBlank)
+                                        ?: member.uid.take(8),
+                                ),
+                            )
+                        }
+                    } else {
+                        conversation?.peerUid?.let { uid ->
+                            add(
+                                ChatHistorySenderOption(
+                                    uid = uid,
+                                    name = conversationPeerUsers[uid]?.name?.takeIf(String::isNotBlank)
+                                        ?: conversation.chatName?.takeIf(String::isNotBlank)
+                                        ?: uid.take(8),
+                                ),
+                            )
+                        }
+                        add(
+                            ChatHistorySenderOption(
+                                uid = data.userSession.uid,
+                                name = data.userSession.name?.takeIf(String::isNotBlank)
+                                    ?: data.userSession.username?.takeIf(String::isNotBlank)
+                                    ?: "我",
+                            ),
+                        )
+                    }
+                }.distinctBy { it.uid }
+            }
+            val clearedBeforeSeq = remember(screen.chatId) {
+                data.chat.chatHistoryClearedBefore(screen.chatId)
+            }
+            ChatHistoryBrowserScreen(
+                category = screen.category,
+                chatName = screen.chatName,
+                initialKeyword = screen.initialKeyword,
+                senderOptions = senderOptions,
+                clearedBeforeSeq = clearedBeforeSeq,
+                scanPage = { fromSeq, limit ->
+                    admittedSuspend(onClosed = { emptyList() }) {
+                        data.chat.queryHistoryPage(screen.chatId, fromSeq, limit)
+                    }
+                },
+                onMessageClick = { message -> openMessageIfOpen(message.chatId, message.serverSeq) },
+                onBack = onBack,
+            )
+        }
 
         is SubScreen.GroupDetail -> {
             val detailReady = data.groups.detailTargetChatId == screen.chatId

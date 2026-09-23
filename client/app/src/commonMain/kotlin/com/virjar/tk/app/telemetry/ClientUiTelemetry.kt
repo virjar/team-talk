@@ -34,6 +34,8 @@ enum class ClientUiPage(val code: String) {
     JOIN_BY_INVITE("join_by_invite"),
     FORWARD("forward"),
     CHAT_TOOLS("chat_tools"),
+    CHAT_HISTORY_SEARCH("chat_history_search"),
+    CHAT_HISTORY_BROWSER("chat_history_browser"),
     TEXT_ATTACHMENT_PREVIEW("text_attachment_preview"),
     DOCUMENT_WINDOW("document_window"),
     MEDIA_GALLERY("media_gallery"),
