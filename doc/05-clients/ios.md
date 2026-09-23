@@ -3,7 +3,7 @@
 iOS 使用 `client/ios` 平台壳，复用 `app` 的业务页面、ViewModel 和编辑器，以及 `shared` 的
 ClientSession、SQLite、同步与可靠发送。Swift 仅提供启动入口、系统生命周期和 APNs 回调。
 最低系统为 iOS 16，包含 iPhone/iPad。iOS 已通过 Apple Silicon 模拟器全链路验收，列为
-开发者预览受支持平台；真机签名、APNs 与设备级验收尚未完成，不属于已发行 0.0.4 的制品范围。
+开发者预览受支持平台；真机签名、APNs 与设备级验收尚未完成，不属于已发行 0.0.5 的制品范围。
 
 ## 源码与平台边界
 
@@ -163,7 +163,7 @@ APNs 使用系统可见通知。服务端复用持久通知任务，按账号设
 deployment/dataset/uid/chatId，客户端验证范围后打开相应会话；消息正文仍从权威同步获取。
 没有 silent push 保活或依赖通知必达的同步分支。
 
-APNs 注册需要待发布协议 0.4 的 `device/4`；旧 `device/3` 及已发行协议保持原布局。
+APNs 注册使用协议 0.4 的 `device/4`；旧 `device/3` 保持原布局，供更早版本客户端使用。
 登录已发布的旧服务端时，设备标识按协商结果使用既有 UNKNOWN；新服务端使用 IOS。
 HTTP 遥测沿用既有 UNKNOWN 枚举并以 `osName=iOS`、`distribution=ios` 标明平台，
 避免旧服务端拒绝持久批次；不会在上传重试时修改批内容或批身份。
