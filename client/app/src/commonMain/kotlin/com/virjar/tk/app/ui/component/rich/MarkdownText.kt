@@ -20,11 +20,20 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.role
@@ -407,11 +416,23 @@ private fun MarkdownSpanSequence(
     ) {
         spans.toSegments().forEach { segment ->
             when (segment) {
-                is MarkdownSpanSegment.Text -> Text(
-                    text = segment.spans.toAnnotated(onUrlClick, onMentionClick),
-                    style = style,
-                    color = color,
-                )
+                is MarkdownSpanSegment.Text -> {
+                    val annotated = segment.spans.toAnnotated(onUrlClick, onMentionClick)
+                    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
+                    Text(
+                        text = annotated.annotated,
+                        style = style,
+                        color = color,
+                        onTextLayout = { layout = it },
+                        modifier = Modifier.drawBehind {
+                            layout?.let { result ->
+                                annotated.mentionRanges.forEach { range ->
+                                    drawMentionCapsule(result, range, annotated.capsuleColor)
+                                }
+                            }
+                        },
+                    )
+                }
                 is MarkdownSpanSegment.Asset -> {
                     val asset = segment.span
                     if (embeddedAssetContent != null) {
@@ -482,7 +503,7 @@ private fun decodeTableCellForMessage(markdown: String): String = buildString(ma
 private fun List<MdSpan>.toAnnotated(
     onUrlClick: ((String) -> Unit)?,
     onMentionClick: ((String) -> Unit)?,
-): AnnotatedString {
+): AnnotatedMentions {
     // 深色表面上的浅色正文不能继续使用 primary 蓝；链接/提及改用浅蓝链接色——
     // 纯白与正文无区分度（F20 初版改白的补充：保留可读性同时恢复"链接"视觉身份）。
     val onDarkSurface = LocalContentColor.current.luminance() > 0.5f
@@ -490,7 +511,8 @@ private fun List<MdSpan>.toAnnotated(
     val mentionBg = if (onDarkSurface) Color(0xFF5B8DFF).copy(alpha = 0.25f)
     else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
     val inlineCodeBg = LocalContentColor.current.copy(alpha = 0.12f)
-    return buildAnnotatedString {
+    val mentionRanges = mutableListOf<IntRange>()
+    return AnnotatedMentions(buildAnnotatedString {
         forEach { span ->
             when (span) {
                 is MdSpan.Text -> append(span.text)
@@ -521,21 +543,54 @@ private fun List<MdSpan>.toAnnotated(
                 }
                 is MdSpan.EmbeddedAsset -> append(span.source)
                 is MdSpan.Mention -> {
-                    // mention 胶囊：主色文字 + 半透明底（点击进资料）
+                    // mention 胶囊：链接色文字 + 圆角胶囊底（drawBehind 自绘，点击进资料）
                     if (onMentionClick != null) {
                         pushLink(LinkAnnotation.Clickable(tag = span.uid) { onMentionClick(span.uid) })
                     }
-                    pushStyle(
-                        SpanStyle(
-                            color = if (onMentionClick != null) linkColor else LocalContentColor.current,
-                            background = mentionBg,
-                        )
-                    )
+                    pushStyle(SpanStyle(color = if (onMentionClick != null) linkColor else LocalContentColor.current))
+                    val mentionStart = length
                     append("@${span.name}")
+                    mentionRanges += mentionStart until length
                     pop()
                     if (onMentionClick != null) pop()
                 }
             }
         }
+    }, mentionRanges = mentionRanges, capsuleColor = mentionBg)
+}
+
+/** Mention 胶囊：圆角矩形底（行高框 + 水平内边距），与文字字形解耦——@ 与中文同高。 */
+private fun DrawScope.drawMentionCapsule(
+    layout: TextLayoutResult,
+    range: IntRange,
+    color: Color,
+) {
+    if (range.isEmpty()) return
+    val padH = 3.dp.toPx()
+    val padV = 1.5.dp.toPx()
+    val radius = 4.dp.toPx()
+    val firstLine = layout.getLineForOffset(range.first)
+    val lastLine = layout.getLineForOffset(range.last)
+    for (line in firstLine..lastLine) {
+        val start = maxOf(range.first, layout.getLineStart(line))
+        val end = minOf(range.last + 1, layout.getLineEnd(line, visibleEnd = true))
+        if (end <= start) continue
+        val x0 = layout.getHorizontalPosition(start, usePrimaryDirection = true) - padH
+        val x1 = layout.getHorizontalPosition(end, usePrimaryDirection = true) + padH
+        val y0 = layout.getLineTop(line) - padV
+        val y1 = layout.getLineBottom(line) + padV
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(x0, y0),
+            size = Size(x1 - x0, y1 - y0),
+            cornerRadius = CornerRadius(radius, radius),
+        )
     }
 }
+
+/** 行内 spans 的渲染产物：AnnotatedString + Mention 胶囊区间与底色。 */
+internal class AnnotatedMentions(
+    val annotated: AnnotatedString,
+    val mentionRanges: List<IntRange>,
+    val capsuleColor: Color,
+)
