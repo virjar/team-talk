@@ -28,7 +28,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import java.awt.Cursor
 import androidx.compose.ui.window.WindowScope
@@ -521,7 +523,8 @@ private fun MainListPane(
             }
         }
         ListPaneResizeHandle(
-            onDelta = { drag -> listPaneWidth = (listPaneWidth + drag.dp).coerceIn(240.dp, 480.dp) },
+            paneWidth = listPaneWidth,
+            onWidthChange = { listPaneWidth = it.coerceIn(240.dp, 480.dp) },
             onDragEnd = { persistListPaneWidth(listPaneWidth) },
         )
     }
@@ -939,10 +942,14 @@ internal fun desktopTelemetryPage(screen: SubScreen): ClientUiPage = when (scree
 /** 会话列表栏右缘的拖拽分割条：悬停/拖动高亮，边界 240–480dp，拖完持久化。 */
 @Composable
 private fun ListPaneResizeHandle(
-    onDelta: (Float) -> Unit,
+    paneWidth: Dp,
+    onWidthChange: (Dp) -> Unit,
     onDragEnd: () -> Unit,
 ) {
+    val density = LocalDensity.current
     var dragging by remember { mutableStateOf(false) }
+    var startWidth by mutableFloatStateOf(paneWidth.value)
+    var traveledDp by mutableFloatStateOf(0f)
     androidx.compose.foundation.layout.Box(
         modifier = Modifier
             .fillMaxHeight()
@@ -956,12 +963,19 @@ private fun ListPaneResizeHandle(
             )
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
-                    onDragStart = { dragging = true },
+                    onDragStart = {
+                        dragging = true
+                        startWidth = paneWidth.value
+                        traveledDp = 0f
+                    },
                     onDragEnd = { dragging = false; onDragEnd() },
                     onDragCancel = { dragging = false },
                 ) { change, dragAmount ->
                     change.consume()
-                    onDelta(dragAmount)
+                    // dragAmount 是物理像素：必须经密度换算成 dp，否则 Retina 屏上
+                    // 手柄只以鼠标半速移动。累计量不钳制，输出宽度才钳制，避免死区。
+                    traveledDp += with(density) { dragAmount.toDp().value }
+                    onWidthChange((startWidth + traveledDp).dp.coerceIn(240.dp, 480.dp))
                 }
             },
     )
