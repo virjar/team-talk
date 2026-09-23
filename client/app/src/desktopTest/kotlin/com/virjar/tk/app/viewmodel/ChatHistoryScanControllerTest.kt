@@ -5,8 +5,8 @@ import com.virjar.tk.protocol.body.RichTextBody
 import com.virjar.tk.protocol.model.Message
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
-import java.time.Instant
-import java.time.ZoneId
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -159,15 +159,15 @@ class ChatHistoryScanControllerTest {
 
     @Test
     fun `date range converts picker UTC days to local day bounds`() {
-        val zone = ZoneId.of("Asia/Shanghai")
-        val startUtc = Instant.parse("2026-09-20T00:00:00Z").toEpochMilli()
-        val endUtc = Instant.parse("2026-09-21T00:00:00Z").toEpochMilli()
+        val zone = TimeZone.of("Asia/Shanghai")
+        val startUtc = Instant.parse("2026-09-20T00:00:00Z").toEpochMilliseconds()
+        val endUtc = Instant.parse("2026-09-21T00:00:00Z").toEpochMilliseconds()
 
         val range = chatHistoryDateRangeFromPicker(startUtc, endUtc, zone)
         // 2026-09-20 08:00 +08:00（本地 20 日零点）到 2026-09-22 00:00 +08:00（21 日次日零点）。
-        assertEquals(Instant.parse("2026-09-19T16:00:00Z").toEpochMilli(), range.startMillis)
-        assertEquals(Instant.parse("2026-09-21T16:00:00Z").toEpochMilli(), range.endExclusiveMillis)
-        assertTrue(range.contains(Instant.parse("2026-09-20T02:00:00Z").toEpochMilli()))
-        assertFalse(range.contains(Instant.parse("2026-09-21T16:00:00Z").toEpochMilli()))
+        assertEquals(Instant.parse("2026-09-19T16:00:00Z").toEpochMilliseconds(), range.startMillis)
+        assertEquals(Instant.parse("2026-09-21T16:00:00Z").toEpochMilliseconds(), range.endExclusiveMillis)
+        assertTrue(range.contains(Instant.parse("2026-09-20T02:00:00Z").toEpochMilliseconds()))
+        assertFalse(range.contains(Instant.parse("2026-09-21T16:00:00Z").toEpochMilliseconds()))
     }
 }

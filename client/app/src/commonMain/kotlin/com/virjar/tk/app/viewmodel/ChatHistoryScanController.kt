@@ -13,9 +13,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.time.Instant
-import java.time.ZoneId
-import java.time.ZoneOffset
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.plus
+import kotlinx.datetime.toLocalDateTime
 
 /**
  * 单会话聊天记录分类：浏览页的数据口径。
@@ -43,14 +46,14 @@ data class ChatHistoryDateRange(val startMillis: Long, val endExclusiveMillis: L
 fun chatHistoryDateRangeFromPicker(
     startUtcMillis: Long,
     endUtcMillis: Long,
-    zone: ZoneId = ZoneId.systemDefault(),
+    zone: TimeZone = TimeZone.currentSystemDefault(),
 ): ChatHistoryDateRange {
-    val utc = ZoneOffset.UTC
-    val startDay = Instant.ofEpochMilli(startUtcMillis).atZone(utc).toLocalDate()
-    val endDay = Instant.ofEpochMilli(endUtcMillis).atZone(utc).toLocalDate()
+    val utc = TimeZone.UTC
+    val startDay = Instant.fromEpochMilliseconds(startUtcMillis).toLocalDateTime(utc).date
+    val endDay = Instant.fromEpochMilliseconds(endUtcMillis).toLocalDateTime(utc).date
     return ChatHistoryDateRange(
-        startMillis = startDay.atStartOfDay(zone).toInstant().toEpochMilli(),
-        endExclusiveMillis = endDay.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli(),
+        startMillis = startDay.atStartOfDayIn(zone).toEpochMilliseconds(),
+        endExclusiveMillis = endDay.plus(1, DateTimeUnit.DAY).atStartOfDayIn(zone).toEpochMilliseconds(),
     )
 }
 

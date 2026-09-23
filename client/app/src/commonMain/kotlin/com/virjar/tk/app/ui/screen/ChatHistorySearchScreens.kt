@@ -62,6 +62,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.virjar.tk.app.ui.component.MessagePreview
 import com.virjar.tk.app.ui.component.ScreenHeader
+import com.virjar.tk.app.ui.platform.hourMinute
+import com.virjar.tk.app.ui.platform.localUiDateTime
+import com.virjar.tk.app.ui.platform.yearMonthDay
 import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.app.viewmodel.ChatHistoryCategory
 import com.virjar.tk.app.viewmodel.ChatHistoryDateRange
@@ -74,9 +77,6 @@ import com.virjar.tk.app.viewmodel.messageHistoryLink
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.model.Message
 import kotlinx.coroutines.delay
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /** 分类入口图标；结果行复用。 */
 internal fun chatHistoryCategoryIcon(category: ChatHistoryCategory): ImageVector = when (category) {
@@ -94,10 +94,8 @@ private fun messageIcon(message: Message): ImageVector = when (message.messageTy
     else -> Icons.AutoMirrored.Filled.Chat
 }
 
-private val chatHistoryTimeFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())
-
 private fun formatHistoryTime(timestamp: Long): String =
-    chatHistoryTimeFormat.format(Date(timestamp))
+    localUiDateTime(timestamp).let { "${it.yearMonthDay('/')} ${it.hourMinute()}" }
 
 /**
  * 会话搜索中心页：顶部搜索框（搜索全部内容，回车进入「聊天记录」浏览页），
@@ -628,10 +626,7 @@ private fun chatHistoryHeadline(message: Message, category: ChatHistoryCategory)
     else -> MessagePreview.preview(message, flagsAware = false)
 }
 
-private fun chatHistoryDayText(millis: Long): String {
-    val format = SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
-    return format.format(Date(millis))
-}
+private fun chatHistoryDayText(millis: Long): String = localUiDateTime(millis).yearMonthDay('/')
 
 @Composable
 private fun ChatHistoryErrorState(onRetry: () -> Unit) {

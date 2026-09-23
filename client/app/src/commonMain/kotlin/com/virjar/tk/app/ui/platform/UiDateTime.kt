@@ -12,6 +12,7 @@ internal fun localUiDateTime(epochMillis: Long = platformCurrentTimeMillis()): L
 
 internal fun LocalDateTime.hourMinute(): String = "${hour.twoDigits()}:${minute.twoDigits()}"
 internal fun LocalDateTime.monthDay(separator: Char = '-'): String = "${month.number.twoDigits()}$separator${day.twoDigits()}"
+internal fun LocalDateTime.yearMonthDay(separator: Char = '-'): String = "${year}$separator${month.number.twoDigits()}$separator${day.twoDigits()}"
 private fun Int.twoDigits(): String = toString().padStart(2, '0')
 
 internal fun formatUiDateTime(epochMillis: Long): String = localUiDateTime(epochMillis).let {
