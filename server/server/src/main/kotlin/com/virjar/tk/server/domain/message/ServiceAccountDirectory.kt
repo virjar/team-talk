@@ -1,5 +1,7 @@
 package com.virjar.tk.server.domain.message
 
+import kotlinx.serialization.Serializable
+
 /** 服务号官方触达的持久化端口；由基础设施适配器实现。 */
 interface ServiceAccountDirectory {
     fun getWelcomeTemplate(): String?
@@ -13,7 +15,8 @@ interface ServiceAccountDirectory {
     fun finishBroadcast(broadcastId: String)
 }
 
-/** 广播台账条目；计数为最近一次执行的结果。 */
+/** 广播台账条目；计数为最近一次执行的结果。经 /api/admin/service 以 JSON 响应。 */
+@Serializable
 data class ServiceBroadcastEntry(
     val broadcastId: String,
     val markdown: String,
