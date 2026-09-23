@@ -78,6 +78,10 @@ class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
         com.virjar.tk.shared.client.AndroidContext.appContext = this
         documentDraftPersistence = AndroidDocumentDraftPersistence(this)
 
+        // 升级闭环的「安装后删除」：安装包替换完成会重启进程，新进程首次启动
+        // 清掉上一版下载的暂存 APK（与 MY_PACKAGE_REPLACED 等价，不依赖清单接收器）。
+        runCatching { AndroidAppUpgrade.clearStagedUpgradePackages(this) }
+
         // 全局未捕获异常 → fault 日志 + crash 持久化
         val oldHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->

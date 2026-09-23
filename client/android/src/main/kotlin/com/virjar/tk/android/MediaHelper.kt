@@ -405,21 +405,18 @@ object MediaHelper {
      * 用系统应用打开文件。
      *
      * APK 特殊处理：发送安装包的意图就是安装。无论发送端记录的 contentType 是什么
-     * （跨端常为 application/octet-stream），都按安装包 MIME 打开包安装管理器，
-     * 而不是落到浏览器/文本查看器；系统未授予安装权限时由安装器自身引导授权。
+     * （跨端常为 application/octet-stream），都直接拉起系统安装器；未授予
+     * 「安装未知应用」时先跳系统开关引导授权，开启后重新点按即可安装
+     * （与升级闭环共用 AndroidApkInstaller）。
      */
     fun openFile(context: Context, file: File, mimeType: String) {
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        val effectiveMime = if (
-            file.name.endsWith(".apk", ignoreCase = true) ||
-            mimeType.equals("application/vnd.android.package-archive", ignoreCase = true)
-        ) {
-            "application/vnd.android.package-archive"
-        } else {
-            mimeType
+        if (looksLikeApk(file.name, mimeType)) {
+            AndroidApkInstaller.installOrGuide(context, file, file.name)
+            return
         }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, effectiveMime)
+            setDataAndType(uri, mimeType)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (fileOpenRequiresNewTask(context.containsActivity())) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -431,7 +428,7 @@ object MediaHelper {
             // 没有任何应用能处理该类型（罕见）：用系统分享面板兜底，让用户自选去处。
             val share = Intent.createChooser(
                 Intent(Intent.ACTION_SEND).apply {
-                    setType(effectiveMime)
+                    setType(mimeType)
                     putExtra(Intent.EXTRA_STREAM, uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 },
@@ -479,7 +476,8 @@ internal fun copyBounded(
 
 internal fun fileOpenRequiresNewTask(isActivityContext: Boolean): Boolean = !isActivityContext
 
-private tailrec fun Context.containsActivity(): Boolean = when (this) {
+/** 安装器等系统交接也沿用：非 Activity 上下文启动界面必须带 NEW_TASK。 */
+internal tailrec fun Context.containsActivity(): Boolean = when (this) {
     is Activity -> true
     is ContextWrapper -> baseContext.containsActivity()
     else -> false
