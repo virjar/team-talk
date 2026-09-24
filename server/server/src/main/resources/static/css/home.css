@@ -143,6 +143,15 @@ summary { cursor: pointer; }
 .deploy .eyebrow { color: #9cbefb; }
 .deploy h2 { font-size: 38px; line-height: 1.5; letter-spacing: -1px; margin: 13px 0 20px; font-weight: 600; }
 .deploy-copy p { color: #b5c3d7; font-size: 14px; line-height: 1.9; max-width: 430px; }
+.ai-prompt-card { position: relative; max-width: 430px; margin: 24px 0 26px; background: #1d3a5f; border: 1px solid #344862; border-radius: 12px; overflow: hidden; }
+.ai-prompt-card::after { content: ""; position: absolute; left: 1px; right: 1px; bottom: 1px; height: 30px; background: linear-gradient(180deg, transparent, #1d3a5f 82%); pointer-events: none; border-radius: 0 0 11px 11px; }
+.ai-prompt-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #344862; }
+.ai-prompt-label { font-size: 12px; font-weight: 650; color: #9cbefb; letter-spacing: 1px; }
+.ai-prompt-copy { font: inherit; font-size: 12px; font-weight: 650; color: #fff; background: var(--blue); border: 0; border-radius: 999px; padding: 6px 16px; cursor: pointer; }
+.ai-prompt-copy:hover { background: #1b4bb6; }
+.ai-prompt-copy[data-copied="1"] { background: #2e9e5b; }
+.ai-prompt-body { margin: 0; padding: 14px 16px; max-height: 264px; overflow-y: auto; font-family: inherit; font-size: 12.5px; line-height: 1.9; color: #cfdcef; white-space: pre-wrap; word-break: break-word; }
+.ai-prompt-body::selection { background: #3d67b9; }
 .button-light { margin-top: 26px; background: #fff; color: #1b3458; }
 .button-light:hover { background: #e6edfa; }
 .deploy-links > a { display: flex; align-items: flex-start; gap: 20px; padding-block: 26px; border-top: 1px solid #344862; }

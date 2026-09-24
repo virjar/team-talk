@@ -10,18 +10,12 @@ Multiplatform 与 Compose Multiplatform 构建 Android、Desktop、iOS 和无头
 
 社区交流：[TeamTalk QQ 群](https://qm.qq.com/q/cY2VP3O5OM)（群号 **964624703**），用于内测交流、问题反馈与技术讨论。
 
-## 零门槛私有部署：让 AI 替你完成
+## 让 AI 替你部署
 
-不需要技术背景——把仓库地址交给任意 AI 编码助手（WorkBuddy、Claude Code 等），让它阅读仓库内的部署
-引导材料，就能在一台普通云服务器上部署一套**完全属于你自己的** IM 办公平台，数据、账号与消息全部
-自主掌控。整个流程通常只需数轮对话。
-
-- **仓库**（AI 从这里拉取代码）：<https://github.com/virjar/team-talk>
-- **部署引导材料**：[私有化部署指南](doc/01-getting-started/private-deployment.md)，全部材料都在仓库内，AI 会自行阅读
-- **提示词示例**：*"请阅读该仓库的部署文档，帮我在一台全新的 Ubuntu 服务器上部署一套完全属于我自己的
-  TeamTalk 办公 IM，完成后指导我下载并登录客户端。"*
-- **中国大陆访问 GitHub 困难？** 把这个问题也交给 AI——它可以通过可用镜像拉取代码；客户端安装包
-  则可直接从 [im.virjar.com](https://im.virjar.com) 下载，无需访问 GitHub。
+部署全过程可以交给 AI 编码助手（WorkBuddy、Claude Code 等）代为执行：让它拉取本仓库，阅读并遵循
+[AI 辅助部署引导](doc/01-getting-started/ai-assisted-deployment.md)，即可完成从购买云服务器、部署、
+发布客户端到验收的全流程。非技术用户不需要读懂本仓库，可从[官网](https://im.virjar.com)一键复制
+现成的引导提示词。
 
 ## 项目边界
 

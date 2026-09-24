@@ -4,7 +4,7 @@
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="theme-color" content="#f6f8fc">
-        <meta name="description" content="TeamTalk 是面向中小型团队的开源协作工具。把聊天、文档与待办放在一起，支持 Android、macOS、Windows、Linux 和无头客户端，可部署在自己的服务器上。">
+        <meta name="description" content="TeamTalk 是面向中小型团队的开源协作工具。把聊天、文档与待办放在一起，支持 Android、iOS、macOS、Windows、Linux 和无头客户端，可部署在自己的服务器上。">
         <title>TeamTalk · 让讨论有下文</title>
         <link rel="stylesheet" href="./css/home.css">
         <script src="./js/qrcode.min.js" defer></script>
@@ -45,7 +45,7 @@
                         <a class="button button-primary" href="#download">下载客户端 <span aria-hidden="true">↓</span></a>
                         <a class="button button-outline" href="https://github.com/virjar/team-talk/blob/main/doc/01-getting-started/private-deployment.md">开始私有部署 <span aria-hidden="true">↗</span></a>
                     </div>
-                    <p class="hero-ai-hint">不懂技术也能私有部署：把仓库交给 WorkBuddy 等 AI 助手，它会阅读部署指南，替你搭建一套完全属于自己的办公平台。</p>
+                    <p class="hero-ai-hint">不懂技术也能私有部署：<a href="#deploy">复制一段提示词发给 AI 助手</a>，它就会拉取代码、阅读部署引导，替你搭建一套完全属于自己的办公平台。</p>
                     <p class="hero-platforms">Android <span>·</span> iOS（开发者预览） <span>·</span> macOS <span>·</span> Windows <span>·</span> Linux</p>
                 </div>
                 <figure class="workflow" aria-labelledby="workflow-caption">
@@ -182,15 +182,30 @@
                         <span class="eyebrow">部署在自己的服务器上</span>
                         <h2 id="deploy-title">你的团队，<br>你的工作空间。</h2>
                         <p>TeamTalk 将客户端、服务端、协议和部署工具放在同一个开源仓库。面向单组织与中小型团队，便于私有部署、维护和二次开发。</p>
-                        <p>不需要技术背景：把仓库交给 WorkBuddy 等 AI 助手，它会阅读仓库内的部署指南，替你完成搭建——大陆访问 GitHub 困难时，AI 可以通过镜像拉取代码。</p>
-                        <a class="button button-light" href="https://github.com/virjar/team-talk/blob/main/doc/01-getting-started/private-deployment.md">阅读部署指南 <span aria-hidden="true">↗</span></a>
+                        <p>不需要技术背景：把下面这段话发给 WorkBuddy 等 AI 编码助手，它就会替你拉取代码、阅读仓库内的部署引导，在你的服务器上搭好一套完全属于自己的平台。</p>
+                        <div class="ai-prompt-card">
+                            <div class="ai-prompt-head">
+                                <span class="ai-prompt-label">复制给 AI 助手</span>
+                                <button class="ai-prompt-copy" id="copy-ai-prompt" type="button">点击复制</button>
+                            </div>
+                            <pre class="ai-prompt-body" id="ai-prompt-text">请帮我部署一套完全属于我自己的 TeamTalk 即时通讯办公平台：数据、账号和消息全部保存在我自己的服务器上，不依赖任何第三方云服务。
+
+1. 源代码仓库：https://github.com/virjar/team-talk 。请先把仓库完整拉取到本机；如果访问 GitHub 失败，请自行改用可用的镜像源。
+2. 拉取成功后，重点阅读仓库内的部署引导文档 doc/01-getting-started/ai-assisted-deployment.md 和 doc/01-getting-started/private-deployment.md，之后的每一步都以仓库文档为准。
+3. 我还没有服务器时，请先带我操作云控制台完成购买与配置：付款、密码、验证码、实名认证由我本人操作，你负责告诉我每一步点哪里、选什么；我已有服务器时，把 IP 告诉你后直接继续。
+4. 需要我决策的事项（组织名称、域名、端口等）请给出可选项，不要问开放式问题；每完成一步用一句话汇报进度和下一步。
+5. 部署完成后做健康检查，再指导我下载各端客户端、初始化管理员账号，陪我完成一次真实的收发消息验收。
+
+现在从第 1 步开始。</pre>
+                        </div>
+                        <a class="button button-light" href="https://github.com/virjar/team-talk/blob/main/doc/01-getting-started/private-deployment.md">自己动手？阅读部署指南 <span aria-hidden="true">↗</span></a>
                     </div>
                     <div class="deploy-links">
-                        <a href="https://github.com/virjar/team-talk/blob/main/doc/01-getting-started/private-deployment.md">
+                        <a href="https://github.com/virjar/team-talk/blob/main/doc/01-getting-started/ai-assisted-deployment.md">
                             <span class="deploy-link-number">01</span>
                             <div>
-                                <h3>让 AI 替你部署</h3>
-                                <p>把仓库交给 AI 助手，按引导在普通服务器上搭建完全属于自己的实例。</p>
+                                <h3>AI 部署引导</h3>
+                                <p>面向 AI 助手的完整分步文档：买服务器、部署、发布客户端与验收。</p>
                             </div>
                             <span aria-hidden="true">↗</span>
                         </a>
@@ -243,5 +258,58 @@
                 </nav>
             </div>
         </footer>
+        <script>
+            (function () {
+                var button = document.getElementById('copy-ai-prompt');
+                var promptEl = document.getElementById('ai-prompt-text');
+                if (!button || !promptEl) return;
+                var resetTimer = null;
+                function markCopied() {
+                    button.textContent = '已复制 ✓';
+                    button.setAttribute('data-copied', '1');
+                    if (resetTimer) clearTimeout(resetTimer);
+                    resetTimer = setTimeout(function () {
+                        button.textContent = '点击复制';
+                        button.removeAttribute('data-copied');
+                    }, 2500);
+                }
+                function legacyCopy(text) {
+                    var area = document.createElement('textarea');
+                    area.value = text;
+                    area.setAttribute('readonly', '');
+                    area.style.position = 'fixed';
+                    area.style.opacity = '0';
+                    document.body.appendChild(area);
+                    area.select();
+                    try {
+                        document.execCommand('copy');
+                        markCopied();
+                    } catch (error) {
+                        button.textContent = '复制失败，请手动选择';
+                    }
+                    document.body.removeChild(area);
+                }
+                button.addEventListener('click', function () {
+                    var text = promptEl.textContent;
+                    var settled = false;
+                    function viaLegacy() {
+                        if (settled) return;
+                        settled = true;
+                        legacyCopy(text);
+                    }
+                    if (navigator.clipboard && window.isSecureContext) {
+                        // 个别环境 writeText 的 promise 可能长期挂起；超时后回退 execCommand。
+                        navigator.clipboard.writeText(text).then(function () {
+                            if (settled) return;
+                            settled = true;
+                            markCopied();
+                        }, viaLegacy);
+                        setTimeout(viaLegacy, 1200);
+                    } else {
+                        viaLegacy();
+                    }
+                });
+            })();
+        </script>
     </body>
 </html>
