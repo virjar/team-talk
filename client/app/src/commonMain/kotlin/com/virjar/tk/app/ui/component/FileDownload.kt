@@ -58,6 +58,15 @@ interface FileDownloadController {
      */
     fun exportToUserLocation(attachment: Attachment): Boolean = false
 
+    /**
+     * 把图片附件本体写入系统剪贴板（图片消息"复制"动作的载体）。尚未本地就绪时
+     * 先走既有认证下载；结果通过 [onResult] 返回，false 表示平台未实现、本地不可用
+     * 或写入失败，调用方应回落复制文本摘要，不得静默丢失复制意图。
+     */
+    fun copyAttachmentImage(attachment: Attachment, onResult: (Boolean) -> Unit) {
+        onResult(false)
+    }
+
     /** 释放平台下载 scope；所有者（聊天页面）销毁时调用。 */
     fun close()
 

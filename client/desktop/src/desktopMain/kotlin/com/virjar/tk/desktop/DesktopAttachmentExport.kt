@@ -11,12 +11,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.swing.Swing
 import kotlinx.coroutines.withContext
 import java.awt.EventQueue
+import java.awt.FileDialog
+import java.awt.Frame
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import javax.swing.JFileChooser
-import javax.swing.JOptionPane
-import javax.swing.SwingUtilities
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -51,48 +50,41 @@ internal suspend fun exportDesktopAttachment(
             failureToReport = failure
         }
     }
-    // 错误提示可能等待用户确认；失败的复制已经不再持有缓存文件。
+    // 失败反馈不再阻塞（应用内通知）；失败的复制已经不再持有缓存文件。
     failureToReport?.let { onFailure(it) }
 }
 
-internal suspend fun showDesktopAttachmentExportFailure(failure: Exception, canShow: () -> Boolean) {
+/**
+ * AWT 原生保存面板（macOS NSSavePanel、Windows/Linux 原生对话框），与文件选择路径
+ * 同一套系统面板；取消时 file/directory 为 null。模态等待仍在 EDT 上运行；
+ * 取消导出也会关闭其窗口，释放挂起的工作。
+ */
+private suspend fun selectDesktopAttachmentDestination(attachment: Attachment): File? =
     withContext(Dispatchers.Swing) {
-        if (!canShow()) return@withContext
         suspendCancellableCoroutine { continuation ->
-            val dialog = JOptionPane(
-                "保存失败：${failure.message ?: "无法写入所选位置"}",
-                JOptionPane.ERROR_MESSAGE,
-            ).createDialog(null, "保存到设备")
-            continuation.invokeOnCancellation { EventQueue.invokeLater(dialog::dispose) }
+            val owner = Frame()
+            val dialog = FileDialog(owner, "保存到设备", FileDialog.SAVE).apply {
+                file = attachment.name
+            }
+            continuation.invokeOnCancellation {
+                EventQueue.invokeLater {
+                    dialog.dispose()
+                    owner.dispose()
+                }
+            }
+            if (!continuation.isActive) return@suspendCancellableCoroutine
             try {
-                if (continuation.isActive) dialog.isVisible = true
-                continuation.resume(Unit)
+                dialog.isVisible = true
+                val directory = dialog.directory
+                val selected = dialog.file
+                continuation.resume(
+                    if (directory != null && selected != null) File(directory, selected) else null,
+                )
             } catch (failure: Exception) {
                 continuation.resumeWithException(failure)
             } finally {
                 dialog.dispose()
-            }
-        }
-    }
-}
-
-/** Swing 模态选择器仍在 EDT 上运行；取消导出也会关闭其窗口，释放挂起的工作。 */
-private suspend fun selectDesktopAttachmentDestination(attachment: Attachment): File? =
-    withContext(Dispatchers.Swing) {
-        suspendCancellableCoroutine { continuation ->
-            val chooser = JFileChooser().apply {
-                dialogTitle = "保存到设备"
-                selectedFile = File(attachment.name)
-            }
-            continuation.invokeOnCancellation {
-                EventQueue.invokeLater { SwingUtilities.getWindowAncestor(chooser)?.dispose() }
-            }
-            if (!continuation.isActive) return@suspendCancellableCoroutine
-            try {
-                val selected = chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION
-                continuation.resume(chooser.selectedFile.takeIf { selected })
-            } catch (failure: Exception) {
-                continuation.resumeWithException(failure)
+                owner.dispose()
             }
         }
     }

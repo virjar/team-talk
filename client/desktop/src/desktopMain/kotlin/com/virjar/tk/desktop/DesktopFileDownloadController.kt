@@ -11,10 +11,15 @@ import com.virjar.tk.desktop.media.DesktopSessionUnavailableException
 import com.virjar.tk.desktop.media.DesktopSessionResources
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.shared.AppError
+import com.virjar.tk.shared.log.AppLog
+import com.virjar.tk.app.telemetry.ClientUiAction
 import com.virjar.tk.app.telemetry.ClientUiPage
 import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
+import com.virjar.tk.app.telemetry.FeedbackOrigin
 import com.virjar.tk.app.telemetry.MediaFailureReason
 import com.virjar.tk.app.telemetry.NoopClientUiTelemetrySink
+import com.virjar.tk.app.telemetry.UserFeedbackCode
+import com.virjar.tk.app.telemetry.UserFeedbackNotice
 import com.virjar.tk.app.telemetry.classifyMediaFailure
 import com.virjar.tk.app.ui.UiActionAdmission
 import com.virjar.tk.app.ui.component.AutomaticFileDownloadLedger
@@ -26,12 +31,15 @@ import com.virjar.tk.app.ui.component.FileDownloadState
 import com.virjar.tk.app.ui.component.TextAttachmentPreviewPlan
 import com.virjar.tk.app.ui.component.textAttachmentPreviewPlan
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.swing.Swing
+import kotlinx.coroutines.withContext
 import java.awt.EventQueue
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -46,13 +54,16 @@ internal class DesktopFileDownloadController(
     private val actionAdmission: UiActionAdmission,
     private val onDownloaded: (File) -> Unit,
     private val onTextAttachmentPreview: ((DesktopTextAttachmentPreviewEvent) -> Deferred<Boolean>?)? = null,
-    telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
-    telemetryPage: ClientUiPage = ClientUiPage.CHAT,
+    private val telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
+    private val telemetryPage: ClientUiPage = ClientUiPage.CHAT,
+    /** 本地用户反馈出口（Snackbar）；遥测只承担服务端可诊断性，不承担本地呈现。 */
+    private val onUserNotice: (UserFeedbackNotice) -> Unit = {},
     ownerThreadPredicate: () -> Boolean = EventQueue::isDispatchThread,
 ) : FileDownloadController {
 
     /** 预览 Loading 事件的投递确认等待；与核心工作域独立取消。 */
     private val entryScope = resources.childScope("file-download-entry")
+    private val copyScope = resources.childScope("attachment-copy")
     private val closed = AtomicBoolean(false)
     private val core = FileDownloadCore<DesktopMediaFileLease>(
         DesktopAdapter(uiScope, ownerThreadPredicate),
@@ -100,10 +111,107 @@ internal class DesktopFileDownloadController(
         return true
     }
 
+    override fun copyAttachmentImage(attachment: Attachment, onResult: (Boolean) -> Unit) {
+        if (!resources.canDeliverUiResult()) {
+            AppLog.fault("ImageCopy", "copy rejected: session cannot deliver UI result", null)
+            onResult(false)
+            return
+        }
+        copyScope.launch {
+            val ok = try {
+                copyImageToSystemClipboard(attachment)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                AppLog.fault(
+                    "ImageCopy",
+                    "copy crashed: ${failure.javaClass.simpleName}: ${failure.message}",
+                    failure,
+                )
+                false
+            }
+            onResult(ok)
+        }
+    }
+
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         entryScope.cancel()
+        copyScope.cancel()
         core.close()
+    }
+
+    /** 本地优先：缓存缺失即认证下载；位图进系统剪贴板（macOS/Windows 原生图片格式）。 */
+    private suspend fun copyImageToSystemClipboard(attachment: Attachment): Boolean {
+        resources.ensureOpen()
+        val lease = try {
+            resources.mediaCache.ensureDownloadedLease(attachment)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            AppLog.fault(
+                "ImageCopy",
+                "lease/download failed: ${failure.javaClass.simpleName}: ${failure.message}",
+                failure,
+            )
+            return false
+        }
+        lease.use {
+            resources.ensureOpen()
+            if (!lease.file.isFile || lease.file.length() != attachment.size) {
+                AppLog.fault(
+                    "ImageCopy",
+                    "cached file mismatch: isFile=${lease.file.isFile} " +
+                        "length=${lease.file.length()} expected=${attachment.size}",
+                    null,
+                )
+                return false
+            }
+            val image = try {
+                withContext(Dispatchers.IO) {
+                    decodeAwtImageForClipboard(lease.file, resources.diagnostics)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                AppLog.fault(
+                    "ImageCopy",
+                    "decode crashed: ${failure.javaClass.simpleName}: ${failure.message}",
+                    failure,
+                )
+                return false
+            }
+            if (image == null) {
+                AppLog.fault("ImageCopy", "decode returned null: ${lease.file.name}", null)
+                return false
+            }
+            val written = withContext(Dispatchers.Swing) { DesktopImageClipboard.write(image) }
+            if (!written) {
+                AppLog.fault("ImageCopy", "clipboard setContents returned failure", null)
+            }
+            return written
+        }
+    }
+
+    /**
+     * 保存失败经应用内 Snackbar 反馈，不弹 Swing 对话框；任意异常文本不进
+     * 用户可见文案，只发经过审查的稳定文案，完整上下文落本地日志并上报遥测。
+     */
+    private suspend fun notifyAttachmentExportFailure(failure: Exception) {
+        if (closed.get() || !resources.canDeliverUiResult()) return
+        AppLog.fault(
+            "AttachmentExport",
+            "attachment export failed: ${failure.javaClass.simpleName}: ${failure.message}",
+            failure,
+        )
+        val notice = UserFeedbackNotice(
+            feedbackCode = UserFeedbackCode.MEDIA_IO_FAILED,
+            page = telemetryPage,
+            action = ClientUiAction.DOWNLOAD_MEDIA,
+            origin = FeedbackOrigin.INLINE,
+        )
+        telemetry.recordUserNotice(notice)
+        onUserNotice(notice)
     }
 
     private fun publishTextPreview(event: DesktopTextAttachmentPreviewEvent): Deferred<Boolean>? {
@@ -194,11 +302,7 @@ internal class DesktopFileDownloadController(
                         resources.ensureOpen()
                         check(!closed.get() && resources.canDeliverUiResult()) { "Attachment export owner is closed" }
                     },
-                    onFailure = { failure ->
-                        showDesktopAttachmentExportFailure(failure) {
-                            !closed.get() && resources.canDeliverUiResult()
-                        }
-                    },
+                    onFailure = ::notifyAttachmentExportFailure,
                 )
                 true
             }

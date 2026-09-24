@@ -135,6 +135,7 @@ internal fun ChatPanelWrapper(
             },
             telemetry = telemetry,
             telemetryPage = ClientUiPage.CHAT,
+            onUserNotice = { notice -> viewModel.onError(notice.publicMessage) },
         )
     }
     DisposableEffect(fileDownloads, textPreviewOwner) {

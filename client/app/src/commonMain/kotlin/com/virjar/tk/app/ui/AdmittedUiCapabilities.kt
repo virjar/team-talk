@@ -46,6 +46,10 @@ internal class AdmittedFileDownloadController(
         return accepted
     }
 
+    override fun copyAttachmentImage(attachment: Attachment, onResult: (Boolean) -> Unit) {
+        admission.runIfOpen { delegate.copyAttachmentImage(attachment, onResult) }
+    }
+
     /** 这是非持有视图；只有平台/会话 owner 才会关闭真正的 controller。 */
     override fun close() = Unit
 }

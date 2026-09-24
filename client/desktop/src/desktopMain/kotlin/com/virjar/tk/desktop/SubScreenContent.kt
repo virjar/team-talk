@@ -78,6 +78,7 @@ internal fun SubScreenContent(
                 is SubScreen.GroupFiles -> ClientUiPage.GROUP_FILES
                 else -> ClientUiPage.CHAT
             },
+            onUserNotice = data::publishUserNotice,
         )
     }
     DisposableEffect(fileDownloads, textPreviewOwner) {

@@ -272,6 +272,11 @@ open class AppDataState(
     fun markNoticeDisplayed(lease: UiEventLease<UserFeedbackNotice>): Boolean =
         destroyGate.readIfOpen { uiNotices.markDisplayed(lease) } == true
 
+    /** 页面控制器发布经过审查的反馈通知（主窗口 Snackbar 呈现）；自由文本错误必须走 uiErrors 通道。 */
+    fun publishUserNotice(notice: UserFeedbackNotice) {
+        destroyGate.runIfOpen { uiNotices.publish(notice) }
+    }
+
     /** Session 作用域的平台 HTTP/media 终止点；委托给现有的确切认证 owner。 */
     fun reportAuthExpired() {
         handleError(AppError.AuthExpired, "认证失效，请重新登录")

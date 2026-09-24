@@ -119,6 +119,7 @@ internal fun WindowScope.MainAppContent(
             onDownloaded = DesktopExternalFileOpener::open,
             telemetry = nav.telemetry,
             telemetryPage = ClientUiPage.DOCUMENTS,
+            onUserNotice = nav::publishUserNotice,
         )
     }
     val documentEmbeddedAssetMedia = remember(

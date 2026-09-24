@@ -38,9 +38,14 @@ import org.jetbrains.skia.Data
 import org.jetbrains.skia.Image as SkiaImage
 import org.jetbrains.skia.makeFromFileName
 import org.jetbrains.skia.impl.use
+import androidx.compose.ui.graphics.toPixelMap
 import java.awt.Desktop
 import java.awt.FileDialog
 import java.awt.Frame
+import java.awt.Toolkit
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.Transferable
+import java.awt.image.BufferedImage
 import java.io.Closeable
 import java.io.File
 import java.io.FilenameFilter
@@ -55,6 +60,7 @@ import javax.sound.sampled.DataLine
 import javax.sound.sampled.TargetDataLine
 import kotlin.coroutines.coroutineContext
 import kotlin.concurrent.withLock
+import kotlin.math.roundToInt
 
 /** 只负责平台文件选择，不持有认证、网络或缓存状态。 */
 internal object DesktopFilePicker {
@@ -112,6 +118,56 @@ internal object DesktopImageCodec {
         diagnostics.record(DesktopSessionDiagnosticEvent.IMAGE_DECODE_FAILED)
         null
     }
+}
+
+/**
+ * 复制图片消息：把图片本体以位图写进系统剪贴板。AWT imageFlavor 在 macOS/Windows
+ * 映射为原生图片格式，粘贴方直接取到图片而不是文件名文本。
+ */
+internal object DesktopImageClipboard {
+    fun write(image: java.awt.Image): Boolean = try {
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(AwtImageSelection(image), null)
+        true
+    } catch (failure: Throwable) {
+        AppLog.fault(
+            "ImageCopy",
+            "clipboard setContents failed: ${failure.javaClass.simpleName}: ${failure.message}",
+            failure,
+        )
+        false
+    }
+}
+
+private class AwtImageSelection(private val image: java.awt.Image) : Transferable {
+    override fun getTransferDataFlavors(): Array<DataFlavor> = arrayOf(DataFlavor.imageFlavor)
+    override fun isDataFlavorSupported(flavor: DataFlavor): Boolean = flavor == DataFlavor.imageFlavor
+    override fun getTransferData(flavor: DataFlavor): Any = image
+}
+
+/** 剪贴板解码与聊天展示共用 [DesktopImageCodec] 的 Skia 域：展示不出的图片复制同样失败。 */
+internal fun decodeAwtImageForClipboard(file: File, diagnostics: DesktopSessionDiagnostics): java.awt.Image? {
+    val bitmap = DesktopImageCodec.decode(file, diagnostics) ?: return null
+    return runCatching { bitmap.toAwtImage() }.getOrNull()
+}
+
+private fun ImageBitmap.toAwtImage(): BufferedImage {
+    val width = width
+    val height = height
+    val pixelMap = toPixelMap()
+    val pixels = IntArray(width * height)
+    for (y in 0 until height) {
+        for (x in 0 until width) {
+            val c = pixelMap[x, y]
+            val alpha = (c.alpha * 255f).roundToInt().coerceIn(0, 255)
+            val red = (c.red * 255f).roundToInt().coerceIn(0, 255)
+            val green = (c.green * 255f).roundToInt().coerceIn(0, 255)
+            val blue = (c.blue * 255f).roundToInt().coerceIn(0, 255)
+            pixels[y * width + x] = alpha shl 24 or (red shl 16) or (green shl 8) or blue
+        }
+    }
+    val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+    image.raster.setDataElements(0, 0, width, height, pixels)
+    return image
 }
 
 /**

@@ -34,6 +34,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.net.ConnectException
@@ -551,6 +552,84 @@ class AndroidFileDownloadController private constructor(
                 }
             }
         }
+    }
+
+    /**
+     * 复制图片：本地优先（缺失即走既有认证下载），以 FileProvider 内容 URI 进系统
+     * 剪贴板，粘贴方按 URI 读取图片本体；结果经 Toast 反馈，[onResult] 供 UI 回落。
+     */
+    override fun copyAttachmentImage(attachment: Attachment, onResult: (Boolean) -> Unit) {
+        val context = appContext
+        if (context == null || closed.get() || !mediaSession.isCurrentOwner()) {
+            onResult(false)
+            return
+        }
+        var reported = false
+        fun report(ok: Boolean) {
+            if (!reported) {
+                reported = true
+                onResult(ok)
+            }
+        }
+        launchFileOperation(attachment.path) { admission ->
+            try {
+                mediaSession.ensureOpen()
+                val copyJob = checkNotNull(currentCoroutineContext()[Job])
+                mediaSession.withRegisteredOperation(abort = { copyJob.cancel() }) {
+                    suspend fun pinnedCachedLease(): AndroidMediaCacheFileLease? = try {
+                        val root = cacheRoot
+                        AndroidMediaCacheCapacityRegistry.cachedLease(
+                            cacheRoot = root,
+                            file = cachedFile(root, attachment),
+                            expectedBytes = attachment.size,
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        null
+                    }
+
+                    var lease = pinnedCachedLease()
+                    try {
+                        if (lease == null) {
+                            downloadInternal(attachment, openWhenDone = false, admission = admission)
+                            if (closed.get() || !mediaSession.isCurrentOwner()) {
+                                report(false)
+                                return@withRegisteredOperation
+                            }
+                            lease = pinnedCachedLease()
+                        }
+                        val file = lease?.file?.takeIf { it.length() == attachment.size }
+                        val ok = file != null && writeImageClip(context, checkNotNull(file), attachment.name)
+                        showExportFeedback(context, if (ok) "已复制图片" else "复制失败")
+                        report(ok)
+                    } finally {
+                        lease?.close()
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                report(false)
+                throw cancelled
+            } catch (_: Exception) {
+                report(false)
+            }
+        }
+    }
+
+    private suspend fun writeImageClip(context: Context, file: File, label: String): Boolean = try {
+        withContext(Dispatchers.Main.immediate) {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file,
+            )
+            val clip = android.content.ClipData.newUri(context.contentResolver, label, uri)
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.setPrimaryClip(clip)
+            true
+        }
+    } catch (_: Exception) {
+        false
     }
 
     private fun cachedFile(cacheRoot: File, attachment: Attachment): File {

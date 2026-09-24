@@ -1,5 +1,6 @@
 package com.virjar.tk.app.ui.component
 
+import com.virjar.tk.app.ui.component.rich.removeEmbeddedAssetReferences
 import com.virjar.tk.protocol.body.AttachmentBody
 import com.virjar.tk.protocol.body.FileBody
 import com.virjar.tk.protocol.body.ImageBody
@@ -38,6 +39,35 @@ fun messageExportableAttachment(msg: Message): Attachment? = when (val body = ms
     is VideoBody -> body.attachment.takeIf { it.path.isNotBlank() }
     is FileBody -> body.attachment.takeIf { it.path.isNotBlank() }
     else -> null
+}
+
+/** 图片消息的主附件（"复制"动作应放图片本体进剪贴板）。独立图片消息，以及"仅含一张
+ *  内嵌图片、没有其他可见文本"的富文本消息（输入框粘贴图片发送即产生后者）都复制图片；
+ *  图文混排或多图时复制文本更符合意图。 */
+fun messageCopyableImageAttachment(msg: Message): Attachment? = when (val body = msg.body) {
+    is ImageBody -> body.attachment.takeIf { it.path.isNotBlank() }
+    is RichTextBody -> body.singleEmbeddedImageAttachment()
+    is ReplyBody -> body.singleEmbeddedImageAttachment()
+    else -> null
+}
+
+private fun RichTextBody.singleEmbeddedImageAttachment(): Attachment? =
+    singleEmbeddedImageAttachment(markdown, assets)
+
+private fun ReplyBody.singleEmbeddedImageAttachment(): Attachment? =
+    singleEmbeddedImageAttachment(content, assets)
+
+private fun singleEmbeddedImageAttachment(markdown: String, assets: List<EmbeddedAsset>): Attachment? {
+    if (assets.isEmpty()) return null
+    val imageReferences = MarkdownAssetPolicy.references(markdown)
+        .filter { it.presentation == EmbeddedAssetPresentation.IMAGE }
+    if (imageReferences.size != 1) return null
+    val assetId = imageReferences.single().assetId ?: return null
+    val asset = assets.associateBy(EmbeddedAsset::assetId)[assetId] ?: return null
+    if (asset.attachment.path.isBlank()) return null
+    // 去掉这张图在 Markdown 中的全部语义放置后必须没有可见文本，图片才是消息的唯一内容。
+    if (removeEmbeddedAssetReferences(markdown, assetId).isNotBlank()) return null
+    return asset.attachment
 }
 
 /**

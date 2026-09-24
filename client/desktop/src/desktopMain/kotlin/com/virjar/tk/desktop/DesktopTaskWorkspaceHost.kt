@@ -27,6 +27,7 @@ internal fun DesktopTaskWorkspaceHost(
             onDownloaded = DesktopExternalFileOpener::open,
             telemetry = nav.telemetry,
             telemetryPage = ClientUiPage.TASKS,
+            onUserNotice = nav::publishUserNotice,
         )
     }
     DisposableEffect(downloads) { onDispose { downloads.close() } }

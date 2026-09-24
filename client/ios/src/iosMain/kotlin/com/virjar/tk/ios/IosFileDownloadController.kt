@@ -17,6 +17,8 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import platform.Foundation.NSLog
 
 /**
@@ -30,6 +32,9 @@ internal class IosFileDownloadController(
     telemetry: ClientUiTelemetrySink,
 ) : FileDownloadController {
     private val core = FileDownloadCore<IosMediaLease>(IosAdapter(), telemetry)
+    private val copyScope = CoroutineScope(
+        Dispatchers.Default + SupervisorJob() + CoroutineName("ios-attachment-copy"),
+    )
 
     override val states: SnapshotStateMap<String, FileDownloadState>
         get() = core.states
@@ -46,7 +51,30 @@ internal class IosFileDownloadController(
         return true
     }
 
-    override fun close() = core.close()
+    override fun copyAttachmentImage(attachment: Attachment, onResult: (Boolean) -> Unit) {
+        if (!resources.canDeliverUiResult()) {
+            onResult(false)
+            return
+        }
+        copyScope.launch {
+            onResult(runCatching { copyImageToPasteboard(attachment) }.getOrDefault(false))
+        }
+    }
+
+    override fun close() {
+        core.close()
+        copyScope.cancel()
+    }
+
+    /** 本地优先：acquire 内部缓存命中直接取，缺失即认证下载；数据按真实格式进剪贴板。 */
+    private suspend fun copyImageToPasteboard(attachment: Attachment): Boolean {
+        val lease = resources.acquire(attachment)
+        try {
+            return copyImageFileToPasteboard(lease.file, attachment.contentType)
+        } finally {
+            lease.close()
+        }
+    }
 
     private inner class IosAdapter : FileDownloadCoreAdapter<IosMediaLease> {
         override val uiScope: CoroutineScope = resources.scope

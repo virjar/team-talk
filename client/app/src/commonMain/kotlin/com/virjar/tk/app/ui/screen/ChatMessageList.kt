@@ -43,7 +43,9 @@ import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.MessageReactionGroup
 import com.virjar.tk.app.ui.platform.rememberClipboardTextWriter
 import com.virjar.tk.app.ui.theme.Tk
+import com.virjar.tk.app.ui.component.LocalFileDownloads
 import com.virjar.tk.app.ui.component.MessagePreview
+import com.virjar.tk.app.ui.component.messageCopyableImageAttachment
 import com.virjar.tk.app.ui.component.messageExportableAttachment
 
 @Composable
@@ -378,6 +380,10 @@ internal fun ChatMessageList(
         }
     }
 
+/** 图片复制失败时回落复制的文本摘要，与既有"复制"语义一致。 */
+private fun messageCopiedTextFallback(msg: Message): String =
+    msg.body.plainTextContentOrNull() ?: MessagePreview.preview(msg, flagsAware = false)
+
 private fun messageMenuItems(
     msg: Message,
     isMe: Boolean,
@@ -398,6 +404,7 @@ private fun messageMenuItems(
     isSavedChat: Boolean,
 ): @Composable ColumnScope.() -> Unit = {
     val copyText = rememberClipboardTextWriter()
+    val fileDownloads = LocalFileDownloads.current
     if (msg.serverSeq > 0L) {
         // 快捷回应栏：已确认消息直接从菜单选择 emoji；chips 点击负责取消
         com.virjar.tk.app.ui.component.ReactionQuickBar(
@@ -411,10 +418,15 @@ private fun messageMenuItems(
     DropdownMenuItem(
         text = { Text("复制") },
         onClick = {
-            copyText(
-                msg.body.plainTextContentOrNull()
-                    ?: MessagePreview.preview(msg, flagsAware = false),
-            )
+            // 复制意图跟随消息类型：图片消息复制图片本体；失败或非图片回落文本摘要。
+            val imageAttachment = messageCopyableImageAttachment(msg)
+            if (imageAttachment == null) {
+                copyText(messageCopiedTextFallback(msg))
+            } else {
+                fileDownloads.copyAttachmentImage(imageAttachment) { copied ->
+                    if (!copied) copyText(messageCopiedTextFallback(msg))
+                }
+            }
             onMenuMessageChange(null)
         },
     )
