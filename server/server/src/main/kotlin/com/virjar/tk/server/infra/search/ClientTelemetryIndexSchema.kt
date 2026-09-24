@@ -65,6 +65,7 @@ private const val FIELD_PROTOCOL_VERSION = "protocolVersion"
 private const val FIELD_DISTRIBUTION = "distribution"
 private const val FIELD_CATEGORY = "category"
 private const val FIELD_EVENT_NAME = "eventName"
+private const val FIELD_FATAL = "fatal"
 private const val FIELD_EVENT_ID = "eventId"
 private const val FIELD_RUN_ID = "runId"
 private const val TELEMETRY_FIELD_SEQUENCE = "sequence"
@@ -81,7 +82,7 @@ private const val FIELD_TRACE_SESSION_ID = "traceSessionId"
 private const val FIELD_CONNECTION_GENERATION = "connectionGeneration"
 private const val FIELD_TRACE_POLICY_REVISION = "tracePolicyRevision"
 
-private const val INDEX_SCHEMA_VERSION = "7"
+private const val INDEX_SCHEMA_VERSION = "8"
 private const val COMMIT_STATE_READY = "ready"
 private const val COMMIT_SCHEMA = "teamtalk.telemetry.schema"
 private const val COMMIT_STATE = "teamtalk.telemetry.state"
@@ -110,6 +111,7 @@ private val EXACT_INDEX_FIELDS = setOf(
     FIELD_GIT_COMMIT,
     FIELD_CATEGORY,
     FIELD_EVENT_NAME,
+    FIELD_FATAL,
     FIELD_TRACE_CORRELATION_ID,
     FIELD_TRACE_ID,
     FIELD_TRACE_SESSION_ID,
@@ -175,6 +177,8 @@ private val OUTGOING_QUEUE_INDEX_FIELDS = setOf(
     FIELD_OUTGOING_OLDEST_ACTIVE_AGE_MILLIS,
     FIELD_OUTGOING_MAX_ATTEMPT_COUNT,
 )
+/** 仅 FAULT 事件携带致命分级；其余事件没有该字段，也永不命中该过滤。 */
+private val FATAL_INDEX_FIELDS = setOf(FIELD_FATAL)
 private val CONNECTION_TRACE_INDEX_FIELDS = setOf(
     FIELD_TRACE_CORRELATION_ID,
     FIELD_TRACE_ID,
@@ -184,9 +188,13 @@ private val CONNECTION_TRACE_INDEX_FIELDS = setOf(
 )
 private val EVENT_INDEX_FIELD_SETS = setOf(
     BASE_EVENT_INDEX_FIELDS,
+    BASE_EVENT_INDEX_FIELDS + FATAL_INDEX_FIELDS,
     BASE_EVENT_INDEX_FIELDS + OUTGOING_QUEUE_INDEX_FIELDS,
+    BASE_EVENT_INDEX_FIELDS + OUTGOING_QUEUE_INDEX_FIELDS + FATAL_INDEX_FIELDS,
     BASE_EVENT_INDEX_FIELDS + CONNECTION_TRACE_INDEX_FIELDS,
+    BASE_EVENT_INDEX_FIELDS + CONNECTION_TRACE_INDEX_FIELDS + FATAL_INDEX_FIELDS,
     BASE_EVENT_INDEX_FIELDS + OUTGOING_QUEUE_INDEX_FIELDS + CONNECTION_TRACE_INDEX_FIELDS,
+    BASE_EVENT_INDEX_FIELDS + OUTGOING_QUEUE_INDEX_FIELDS + CONNECTION_TRACE_INDEX_FIELDS + FATAL_INDEX_FIELDS,
 )
 private val LEGAL_SEGMENT_FIELD_SETS = setOf(
     RECEIPT_INDEX_FIELDS,
@@ -451,6 +459,7 @@ internal fun telemetryEventDocument(
         add(StoredField(FIELD_DISTRIBUTION, runtime.distribution))
         add(StringField(FIELD_CATEGORY, event.category, Field.Store.YES))
         add(StringField(FIELD_EVENT_NAME, event.eventName, Field.Store.YES))
+        event.fatal?.let { add(StringField(FIELD_FATAL, it.toString(), Field.Store.YES)) }
         add(StoredField(FIELD_EVENT_ID, event.eventId))
         add(StoredField(FIELD_RUN_ID, event.runId))
         add(StoredField(TELEMETRY_FIELD_SEQUENCE, event.sequence))
@@ -528,6 +537,7 @@ internal fun Document.toStoredTelemetryEvent(): StoredTelemetryEvent {
             eventName = get(FIELD_EVENT_NAME),
             message = get(FIELD_MESSAGE),
             searchText = get(TELEMETRY_FIELD_TEXT),
+            fatal = get(FIELD_FATAL)?.toBooleanStrictOrNull(),
             outgoingQueue = outgoingQueueMetricsOrNull(),
             connectionTraceContext = connectionTraceContextOrNull(),
         ),
@@ -595,6 +605,7 @@ internal fun buildTelemetryQuery(query: TelemetrySearchQuery, openedAnalyzer: An
     addExact(builder, FIELD_GIT_COMMIT, query.gitCommit)
     addExact(builder, FIELD_CATEGORY, query.category)
     addExact(builder, FIELD_EVENT_NAME, query.eventName)
+    addExact(builder, FIELD_FATAL, query.fatal?.toString())
     query.outgoingQueue?.let { outgoing ->
         addRange(builder, FIELD_OUTGOING_PENDING_COUNT, outgoing.pendingCount)
         addRange(builder, FIELD_OUTGOING_RETRY_WAIT_COUNT, outgoing.retryWaitCount)
@@ -709,6 +720,11 @@ internal fun requireValidTelemetryDraft(uid: String, deviceId: String, batch: Te
         requireBoundedText(event.eventName, ClientTelemetryLimits.MAX_NAME_CHARS, "eventName")
         requireBoundedText(event.message, MAX_STORED_MESSAGE_CHARS, "message")
         requireBoundedText(event.searchText, MAX_STORED_SEARCH_TEXT_CHARS, "searchText")
+        if (event.fatal != null) {
+            require(event.category == TelemetryEventKind.FAULT.name) {
+                "telemetry fatal grading is only valid for fault events"
+            }
+        }
         val outgoing = event.outgoingQueue
         if (outgoing == null) {
             require(event.category != TelemetryEventKind.OUTGOING_QUEUE.name) {

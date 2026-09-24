@@ -30,6 +30,7 @@ internal fun Route.adminTelemetryRoutes(telemetry: ClientTelemetryAdminService) 
                 gitCommit = q["gitCommit"],
                 category = q["category"],
                 eventName = q["eventName"],
+                fatal = q.optionalBoolean("fatal"),
                 start = q.optionalLong("start"),
                 end = q.optionalLong("end"),
                 pagination = pagination,
@@ -94,6 +95,15 @@ internal fun Route.adminTelemetryRoutes(telemetry: ClientTelemetryAdminService) 
 private fun Parameters.optionalLong(name: String): Long? {
     val raw = this[name] ?: return null
     return raw.toLongOrNull() ?: throw IllegalArgumentException("$name must be an integer timestamp")
+}
+
+private fun Parameters.optionalBoolean(name: String): Boolean? {
+    val raw = this[name] ?: return null
+    return when (raw) {
+        "true" -> true
+        "false" -> false
+        else -> throw IllegalArgumentException("$name must be a boolean")
+    }
 }
 
 internal fun Parameters.outgoingQueueQueryOrNull(): TelemetryOutgoingQueueQuery? {

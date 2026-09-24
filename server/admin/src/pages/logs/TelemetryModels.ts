@@ -84,6 +84,8 @@ export interface TelemetryEventItem {
   distribution: string
   category: TelemetryEventCategory
   eventName: string
+  /** 仅 FAULT 事件非空：致命崩溃与可恢复错误的巡检分级。 */
+  fatal: boolean | null
   runId: string
   sequence: number
   message: string | null

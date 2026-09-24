@@ -12,6 +12,8 @@ data class TelemetrySearchQuery(
     val gitCommit: String? = null,
     val category: String? = null,
     val eventName: String? = null,
+    /** 仅与 FAULT 类事件比较；其他事件没有该字段，天然不命中。 */
+    val fatal: Boolean? = null,
     val receivedAtFrom: Long,
     val receivedAtUntil: Long,
     val outgoingQueue: TelemetryOutgoingQueueQuery? = null,

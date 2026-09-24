@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { CustodyPanel } from '../components/CustodyPanel'
 import { Button, Drawer, Descriptions, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, message } from 'antd'
 import { api, errMsg } from '../api/client'
@@ -11,6 +12,7 @@ interface GroupInfo { chatId: string; name: string }
 interface Detail { user: U; devices: DeviceInfo[]; friends: FriendInfo[]; groups: GroupInfo[]; online: boolean }
 
 export default function Users() {
+  const navigate = useNavigate()
   const [search, setSearch] = useState({ query: '', page: 1 })
   const [detailTarget, setDetailTarget] = useState<{ uid: string } | null>(null)
   const [resetUid, setResetUid] = useState<string | null>(null)
@@ -70,16 +72,30 @@ export default function Users() {
         {detail && (
           <Tabs items={[
             { key: 'base', label: '基本', children: (
-              <Descriptions column={1} size="small" bordered>
-                <Descriptions.Item label="UID">{detail.user.uid}</Descriptions.Item>
-                <Descriptions.Item label="用户名">{detail.user.username}</Descriptions.Item>
-                <Descriptions.Item label="昵称">{detail.user.name}</Descriptions.Item>
-                <Descriptions.Item label="状态">{detail.user.status === 2 ? '封禁' : '正常'}</Descriptions.Item>
-                <Descriptions.Item label="在线">{detail.online ? '是' : '否'}</Descriptions.Item>
-              </Descriptions>) },
+              <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                <Descriptions column={1} size="small" bordered>
+                  <Descriptions.Item label="UID">{detail.user.uid}</Descriptions.Item>
+                  <Descriptions.Item label="用户名">{detail.user.username}</Descriptions.Item>
+                  <Descriptions.Item label="昵称">{detail.user.name}</Descriptions.Item>
+                  <Descriptions.Item label="状态">{detail.user.status === 2 ? '封禁' : '正常'}</Descriptions.Item>
+                  <Descriptions.Item label="在线">{detail.online ? '是' : '否'}</Descriptions.Item>
+                </Descriptions>
+                <Button size="small" onClick={() =>
+                  navigate(`/logs?uid=${encodeURIComponent(detail.user.uid)}`)
+                }>查看该用户的客户端日志</Button>
+              </Space>) },
             { key: 'devices', label: `设备(${detail.devices.length})`, children: (
               <Table rowKey="deviceId" size="small" pagination={false}
-                columns={[{ title: '设备', dataIndex: 'deviceName' }, { title: 'ID', dataIndex: 'deviceId' }, { title: '最后登录', dataIndex: 'lastLogin' }]}
+                columns={[
+                  { title: '设备', dataIndex: 'deviceName' },
+                  { title: 'ID', dataIndex: 'deviceId' },
+                  { title: '最后登录', dataIndex: 'lastLogin' },
+                  { title: '操作', width: 100, render: (_: unknown, device: DeviceInfo) => (
+                    <Button size="small" onClick={() =>
+                      navigate(`/logs?uid=${encodeURIComponent(detail.user.uid)}&deviceId=${encodeURIComponent(device.deviceId)}`)
+                    }>查看日志</Button>
+                  ) },
+                ]}
                 dataSource={detail.devices} />) },
             { key: 'friends', label: `好友(${detail.friends.length})`, children: (
               <Table rowKey="friendUid" size="small" pagination={false}

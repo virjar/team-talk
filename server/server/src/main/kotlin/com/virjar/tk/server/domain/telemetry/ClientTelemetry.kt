@@ -32,6 +32,8 @@ data class TelemetryEventDraft(
     val eventName: String,
     val message: String,
     val searchText: String,
+    /** 仅 FAULT 事件存在：致命故障与可恢复错误的巡检分级。 */
+    val fatal: Boolean? = null,
     val outgoingQueue: TelemetryOutgoingQueueMetrics? = null,
     /** 精确的客户端 AUTH 身份，仅在该连接具有诊断上下文时存在。 */
     val connectionTraceContext: ConnectionTraceContext? = null,

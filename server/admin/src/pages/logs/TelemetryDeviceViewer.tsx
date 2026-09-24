@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Button, Input, Space, Table, Tag, Typography } from 'antd'
+import { useNavigate } from 'react-router-dom'
 import { api, errMsg } from '../../api/client'
 import {
   AdminPage,
@@ -10,6 +11,7 @@ import {
 } from './TelemetryModels'
 
 export function TelemetryDeviceViewer() {
+  const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [phone, setPhone] = useState('')
   const [page, setPage] = useState(1)
@@ -72,6 +74,11 @@ export function TelemetryDeviceViewer() {
           { title: 'Commit', dataIndex: 'gitCommit', width: 135, render: value => <Typography.Text copyable={{ text: value }}>{shortIdentity(value)}</Typography.Text> },
           { title: '最后出现', dataIndex: 'lastSeenAt', width: 165, render: exactTime },
           { title: '采集', width: 150, render: (_, row) => <span><Tag color={row.policyMode === 'DIAGNOSTIC' ? 'orange' : 'default'}>{row.policyMode}</Tag>{row.policyExpiresAt ? <div>{exactTime(row.policyExpiresAt)}</div> : null}</span> },
+          { title: '操作', width: 100, render: (_, row) => (
+            <Button size="small" onClick={() =>
+              navigate(`/logs?uid=${encodeURIComponent(row.uid)}&deviceId=${encodeURIComponent(row.deviceId)}`)
+            }>查看日志</Button>
+          ) },
         ]}
         expandable={{
           expandedRowRender: row => (

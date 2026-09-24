@@ -143,7 +143,10 @@ markerless leaf；旧 namespace 正文永远不由新会话读取或重新归属
 
 默认 `BASELINE` 只上传结构化 fault、审核词表中的用户提示、服务端白名单内的关键连接状态和失败媒体操作。
 这不是客户端可自行声明的信任级别：服务端会再次核对事件类别、稳定 code/state/outcome，并用审核词表文案
-替换客户端自报提示；fault 的自由摘要只在 `DIAGNOSTIC` 保留。所有 runtime、稳定名称和诊断文本在 PG/Lucene
+替换客户端自报提示。fault 的摘要、异常类与栈帧在任何采集模式下都保留为诊断正文（入库前逐字段脱敏），
+绝不降级为裸代号——遥测的意义就是让服务端看见客户端异常；`DIAGNOSTIC` 只额外放行 trace 级事件与
+成功媒体操作。FAULT 事件入库时携带 `fatal` 分级（致命崩溃/非致命错误），管理查询可按
+`fatal=true/false` 直接巡检。所有 runtime、稳定名称和诊断文本在 PG/Lucene
 边界前分别按字段语法和隐私规则归一化。管理员可以按 uid、deviceId 或手机号定位目标，并对一个用户或
 单个设备开启最长 24 小时的 `DIAGNOSTIC`；手机号只在管理服务边界解析为 uid，不复制到设备资料、事件
 或全文索引。客户端通过普通上传响应和空 heartbeat 获取最新策略，策略过期后本地和服务端都自动回到
@@ -182,8 +185,10 @@ batchId + payload hash 可直接幂等确认，冲突内容固定拒绝。事件
 计数、tombstone 和逐 segment 固定字段结构做有界校验，不扫描正文或倒排词典；结构异常或 schema marker
 不兼容时清空为空。PostgreSQL 只保存低频设备画像、诊断策略和策略审计。设备画像与 exact-device 策略
 绑定当前认证安装 generation，撤销或回收安装时一并删除，旧 epoch 的迟到 refresh 不再创建画像；
-uid-wide 策略保留。管理后台支持按关键词、uid、deviceId、手机号、平台、版本、commit、类别、事件名和时间
-查询，并可查看设备资料及启停诊断策略。服务端按 `receivedAt` 精确保留 Lucene 中最近 168 小时，因此
+uid-wide 策略保留。管理后台支持按关键词、uid、deviceId、手机号、平台、版本、commit、类别、事件名、
+故障级别（fatal）和时间
+查询，并可查看设备资料及启停诊断策略；用户详情与设备列表可直接跳转到按该 uid/deviceId 过滤的
+事件检索，事件行内的 uid/deviceId 亦可点按回填为筛选条件。服务端按 `receivedAt` 精确保留 Lucene 中最近 168 小时，因此
 用户规模增长不会再产生 `uid/device/date` 文件树，也不会为日志制造关系库事件流量。
 
 当前实现明确以单实例为边界：写队列最多 128 个命令并受 64 MiB 待写字节预算约束；索引最多 200 万

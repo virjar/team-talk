@@ -277,6 +277,7 @@ private fun TelemetryBatch.toDraft(
     runtime = safeRuntime,
     events = events.map { event ->
         var outgoingQueue: TelemetryOutgoingQueueMetrics? = null
+        var fatal: Boolean? = null
         val (message, searchText) = when (val payload = event.payload) {
             is TelemetryLogPayload -> {
                 val safeLogger = sanitizeTelemetryStableText(payload.logger)
@@ -284,19 +285,10 @@ private fun TelemetryBatch.toDraft(
                 "[${payload.level.name}] $safeLogger: $safeMessage" to
                     "${payload.level.name} $safeLogger $safeMessage"
             }
-            // 致命崩溃始终完整渲染（含异常类与栈帧）：它们稀少且是崩溃管线的全部意义；
-            // 非 fatal 故障仍按设备定向诊断策略决定是否携带诊断详情。
-            is TelemetryFaultPayload -> if (!diagnostic && !payload.fatal) {
-                val context = listOfNotNull(
-                    payload.faultCode,
-                    payload.page,
-                    payload.action,
-                    payload.origin,
-                    payload.reasonCode,
-                    "fatal=${payload.fatal}",
-                )
-                context.joinToString(" · ") to context.joinToString(" ")
-            } else {
+            // 故障事件始终完整渲染（含异常类与栈帧）：遥测存在的意义就是让服务端看见
+            // 客户端异常；错误正文在入库前仍逐字段脱敏，绝不因采集模式降级为裸代号。
+            is TelemetryFaultPayload -> {
+                fatal = payload.fatal
                 val safeLogger = sanitizeTelemetryStableText(payload.logger)
                 val safeFaultCode = sanitizeTelemetryStableText(payload.faultCode)
                 val safeSummary = sanitizeTelemetryDiagnosticText(payload.summary)
@@ -423,6 +415,7 @@ private fun TelemetryBatch.toDraft(
             eventName = safeEventName,
             message = message,
             searchText = "$safeEventName $searchText",
+            fatal = fatal,
             outgoingQueue = outgoingQueue,
             connectionTraceContext = event.connectionTraceContext?.let { context ->
                 ConnectionTraceContext(

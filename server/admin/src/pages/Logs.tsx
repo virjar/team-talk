@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Card, Col, Row, Table, Tabs, message } from 'antd'
 import dayjs from 'dayjs'
+import { useSearchParams } from 'react-router-dom'
 import { api, errMsg } from '../api/client'
 import { TelemetryDeviceViewer } from './logs/TelemetryDeviceViewer'
 import { TelemetryEventViewer } from './logs/TelemetryEventViewer'
@@ -50,19 +51,31 @@ function ServerLogViewer() {
   )
 }
 
-function ClientTelemetryViewer() {
+function ClientTelemetryViewer({ jumpIn }: { jumpIn?: { uid?: string, deviceId?: string } }) {
   return <Tabs items={[
-    { key: 'events', label: '事件检索', children: <TelemetryEventViewer /> },
+    { key: 'events', label: '事件检索', children: <TelemetryEventViewer initialFilters={jumpIn} /> },
     { key: 'devices', label: '客户端设备', children: <TelemetryDeviceViewer /> },
     { key: 'policies', label: '定向诊断', children: <TelemetryPolicyViewer /> },
   ]} />
 }
 
 export default function Logs() {
+  // 用户/设备页通过 /logs?uid=..&deviceId=.. 跳转：直接落在客户端遥测的事件检索。
+  const [params] = useSearchParams()
+  const jumpIn = {
+    uid: params.get('uid') ?? undefined,
+    deviceId: params.get('deviceId') ?? undefined,
+  }
+  const hasJump = !!(jumpIn.uid || jumpIn.deviceId)
+  const [tab, setTab] = useState(hasJump ? 'client' : 'server')
   return (
-    <Tabs items={[
-      { key: 'server', label: '服务端日志', children: <ServerLogViewer /> },
-      { key: 'client', label: '客户端遥测', children: <ClientTelemetryViewer /> },
-    ]} />
+    <Tabs
+      activeKey={tab}
+      onChange={setTab}
+      items={[
+        { key: 'server', label: '服务端日志', children: <ServerLogViewer /> },
+        { key: 'client', label: '客户端遥测', children: <ClientTelemetryViewer jumpIn={hasJump ? jumpIn : undefined} /> },
+      ]}
+    />
   )
 }

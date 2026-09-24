@@ -34,11 +34,20 @@ type EventFilters = {
   appVersion: string
   gitCommit: string
   category?: TelemetryEventCategory
+  /** 与服务端查询参数同形：'true'=致命（崩溃），'false'=非致命错误。 */
+  fatal?: 'true' | 'false'
   eventName: string
 }
 
 const emptyFilters: EventFilters = {
   keyword: '', uid: '', deviceId: '', phone: '', osName: '', osVersion: '', appVersion: '', gitCommit: '', eventName: '',
+}
+
+/** 用户/设备页跳转带入的初始筛选；非空时 Logs 页直接落到事件检索。 */
+export type TelemetryEventJumpIn = Partial<Pick<EventFilters, 'uid' | 'deviceId'>>
+
+export function jumpFilters(jump: TelemetryEventJumpIn): EventFilters {
+  return { ...emptyFilters, ...Object.fromEntries(Object.entries(jump).filter(([, value]) => value)) }
 }
 
 function HighlightedText({ highlight, fallback }: { highlight: TelemetryTextHighlight | null, fallback: string }) {
@@ -57,8 +66,14 @@ function HighlightedText({ highlight, fallback }: { highlight: TelemetryTextHigh
   return <>{parts}</>
 }
 
-export function TelemetryEventViewer() {
-  const [filters, setFilters] = useState<EventFilters>(emptyFilters)
+export function TelemetryEventViewer({ initialFilters }: { initialFilters?: TelemetryEventJumpIn }) {
+  const [filters, setFilters] = useState<EventFilters>(() => initialFilters ? jumpFilters(initialFilters) : emptyFilters)
+  // 跳转参数在组件保持挂载时也会更新（用户页/设备页再次进入），同步覆盖当前筛选。
+  useEffect(() => {
+    if (initialFilters && (initialFilters.uid || initialFilters.deviceId)) {
+      setFilters(jumpFilters(initialFilters))
+    }
+  }, [initialFilters?.uid, initialFilters?.deviceId])
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(null)
   const [page, setPage] = useState(1)
   const [result, setResult] = useState<AdminPage<TelemetryEventItem>>({ total: 0, items: [] })
@@ -134,15 +149,32 @@ export function TelemetryEventViewer() {
       title: '用户 / 设备', width: 205,
       render: (_: unknown, row: TelemetryEventItem) => (
         <div>
-          <Typography.Text copyable={{ text: row.uid }}>{shortIdentity(row.uid)}</Typography.Text><br />
-          <Typography.Text type="secondary" copyable={{ text: row.deviceId }}>{shortIdentity(row.deviceId)}</Typography.Text>
+          <Typography.Text
+            copyable={{ text: row.uid }}
+            style={{ cursor: 'pointer' }}
+            onClick={() => setFilters({ ...emptyFilters, uid: row.uid })}
+          >{shortIdentity(row.uid)}</Typography.Text><br />
+          <Typography.Text
+            type="secondary"
+            copyable={{ text: row.deviceId }}
+            style={{ cursor: 'pointer' }}
+            onClick={() => setFilters({ ...emptyFilters, deviceId: row.deviceId })}
+          >{shortIdentity(row.deviceId)}</Typography.Text>
         </div>
       ),
     },
     {
-      title: '事件', width: 230,
+      title: '事件', width: 260,
       render: (_: unknown, row: TelemetryEventItem) => (
-        <div><Tag>{row.category}</Tag><Typography.Text code>{row.eventName}</Typography.Text></div>
+        <div>
+          <Space size={4}>
+            <Tag>{row.category}</Tag>
+            {row.fatal != null && (
+              <Tag color={row.fatal ? 'red' : 'orange'}>{row.fatal ? '致命' : '错误'}</Tag>
+            )}
+          </Space>
+          <Typography.Text code>{row.eventName}</Typography.Text>
+        </div>
       ),
     },
     {
@@ -175,6 +207,7 @@ export function TelemetryEventViewer() {
           <Col span={4}><Input allowClear maxLength={128} placeholder="客户端版本" value={filters.appVersion} onChange={e => setFilters({ ...filters, appVersion: e.target.value })} /></Col>
           <Col span={4}><Input allowClear maxLength={80} placeholder="Git commit" value={filters.gitCommit} onChange={e => setFilters({ ...filters, gitCommit: e.target.value })} /></Col>
           <Col span={4}><Select<TelemetryEventCategory> allowClear style={{ width: '100%' }} placeholder="事件类别" value={filters.category} onChange={category => setFilters({ ...filters, category })} options={['FAULT', 'LOG', 'PAGE_DWELL', 'ACTION', 'SYSTEM', 'USER_NOTICE', 'MEDIA', 'OUTGOING_QUEUE'].map(value => ({ value: value as TelemetryEventCategory }))} /></Col>
+          <Col span={4}><Select<'true' | 'false'> allowClear style={{ width: '100%' }} placeholder="故障级别" value={filters.fatal} onChange={fatal => setFilters({ ...filters, fatal })} options={[{ value: 'true', label: '致命（崩溃）' }, { value: 'false', label: '非致命错误' }]} /></Col>
           <Col span={6}><Input allowClear maxLength={96} placeholder="事件名称" value={filters.eventName} onChange={e => setFilters({ ...filters, eventName: e.target.value })} /></Col>
           <Col span={12}><DatePicker.RangePicker showTime placeholder={['接收时间起', '接收时间止']} style={{ width: '100%' }} value={range} onChange={value => setRange(value as [Dayjs, Dayjs] | null)} /></Col>
           <Col span={24}>
@@ -219,6 +252,8 @@ export function TelemetryEventViewer() {
             return (
               <Space direction="vertical" size="small" style={{ width: '100%' }}>
                 <Space direction="vertical" size={2}>
+                  <Typography.Text>UID：<Typography.Text copyable>{row.uid}</Typography.Text></Typography.Text>
+                  <Typography.Text>设备 ID：<Typography.Text copyable>{row.deviceId}</Typography.Text></Typography.Text>
                   <Typography.Text>eventId：<Typography.Text copyable>{row.eventId}</Typography.Text></Typography.Text>
                   <Typography.Text>batchId：<Typography.Text copyable>{row.batchId}</Typography.Text></Typography.Text>
                   <Typography.Text>runId：<Typography.Text copyable>{row.runId}</Typography.Text> · sequence {row.sequence}</Typography.Text>

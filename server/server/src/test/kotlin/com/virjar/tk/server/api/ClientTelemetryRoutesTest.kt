@@ -400,7 +400,7 @@ class ClientTelemetryRoutesTest {
     }
 
     @Test
-    fun `baseline fault accepts only reviewed semantics and drops every free text field`() = testApplication {
+    fun `baseline fault keeps sanitized diagnostic body and grades fatality`() = testApplication {
         val deviceId = "fault-catalog-device"
         val uid = ctx.registerHuman(
             uniqueUsername("telemetry-http-fault-catalog"),
@@ -418,7 +418,7 @@ class ClientTelemetryRoutesTest {
             }
         }
 
-        val privateSentinel = "synthetic private prose must never reach baseline"
+        val summary = "decode failed on contact 13800138000"
         val approved = TelemetryBatch(
             batchId = "fault-${UUID.randomUUID()}",
             createdAtEpochMs = now,
@@ -433,7 +433,7 @@ class ClientTelemetryRoutesTest {
                     kind = TelemetryEventKind.FAULT,
                     payload = TelemetryFaultPayload(
                         logger = "arbitrary.logger",
-                        summary = privateSentinel,
+                        summary = summary,
                         faultCode = "mark_read_local_failure",
                         page = "chat",
                         action = "mark_read",
@@ -450,14 +450,19 @@ class ClientTelemetryRoutesTest {
                 uid = uid,
                 deviceId = deviceId,
                 eventName = "mark_read_local_failure",
+                fatal = false,
                 receivedAtFrom = now,
                 receivedAtUntil = now,
             ),
             offset = 0,
             limit = 10,
         ).hits.single().event.event
-        assertEquals(false, stored.message.contains(privateSentinel))
-        assertEquals(false, stored.searchText.contains("arbitrary"))
+        // 非致命故障的正文是巡检的主要信号：保留 summary 与异常类，但隐私字段仍在入库前脱敏。
+        assertEquals(false, stored.fatal)
+        assertEquals(true, stored.message.contains("mark_read_local_failure"))
+        assertEquals(true, stored.searchText.contains("[phone-redacted]"))
+        assertEquals(false, stored.searchText.contains("13800138000"))
+        assertEquals(true, stored.searchText.contains("arbitrary.Exception"))
 
         val unreviewed = approved.copy(
             batchId = "unreviewed-${UUID.randomUUID()}",
