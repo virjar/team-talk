@@ -437,7 +437,11 @@ internal fun FileCard(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                if (onSave != null && downloadState is FileDownloadState.Done) {
+                // 保存到文件系统（内测 T042）：下载完成后可用；打开失败（如桌面无法打开
+                // APK）时文件往往已在缓存，同样保留保存出路，不让用户卡在"打不开也没法存"。
+                if (onSave != null &&
+                    (downloadState is FileDownloadState.Done || downloadState is FileDownloadState.Failed)
+                ) {
                     // 保存到文件系统（内测 T042）：下载完成后可用；渲染类附件（markdown 等）靠复制无法留存原文件。
                     IconButton(
                         onClick = onSave,

@@ -33,12 +33,36 @@ data class GalleryItem(
     }
 }
 
-/** 消息中可导出的主附件（图片/视频/文件）；纯文本与富文本内嵌资源不在此列。 */
+/** 消息中可导出的主附件（图片/视频/文件）。富文本消息在只引用一个文件块时同样导出该
+ *  文件（内测反馈：APK 等桌面端无法打开的文件块，右键菜单必须能保存）；多个文件块的
+ *  导出入口保留在每张文件卡的保存按钮上。 */
 fun messageExportableAttachment(msg: Message): Attachment? = when (val body = msg.body) {
     is ImageBody -> body.attachment.takeIf { it.path.isNotBlank() }
     is VideoBody -> body.attachment.takeIf { it.path.isNotBlank() }
     is FileBody -> body.attachment.takeIf { it.path.isNotBlank() }
+    is RichTextBody -> body.singleEmbeddedFileAttachment()
+    is ReplyBody -> body.singleEmbeddedFileAttachment()
     else -> null
+}
+
+private fun RichTextBody.singleEmbeddedFileAttachment(): Attachment? =
+    singleEmbeddedFileAttachment(markdown, assets)
+
+private fun ReplyBody.singleEmbeddedFileAttachment(): Attachment? =
+    singleEmbeddedFileAttachment(content, assets)
+
+private fun singleEmbeddedFileAttachment(markdown: String, assets: List<EmbeddedAsset>): Attachment? {
+    if (assets.isEmpty()) return null
+    val assetsById = assets.associateBy(EmbeddedAsset::assetId)
+    val fileAssetIds = MarkdownAssetPolicy.references(markdown)
+        .asSequence()
+        .filter { it.presentation == EmbeddedAssetPresentation.FILE }
+        .mapNotNull { it.assetId }
+        .distinct()
+        .toList()
+    if (fileAssetIds.size != 1) return null
+    val asset = assetsById[fileAssetIds.single()] ?: return null
+    return asset.attachment.takeIf { it.path.isNotBlank() }
 }
 
 /** 图片消息的主附件（"复制"动作应放图片本体进剪贴板）。独立图片消息，以及"仅含一张
