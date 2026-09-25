@@ -100,13 +100,19 @@ internal fun IosFeatureScreen(route: IosRoute, ui: IosSessionUi) = key(ui, route
             val name = conversation?.let {
                 conversationIdentityPresentation(it, it.peerUid?.let(peers::get), it.peerUid?.let(remarks::get)).name
             } ?: "当前会话"
+            val chatType = ChatType.fromCode(conversation?.chatType ?: ChatType.PERSONAL.code)
             ChatToolsScreen(
-                chatName = name, isGroup = conversation?.chatType == ChatType.GROUP.code,
-                onOpenHistorySearch = admission.guard {
-                    ui.navigation.open(IosRoute(IosPage.CHAT_HISTORY_SEARCH, route.id))
-                },
-                onCreateGroup = admission.guard {
-                    ui.navigation.open(IosRoute(IosPage.CREATE_GROUP, conversation?.peerUid.orEmpty()))
+                chatName = name,
+                isGroup = chatType == ChatType.GROUP,
+                actions = chatToolActionsFor(chatType, conversation?.peerUid),
+                onAction = admission.guard { kind ->
+                    when (kind) {
+                        ChatToolActionKind.HISTORY_SEARCH ->
+                            ui.navigation.open(IosRoute(IosPage.CHAT_HISTORY_SEARCH, route.id))
+                        ChatToolActionKind.CREATE_GROUP ->
+                            ui.navigation.open(IosRoute(IosPage.CREATE_GROUP, conversation?.peerUid.orEmpty()))
+                        ChatToolActionKind.CLEAR_HISTORY -> Unit
+                    }
                 },
                 onClearHistory = { actions.run({ "会话已关闭" }) { data.chat.clearChatHistory(route.id) } },
                 onFinished = actions.back, onBack = actions.back,

@@ -77,18 +77,24 @@ fun ScreenHeader(
         // 因此嵌套的 Android 宿主不会意外给该页头重复加边距。
         androidx.compose.foundation.layout.Column(modifier = topSafeAreaModifier) {
             if (compactDesktop) {
-                Row(
+                // 桌面（子窗口/任务窗口）标题栏：标题相对整窗居中——窗口形态下左对齐
+                // 工具栏会与 macOS 红绿灯、返回键挤成两套"退回"语义；红绿灯内边距
+                // 只作用于返回键，标题视觉中心与窗口一致。
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(headerHeight)
-                        .padding(
-                            start = leadingInset + if (showBackButton) 4.dp else 16.dp,
-                            end = 8.dp,
-                        ),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(end = 8.dp),
                 ) {
                     if (showBackButton) {
-                        IconButton(onClick = onBack, modifier = Modifier.size(40.dp).testTag("screen.header.back")) {
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .padding(start = leadingInset + if (showBackButton) 4.dp else 0.dp)
+                                .size(40.dp)
+                                .testTag("screen.header.back"),
+                        ) {
                             Icon(
                                 Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "返回",
@@ -101,9 +107,13 @@ fun ScreenHeader(
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.align(Alignment.Center),
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically, content = trailing)
+                    Row(
+                        modifier = Modifier.align(Alignment.CenterEnd),
+                        verticalAlignment = Alignment.CenterVertically,
+                        content = trailing,
+                    )
                 }
             } else {
                 Box(modifier = Modifier.fillMaxWidth().height(headerHeight)) {

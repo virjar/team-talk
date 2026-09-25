@@ -330,7 +330,7 @@ internal fun ChatPanelWrapper(
                 ) {
                     Icon(
                         Icons.Filled.MoreHoriz,
-                        contentDescription = "会话设置",
+                        contentDescription = "聊天工具",
                         tint = Tk.colors.secondaryText,
                         modifier = Modifier.size(Tk.dimens.iconSize),
                     )

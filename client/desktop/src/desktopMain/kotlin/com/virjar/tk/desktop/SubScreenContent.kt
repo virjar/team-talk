@@ -176,26 +176,32 @@ internal fun SubScreenContent(
             initialSelectedUids = screen.preselectedUids,
         )
 
-        is SubScreen.ChatTools -> ChatToolsScreen(
-            chatName = screen.chatName,
-            isGroup = com.virjar.tk.protocol.model.ChatType.fromCode(screen.chatType) ==
-                com.virjar.tk.protocol.model.ChatType.GROUP,
-            onOpenHistorySearch = {
-                navigateIfOpen(SubScreen.ChatHistorySearch(screen.chatId, screen.chatName))
-            },
-            onCreateGroup = {
-                navigateIfOpen(
-                    SubScreen.CreateGroup(screen.peerUid?.let { uid -> setOf(uid) } ?: emptySet()),
-                )
-            },
-            onClearHistory = {
-                admittedSuspend(onClosed = { "会话已关闭" }) {
-                    data.chat.clearChatHistory(screen.chatId)
-                }
-            },
-            onFinished = backIfOpen,
-            onBack = onBack,
-        )
+        is SubScreen.ChatTools -> {
+            val chatType = com.virjar.tk.protocol.model.ChatType.fromCode(screen.chatType)
+            ChatToolsScreen(
+                chatName = screen.chatName,
+                isGroup = chatType == com.virjar.tk.protocol.model.ChatType.GROUP,
+                actions = chatToolActionsFor(chatType, screen.peerUid),
+                onAction = { kind ->
+                    when (kind) {
+                        ChatToolActionKind.HISTORY_SEARCH ->
+                            navigateIfOpen(SubScreen.ChatHistorySearch(screen.chatId, screen.chatName))
+                        ChatToolActionKind.CREATE_GROUP ->
+                            navigateIfOpen(
+                                SubScreen.CreateGroup(screen.peerUid?.let { uid -> setOf(uid) } ?: emptySet()),
+                            )
+                        ChatToolActionKind.CLEAR_HISTORY -> Unit
+                    }
+                },
+                onClearHistory = {
+                    admittedSuspend(onClosed = { "会话已关闭" }) {
+                        data.chat.clearChatHistory(screen.chatId)
+                    }
+                },
+                onFinished = backIfOpen,
+                onBack = onBack,
+            )
+        }
 
         is SubScreen.ChatHistorySearch -> ChatHistorySearchHubScreen(
             chatName = screen.chatName,

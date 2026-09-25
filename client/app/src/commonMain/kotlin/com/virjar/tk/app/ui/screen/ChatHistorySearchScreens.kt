@@ -99,7 +99,7 @@ private fun formatHistoryTime(timestamp: Long): String =
 
 /**
  * 会话搜索中心页：顶部搜索框（搜索全部内容，回车进入「聊天记录」浏览页），
- * 下方四个分类入口。放在「会话设置」窗口的导航栈内。
+ * 下方四个分类入口。放在「聊天工具」窗口的导航栈内。
  */
 @Composable
 fun ChatHistorySearchHubScreen(
