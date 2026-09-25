@@ -11,6 +11,8 @@ import com.virjar.tk.app.ui.component.FileDownloadCore
 import com.virjar.tk.app.ui.component.FileDownloadCoreAdapter
 import com.virjar.tk.app.ui.component.FileDownloadPendingAction
 import com.virjar.tk.app.ui.component.FileDownloadState
+import com.virjar.tk.app.ui.component.FileOpenBehavior
+import com.virjar.tk.app.ui.component.platformFileOpenBehavior
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.shared.AppError
 import kotlinx.coroutines.CoroutineName
@@ -43,7 +45,14 @@ internal class IosFileDownloadController(
 
     override fun ensure(attachment: Attachment) = core.ensure(attachment)
     override fun download(attachment: Attachment) = core.download(attachment)
-    override fun openOrDownload(attachment: Attachment) = core.act(attachment, FileDownloadPendingAction.OPEN)
+    override fun openOrDownload(attachment: Attachment) {
+        // QuickLook 呈现不了的安装包/压缩包/可执行文件不做主动打开：直接走分享面板落位。
+        if (platformFileOpenBehavior(attachment) == FileOpenBehavior.SAVE_ONLY) {
+            exportToUserLocation(attachment)
+            return
+        }
+        core.act(attachment, FileDownloadPendingAction.OPEN)
+    }
 
     override fun exportToUserLocation(attachment: Attachment): Boolean {
         if (!resources.canDeliverUiResult()) return false

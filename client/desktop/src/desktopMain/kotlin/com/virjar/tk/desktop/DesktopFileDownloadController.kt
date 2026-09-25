@@ -28,7 +28,9 @@ import com.virjar.tk.app.ui.component.FileDownloadCore
 import com.virjar.tk.app.ui.component.FileDownloadCoreAdapter
 import com.virjar.tk.app.ui.component.FileDownloadPendingAction
 import com.virjar.tk.app.ui.component.FileDownloadState
+import com.virjar.tk.app.ui.component.FileOpenBehavior
 import com.virjar.tk.app.ui.component.TextAttachmentPreviewPlan
+import com.virjar.tk.app.ui.component.platformFileOpenBehavior
 import com.virjar.tk.app.ui.component.textAttachmentPreviewPlan
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.CancellationException
@@ -92,6 +94,11 @@ internal class DesktopFileDownloadController(
                     core.act(attachment, FileDownloadPendingAction.PREVIEW)
                 }
             }
+            return
+        }
+        // 安装包/压缩包/可执行文件不做主动打开：确认下载后直接走另存为。
+        if (platformFileOpenBehavior(attachment) == FileOpenBehavior.SAVE_ONLY) {
+            exportToUserLocation(attachment)
             return
         }
         core.act(attachment, FileDownloadPendingAction.OPEN)

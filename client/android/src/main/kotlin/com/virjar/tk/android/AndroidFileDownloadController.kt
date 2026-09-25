@@ -23,6 +23,8 @@ import com.virjar.tk.app.ui.component.AutomaticFileDownloadLedger
 import com.virjar.tk.app.ui.component.FileDownloadController
 import com.virjar.tk.app.ui.component.FileDownloadState
 import com.virjar.tk.app.ui.component.FileDownloadStatePublisher
+import com.virjar.tk.app.ui.component.FileOpenBehavior
+import com.virjar.tk.app.ui.component.platformFileOpenBehavior
 import com.virjar.tk.app.ui.component.textAttachmentPreviewKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -239,6 +241,11 @@ class AndroidFileDownloadController private constructor(
         retireExternalOpenLease()
         if (onTextAttachmentPreview != null && textAttachmentPreviewKind(attachment) != null) {
             openTextPreview(attachment)
+            return
+        }
+        // apk 的"打开"即拉起安装器；zip/exe 等没有可靠处理器，直接走另存为落位。
+        if (platformFileOpenBehavior(attachment) == FileOpenBehavior.SAVE_ONLY) {
+            exportToUserLocation(attachment)
             return
         }
         launchFileOperation(attachment.path) { admission ->
