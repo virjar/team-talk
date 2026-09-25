@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CustodyPanel } from '../components/CustodyPanel'
-import { Button, Drawer, Descriptions, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, message } from 'antd'
+import { Button, Drawer, Descriptions, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd'
 import { api, errMsg } from '../api/client'
 import { useRemoteQuery } from '../api/useRemoteQuery'
 
@@ -51,10 +51,11 @@ export default function Users() {
       <Table rowKey="uid" loading={users.loading}
         pagination={{ total: data.total, current: search.page, pageSize: 20, onChange: page => changeSearch({ ...search, page }) }}
         columns={[
-          { title: 'UID', dataIndex: 'uid', width: 120 },
+          { title: 'UID', dataIndex: 'uid', width: 140, render: (uid: string) => <Typography.Text copyable>{uid}</Typography.Text> },
           { title: '用户名', dataIndex: 'username' },
           { title: '昵称', dataIndex: 'name' },
-          { title: '手机', dataIndex: 'phone' },
+          { title: '手机', dataIndex: 'phone', render: (phone?: string) => phone
+            ? <Typography.Text copyable>{phone}</Typography.Text> : undefined },
           { title: '状态', dataIndex: 'status', width: 80, render: (s: number) =>
             s === 2 ? <Tag color="red">封禁</Tag> : <Tag color="green">正常</Tag> },
           { title: '操作', width: 320, render: (_: unknown, u: U) => (
@@ -74,9 +75,11 @@ export default function Users() {
             { key: 'base', label: '基本', children: (
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 <Descriptions column={1} size="small" bordered>
-                  <Descriptions.Item label="UID">{detail.user.uid}</Descriptions.Item>
-                  <Descriptions.Item label="用户名">{detail.user.username}</Descriptions.Item>
+                  <Descriptions.Item label="UID"><Typography.Text copyable>{detail.user.uid}</Typography.Text></Descriptions.Item>
+                  <Descriptions.Item label="用户名"><Typography.Text copyable>{detail.user.username}</Typography.Text></Descriptions.Item>
                   <Descriptions.Item label="昵称">{detail.user.name}</Descriptions.Item>
+                  <Descriptions.Item label="手机">{detail.user.phone
+                    ? <Typography.Text copyable>{detail.user.phone}</Typography.Text> : '—'}</Descriptions.Item>
                   <Descriptions.Item label="状态">{detail.user.status === 2 ? '封禁' : '正常'}</Descriptions.Item>
                   <Descriptions.Item label="在线">{detail.online ? '是' : '否'}</Descriptions.Item>
                 </Descriptions>
@@ -88,7 +91,7 @@ export default function Users() {
               <Table rowKey="deviceId" size="small" pagination={false}
                 columns={[
                   { title: '设备', dataIndex: 'deviceName' },
-                  { title: 'ID', dataIndex: 'deviceId' },
+                  { title: 'ID', dataIndex: 'deviceId', render: (id: string) => <Typography.Text copyable>{id}</Typography.Text> },
                   { title: '最后登录', dataIndex: 'lastLogin' },
                   { title: '操作', width: 100, render: (_: unknown, device: DeviceInfo) => (
                     <Button size="small" onClick={() =>
@@ -99,11 +102,17 @@ export default function Users() {
                 dataSource={detail.devices} />) },
             { key: 'friends', label: `好友(${detail.friends.length})`, children: (
               <Table rowKey="friendUid" size="small" pagination={false}
-                columns={[{ title: 'UID', dataIndex: 'friendUid' }, { title: '备注', dataIndex: 'remark' }]}
+                columns={[
+                  { title: 'UID', dataIndex: 'friendUid', render: (uid: string) => <Typography.Text copyable>{uid}</Typography.Text> },
+                  { title: '备注', dataIndex: 'remark' },
+                ]}
                 dataSource={detail.friends} />) },
             { key: 'groups', label: `群(${detail.groups.length})`, children: (
               <Table rowKey="chatId" size="small" pagination={false}
-                columns={[{ title: '群名', dataIndex: 'name' }, { title: 'chatId', dataIndex: 'chatId' }]}
+                columns={[
+                  { title: '群名', dataIndex: 'name' },
+                  { title: 'chatId', dataIndex: 'chatId', render: (id: string) => <Typography.Text copyable>{id}</Typography.Text> },
+                ]}
                 dataSource={detail.groups} />) },
             { key: 'custody', label: '离职资产', children: (
               <CustodyPanel uid={detail.user.uid}

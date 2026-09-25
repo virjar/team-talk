@@ -180,10 +180,12 @@ export default function Organization() {
               <Popconfirm title="仅空部门可以归档，确定继续？" onConfirm={archiveUnit}><Button danger>归档</Button></Popconfirm>
             </Space>}>
               <Descriptions column={2} size="small">
-                <Descriptions.Item label="节点 ID">{selected.unitId}</Descriptions.Item>
-                <Descriptions.Item label="负责人">{selected.leaderUid || '未设置'}</Descriptions.Item>
+                <Descriptions.Item label="节点 ID"><Typography.Text copyable>{selected.unitId}</Typography.Text></Descriptions.Item>
+                <Descriptions.Item label="负责人">{selected.leaderUid
+                  ? <Typography.Text copyable>{selected.leaderUid}</Typography.Text> : '未设置'}</Descriptions.Item>
                 <Descriptions.Item label="上级部门">{units.find(u => u.unitId === selected.parentId)?.name || '无（根组织）'}</Descriptions.Item>
-                <Descriptions.Item label="部门群">{selected.groupChatId || '未启用'}</Descriptions.Item>
+                <Descriptions.Item label="部门群">{selected.groupChatId
+                  ? <Typography.Text copyable>{selected.groupChatId}</Typography.Text> : '未启用'}</Descriptions.Item>
               </Descriptions>
             </Card>
 
@@ -191,7 +193,7 @@ export default function Organization() {
               onClick={() => { setMemberModal(true); memberForm.resetFields(); loadUserOptions() }}>添加成员</Button>}>
               <Table rowKey="uid" size="small" pagination={false} dataSource={members} columns={[
                 { title: '成员', render: (_: unknown, row: OrgMember) => row.user?.name || row.user?.username || row.uid },
-                { title: '用户 ID', dataIndex: 'uid', ellipsis: true },
+                { title: '用户 ID', dataIndex: 'uid', ellipsis: true, render: (uid: string) => <Typography.Text copyable>{uid}</Typography.Text> },
                 { title: '职位', dataIndex: 'title', render: value => value || '-' },
                 { title: '归属', dataIndex: 'primary', width: 90, render: primary => primary ? <Tag color="blue">主部门</Tag> : <Tag>兼任</Tag> },
                 { title: '操作', width: 80, render: (_: unknown, row: OrgMember) => (

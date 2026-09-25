@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { Button, Drawer, Descriptions, Input, Popconfirm, Space, Table, Tag, message } from 'antd'
+import { Button, Drawer, Descriptions, Input, Popconfirm, Space, Table, Tag, Typography, message } from 'antd'
 import { api, errMsg } from '../api/client'
 import { useRemoteQuery } from '../api/useRemoteQuery'
 
@@ -38,7 +38,7 @@ export default function Groups() {
         pagination={{ total: data.total, current: search.page, pageSize: 20, onChange: page => changeSearch({ ...search, page }) }}
         columns={[
           { title: '群名', dataIndex: 'name' },
-          { title: 'chatId', dataIndex: 'chatId', ellipsis: true },
+          { title: 'chatId', dataIndex: 'chatId', ellipsis: true, render: (id: string) => <Typography.Text copyable>{id}</Typography.Text> },
           { title: '成员数', dataIndex: 'memberCount', width: 80 },
           { title: '全员禁言', dataIndex: 'mutedAll', width: 90, render: (m: boolean) => m ? <Tag color="orange">是</Tag> : <Tag>否</Tag> },
           { title: '操作', width: 300, render: (_: any, g: G) => (

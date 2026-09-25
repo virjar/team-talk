@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, Form, Input, Modal, Space, Table, Tag, message } from 'antd'
+import { Button, Form, Input, Modal, Space, Table, Tag, Typography, message } from 'antd'
 import { api, errMsg } from '../api/client'
 import dayjs from 'dayjs'
 
@@ -54,8 +54,8 @@ export default function Messages() {
         pagination={{ total: data?.total ?? 0, current: page, pageSize: 20, onChange: p => search(p) }}
         columns={[
           { title: '时间', dataIndex: 'timestamp', width: 150, render: (t: number) => dayjs(t).format('MM-DD HH:mm:ss') },
-          { title: '会话', dataIndex: 'chatId', width: 150, ellipsis: true },
-          { title: '发送者', dataIndex: 'senderUid', width: 100 },
+          { title: '会话', dataIndex: 'chatId', width: 150, ellipsis: true, render: (id: string) => <Typography.Text copyable>{id}</Typography.Text> },
+          { title: '发送者', dataIndex: 'senderUid', width: 110, render: (uid: string) => <Typography.Text copyable>{uid}</Typography.Text> },
           { title: '内容', width: 350, ellipsis: true, render: (_: any, m: Msg) =>
             data?.highlights[messageIdentity(m)] ?? bodyText(m) },
           { title: '标记', dataIndex: 'flags', width: 90, render: (f: number) => (
