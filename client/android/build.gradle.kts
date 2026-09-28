@@ -193,6 +193,8 @@ dependencies {
     implementation(libs.androidx.camera.video)
     implementation(libs.androidx.camera.view)
     implementation(libs.slf4j.jdk14)
+    // 1:1 通话媒体引擎（协议 minor 0.5）：Stream 维护的 Google WebRTC 官方 API 兼容发行
+    implementation("io.getstream:stream-webrtc-android:1.3.9")
     // 媒体展示依赖（上传已收敛到 shared 流式 transport）
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)

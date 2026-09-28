@@ -229,6 +229,11 @@ internal fun Application.module(
         // Validate that pairing before Koin can construct/open RocksDB, Lucene, or FileStore.
         ServerDataEpoch.bindOrValidateDataset(dataRoot, postgres.datasetId)
 
+        // 内嵌 TURN/STUN（协议 minor 0.5 通话 NAT 兜底）：未配置 TURN_ENABLED 时不启动
+        val turnServer = com.virjar.tk.server.infra.turn.TurnRuntime.fromEnvironment()?.let { options ->
+            resources.own("embedded TURN", com.virjar.tk.server.infra.turn.TurnRuntime.start(options)) { it.close() }
+        }
+
         // 2. DI
         install(Koin) {
             modules(
@@ -237,6 +242,7 @@ internal fun Application.module(
                     syncDatasetId = postgres.datasetId,
                     tcpServerConfiguration = tcpTransport.server,
                     tcpHealthProbeConfiguration = tcpTransport.health,
+                    turnServer = turnServer,
                 ),
             )
         }
@@ -376,6 +382,7 @@ internal fun Application.module(
         val attachmentRetention = koin.get<AttachmentRetentionService>()
         val tasks = koin.get<com.virjar.tk.server.domain.task.TaskService>()
         val oemPush = koin.get<com.virjar.tk.server.infra.push.OemPushNotifications>()
+        val calls = koin.get<com.virjar.tk.server.domain.call.CallService>()
         val reliableCommandReceiptMaintenance = ReliableCommandReceiptMaintenance(koin.get())
         var reliableCommandReceiptBacklogReported = false
 
@@ -390,6 +397,18 @@ internal fun Application.module(
         )
         maintenance.start(
             listOf(
+                MaintenanceWorker("call-timeout-sweep") {
+                    while (isActive) {
+                        try {
+                            calls.sweepTimeouts()
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            logger.warn("Call timeout sweep remains pending")
+                        }
+                        delay(5_000L)
+                    }
+                },
                 MaintenanceWorker("oem-push") {
                     while (isActive) {
                         try {

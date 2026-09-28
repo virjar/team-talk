@@ -2,6 +2,10 @@ package com.virjar.tk.app.ui.component
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.PhoneMissed
+import androidx.compose.material.icons.filled.VideoCall
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -217,6 +221,12 @@ fun MessageBodyRenderer(
         // 编辑消息直接渲染新内容；「（已编辑）」角标由 FLAG_EDITED 统一显示
         is EditBody -> Text(body.newContent, style = MaterialTheme.typography.bodyMedium)
         is ReactionBody -> SystemHintText("表情回应 ${body.emoji}")
+        is CallLogBody -> CallLogBubble(
+            outgoing = message.senderUid == body.callerUid,
+            video = body.video,
+            durationSec = body.durationSec,
+            reason = body.reason,
+        )
         null -> SystemHintText(MessagePreview.previewBody(null, message.messageType))
     }
 
@@ -482,5 +492,44 @@ private fun ReplyQuote(body: ReplyBody, resolveSender: ((String) -> User?)?) {
                 )
             }
         }
+    }
+}
+
+/**
+ * 通话记录气泡（协议 minor 0.5）：服务端以主叫身份落库，按发送者与本机身份判定呼出/呼入。
+ * 未接通（时长为 0）显示原因文案；接通显示通话时长。
+ */
+@Composable
+internal fun CallLogBubble(
+    outgoing: Boolean,
+    video: Boolean,
+    durationSec: Int,
+    reason: com.virjar.tk.protocol.model.CallEndReason,
+) {
+    val missed = durationSec <= 0
+    val icon = when {
+        video -> Icons.Filled.VideoCall
+        missed -> Icons.Filled.PhoneMissed
+        else -> Icons.Filled.Phone
+    }
+    val text = when {
+        !missed -> "${durationSec / 60}".padStart(2, '0') + ":" + "${durationSec % 60}".padStart(2, '0')
+        reason == com.virjar.tk.protocol.model.CallEndReason.DECLINED -> if (outgoing) "对方已拒绝" else "已拒绝"
+        reason == com.virjar.tk.protocol.model.CallEndReason.CANCELLED -> if (outgoing) "已取消" else "对方已取消"
+        reason == com.virjar.tk.protocol.model.CallEndReason.BUSY -> "对方忙线"
+        else -> if (outgoing) "对方无应答" else "未接来电"
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (missed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            (if (outgoing) "呼出 " else "呼入 ") + (if (video) "视频通话 " else "语音通话 ") + text,
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }

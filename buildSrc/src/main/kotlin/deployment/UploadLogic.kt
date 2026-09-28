@@ -106,17 +106,22 @@ fun deployServer(
                 null
             }
 
+            val turnSecret = config.turn?.secretFile
+                ?.takeIf { it.isFile }
+                ?.readText(Charsets.UTF_8)?.trim()
             if (isFirstDeploy) {
                 println("=== First Deploy ===")
                 deployNew(
                     serverDistribution, host, user, deployPort, deployPath, secrets, sslEnabled,
                     sslPort, preparedTlsKeystore, httpPort, tcpPort, tcpTlsEnabled,
+                    config.turn, turnSecret,
                 )
             } else {
                 println("=== Upgrade ===")
                 deployUpgrade(
                     serverDistribution, host, user, deployPort, deployPath, secrets, sslEnabled,
-                    sslPort, preparedTlsKeystore, httpPort, tcpPort, readServerDataEpoch(rootDir),
+                    sslPort, preparedTlsKeystore, httpPort, tcpPort,
+                    config.turn, turnSecret, readServerDataEpoch(rootDir),
                     artifactIdentity.buildIdentity, config.sslPort,
                     checkNotNull(artifactIdentity.serverProtocol),
                     tcpTlsEnabled,

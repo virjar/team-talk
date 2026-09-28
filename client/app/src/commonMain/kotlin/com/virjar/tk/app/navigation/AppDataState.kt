@@ -65,6 +65,10 @@ open class AppDataState(
     val telemetry: ClientUiTelemetrySink = SessionClientUiTelemetrySink(session.telemetryRecorder),
 ) {
     val userSession get() = session.userSession
+    val localCache get() = session.localCache
+
+    /** 1:1 通话编排（协议 minor 0.5）。 */
+    val callCenter get() = session.callCenter
     val deploymentIdentity get() = session.deploymentIdentity
     /** 平台所拥有的缓存和其他 session 资源的不可变权威数据集。 */
     val datasetId get() = session.datasetId

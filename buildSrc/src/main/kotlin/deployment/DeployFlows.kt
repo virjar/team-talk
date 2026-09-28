@@ -162,6 +162,8 @@ fun deployNew(
     httpPort: Int,
     tcpPort: String,
     tcpTlsEnabled: Boolean = sslEnabled,
+    turn: TurnDeployment? = null,
+    turnSecret: String? = null,
 ) {
     requireCanonicalDeployPath(deployPath)
     requireActiveRemoteDeploymentGuard(host, user, deployPort)
@@ -197,7 +199,11 @@ fun deployNew(
 
     println("  Generating env.sh ...")
     uploadEnvSh(
-        generateEnvShContent(secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort, tcpTlsEnabled = tcpTlsEnabled),
+        generateEnvShContent(
+            secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort, tcpTlsEnabled = tcpTlsEnabled,
+            turn = turn,
+            turnSecret = turnSecret,
+        ),
         host,
         user,
         deployPort,
@@ -246,6 +252,8 @@ fun deployUpgrade(
     preparedTlsKeystore: File?,
     httpPort: Int,
     tcpPort: String,
+    turn: TurnDeployment? = null,
+    turnSecret: String? = null,
     requiredEpoch: Int,
     expectedBuildIdentity: String,
     healthSslPort: Int,
@@ -261,6 +269,8 @@ fun deployUpgrade(
     val minimumProtocolMinor = readRemoteMinimumProtocolMinor(host, user, deployPort, deployPath, protocolWindow)
     val upgradedEnv = generateEnvShContent(
         secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort, minimumProtocolMinor, tcpTlsEnabled,
+        turn = turn,
+        turnSecret = turnSecret,
     )
     val transactionId = UUID.randomUUID().toString()
     val stagedPath = requireCanonicalDeployPath("$deployPath/.release-$transactionId")

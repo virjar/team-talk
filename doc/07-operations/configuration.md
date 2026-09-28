@@ -52,6 +52,7 @@ DSL 按用途分层：`server` 配置用户访问的 HTTP/TCP，`deploy` 配置�
 | `server.tcp.host` | 默认取最终 HTTP URL 的主机，TCP 入口不同时显式填写 | `tcpAddress` 的主机 |
 | `server.tcp.port` | 默认 5100，范围 1–65535 | `tcpAddress` 的端口 |
 | `server.tcp.tls.certificateFile` | 可选的公共 PEM `File`；未配置时沿用 SDK 默认策略（远端 WebPKI），配置后读取一张 X.509 证书，禁止私钥；文件不可读或格式错误直接失败 | `tcpTlsCertificatePem` |
+| `server.turn.secretFile` | 可选的内嵌 TURN/STUN 凭据文件（≥16 字节，Git 忽略）；配置后部署写入 `TURN_*` 环境变量并在服务端进程内启动 TURN（1:1 通话 NAT 兜底），未配置时通话仅 P2P 直连。secret 内容不进入配置快照 | `turn` |
 | `deploy.directory` | 默认 `/opt/teamtalk`，必须是规范化的非根绝对路径 | `deployPath` |
 | `deploy.ssh.host` | 默认取最终 HTTP URL 的主机，可单独填写 SSH hostname 或 IPv4 | `deployHost` |
 | `deploy.ssh.port` | 默认 22，范围 1–65535 | `deployPort` |
@@ -429,6 +430,10 @@ HTTP 部署只传 `-PsslCert/-PsslKey` 而未配置 `tcpTlsCertificatePem` 会�
 | `KTOR_SSL_PORT` | 未启用 | 与可加载 keystore 一起启用 HTTPS connector；启用后关闭 HTTP |
 | `TCP_HOST` | `0.0.0.0` | 直接运行的 IM TCP 默认地址；部署工具会按上表覆盖 |
 | `TCP_PORT` | 5100 | IM TCP 监听端口；部署值来自 `tcpAddress` |
+| `TURN_ENABLED` | 未启用 | `true` 时在服务端进程内启动内嵌 TURN/STUN（1:1 通话 NAT 兜底）；需要 `TURN_SECRET` 与 `TURN_PUBLIC_HOST`。部署链在配置 `server.turn.secretFile` 时自动写入以下 `TURN_*` 项 |
+| `TURN_PORT` / `TURN_PUBLIC_HOST` / `TURN_REALM` | 3478 / 必填 / `teamtalk` | STUN/TURN 共用 UDP 端口、对外宣告地址与认证域 |
+| `TURN_RELAY_PORT_START` / `TURN_RELAY_PORT_END` | 51000 / 51100 | relay 端口范围（≤1024 个），需在云安全组放行 UDP |
+| `TURN_SECRET` | 必填（启用时） | time-limited 凭据共享 secret（≥16 字节），仅存于远端 `conf/env.sh`（600） |
 | `MINIMUM_PROTOCOL_MINOR` | 构建的最低 minor | 同协议 major 下的客户端下限；只能提高至当前 minor，启动时校验；普通升级保留显式值并在停服前按目标产物窗口预检；详见[版本机制](../04-protocol/versioning.md) |
 | `SSL_KEYSTORE` | 无 | PKCS12 路径；配置后启用 TCP TLS，也供 HTTPS connector 使用 |
 | `SSL_KEYSTORE_PASSWORD` | 无 | keystore 密码 |

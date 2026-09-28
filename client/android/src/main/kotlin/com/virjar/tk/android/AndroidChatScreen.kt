@@ -107,6 +107,8 @@ internal fun AndroidChatScreen(
     messageFocusTarget: MessageFocusTarget? = null,
     pendingTasksContent: (@Composable () -> Unit)? = null,
     taskBanner: (@Composable () -> Unit)? = null,
+    /** 1:1 通话编排（协议 minor 0.5）；null 时不显示通话入口。 */
+    callCenter: com.virjar.tk.shared.call.CallCenter? = null,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findComponentActivity() }
@@ -513,6 +515,27 @@ internal fun AndroidChatScreen(
     )
     val voicePlayback = rememberAndroidVoicePlayback(context, mediaSession, telemetry)
     val messageDetails = com.virjar.tk.app.ui.screen.rememberMessageDetails(viewModel)
+
+    // 1:1 通话（协议 minor 0.5）：拨打前请求麦克风/摄像头权限，授权后经准入发起
+    val chatPeerUid by viewModel.chatPeerUid.collectAsState()
+    var pendingCallVideo by remember { mutableStateOf<Boolean?>(null) }
+    val callPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        val video = pendingCallVideo
+        pendingCallVideo = null
+        if (result.values.all { it } && video != null && chatPeerUid != null) {
+            launchAdmittedAction { callCenter?.startOutgoing(chatPeerUid!!, video) }
+        }
+    }
+    fun placeCall(video: Boolean) {
+        pendingCallVideo = video
+        val permissions = buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (video) add(Manifest.permission.CAMERA)
+        }
+        callPermissionLauncher.launch(permissions.toTypedArray())
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.imePadding().then(if (messageDetails.isOpen) Modifier.clearAndSetSemantics {} else Modifier),
@@ -524,6 +547,8 @@ internal fun AndroidChatScreen(
                         chatType = chatType,
                         onBack = actionAdmission.guard(onBack),
                         onGroupDetail = actionAdmission.guard(onGroupDetail),
+                        onVoiceCall = callCenter?.let { cc -> actionAdmission.guard { placeCall(video = false) } },
+                        onVideoCall = callCenter?.let { cc -> actionAdmission.guard { placeCall(video = true) } },
                     )
                     taskBanner?.invoke()
                     if (isUploading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())

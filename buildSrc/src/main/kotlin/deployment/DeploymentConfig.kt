@@ -35,6 +35,8 @@ data class DeploymentConfig(
     /** 厂商推送部署（按厂商键控）；空表示该安装包不带任何厂商通道。 */
     val oemPush: Map<String, OemPushVendorDeployment> = emptyMap(),
     val apnsPush: ApnsPushDeployment? = null,
+    /** 内嵌 TURN/STUN（通话 NAT 兜底）；null = 不启用。 */
+    val turn: TurnDeployment? = null,
 ) {
     val serverUri: URI = URI(serverUrl)
     val sslEnabled: Boolean get() = serverUri.scheme.equals("https", ignoreCase = true)
@@ -129,6 +131,17 @@ data class DeploymentConfig(
                 }
             }
             put("tcpTlsCertificatePem", tcpTlsCertificatePem)
+            turn?.let { turnConfig ->
+                putJsonObject("turn") {
+                    put("enabled", turnConfig.enabled)
+                    put("port", turnConfig.port)
+                    put("publicHost", turnConfig.publicHost)
+                    put("relayPorts", "${turnConfig.relayPortStart}-${turnConfig.relayPortEnd}")
+                    put("realm", turnConfig.realm)
+                    // secret 内容绝不进入快照；只记文件名以便核对
+                    turnConfig.secretFile?.let { put("secretFile", it.name) }
+                }
+            }
         }
         return snapshotJson.encodeToString(JsonObject.serializer(), value) + "\n"
     }

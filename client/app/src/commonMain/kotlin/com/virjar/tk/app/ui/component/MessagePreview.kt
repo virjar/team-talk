@@ -54,6 +54,9 @@ object MessagePreview {
         is com.virjar.tk.protocol.body.OfficeRefBody ->
             (if (body.isDocument) "[文档] " else "[群文件] ") + body.title
         is TaskRefBody -> "[任务] " + body.title
+        is CallLogBody -> if (body.durationSec > 0)
+            "[通话] " + (body.durationSec / 60).toString().padStart(2, '0') + ":" + (body.durationSec % 60).toString().padStart(2, '0')
+        else "[通话] 未接听"
         null -> if (messageType == MessageType.TYPING.code) "正在输入..." else "[未知消息]"
     }
 }

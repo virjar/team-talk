@@ -186,6 +186,16 @@ class RpcMethodIdGoldenTest {
         assertEquals(4, contract.M_MUTATE)
     }
 
+    @Test
+    fun `call methodId 稳定`() {
+        val contract = com.virjar.tk.protocol.rpc.gen.CallRpcContract
+        assertEquals("call", contract.SERVICE)
+        assertEquals(1, contract.M_INVITE)
+        assertEquals(2, contract.M_ANSWER)
+        assertEquals(3, contract.M_SIGNAL)
+        assertEquals(4, contract.M_HANGUP)
+    }
+
     // 占位 map 防误用（golden 以字面断言为准）
     @Suppress("unused")
     private val unused: Unit = Unit

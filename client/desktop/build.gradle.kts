@@ -246,6 +246,13 @@ kotlin {
                 implementation(libs.jetbrains.compose.material3)
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.compose.media.player)
+                // 1:1 通话媒体引擎（协议 minor 0.5）：libwebrtc 的 JVM 绑定（含 mac/win/linux natives）
+                implementation("dev.onvoid.webrtc:webrtc-java:0.19.0")
+                // libwebrtc natives 按平台 classifier 分发（同 javacv 模式）：桌面发行目标全量携带
+                implementation("dev.onvoid.webrtc:webrtc-java:0.19.0:macos-aarch64")
+                implementation("dev.onvoid.webrtc:webrtc-java:0.19.0:macos-x86_64")
+                implementation("dev.onvoid.webrtc:webrtc-java:0.19.0:windows-x86_64")
+                implementation("dev.onvoid.webrtc:webrtc-java:0.19.0:linux-x86_64")
                 // Desktop 直接调用 Windows 包身份和 KnownFolder API，不能依赖 SDK 的 implementation 泄漏。
                 implementation(libs.jna.platform)
                 // 原生壳的 DesktopNativeBridge 编译期可见；运行时由壳内 bootstrap jar 提供，
@@ -256,6 +263,8 @@ kotlin {
         val desktopTest by getting {
             dependencies {
                 implementation(kotlin("test"))
+                // 引擎环回测试与主代码同一 libwebrtc 绑定
+                implementation("dev.onvoid.webrtc:webrtc-java:0.19.0")
             }
         }
     }

@@ -401,6 +401,11 @@ internal fun WindowScope.MainAppContent(
         }
 
         MainOverlayLayers(nav, mainWindow, presentationGate, resources, onLogout, onExitForRestart)
+        // 通话引擎工厂一次性注入（协议 minor 0.5）：引擎按通话创建，平台资源随会话退役
+        LaunchedEffect(nav) {
+            nav.callCenter.bindEngineFactory { com.virjar.tk.desktop.call.DesktopCallEngine() }
+        }
+        com.virjar.tk.desktop.call.DesktopCallOverlay(nav)
             // 主窗口原生全屏时的画廊覆盖层（内测 T020）：必须最后声明以处于最顶层。
         DesktopGalleryOverlay()
         // 覆盖层请求持有本会话的 presentationGate/resources；会话组合销毁时一并清空，
@@ -688,6 +693,7 @@ private fun RowScope.MainContentPane(
                                     )
                                 }
                             },
+                            callCenter = nav.callCenter,
                         )
                     }
                     // 空态（规格 §2.1：Logo + 主提示 + 次提示）

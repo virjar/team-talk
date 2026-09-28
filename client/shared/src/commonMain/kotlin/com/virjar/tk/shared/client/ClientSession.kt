@@ -65,6 +65,7 @@ class ClientSession internal constructor(
     private val ownedChatDraftRepo: ChatDraftRepository,
     private val ownedHttpAuthExpiredRouter: SessionHttpAuthExpiredRouter,
     private val ownedGroupBotManagementRepo: GroupBotManagementRepository,
+    private val ownedCallCenter: com.virjar.tk.shared.call.CallCenter,
     /** 发送队列（断线排队重连补发，状态机回写 localCache） */
     private val ownedSendQueue: SendQueue,
     /** UI 发起的 SQLite 变更：精确会话准入、单一写者与终态排空。 */
@@ -167,6 +168,9 @@ class ClientSession internal constructor(
     val contentSearchRepo: ContentSearchRepository get() = businessResource(ownedContentSearchRepo)
     val taskRepo: TaskRepository get() = businessResource(ownedTaskRepo)
     val chatDraftRepo: ChatDraftRepository get() = businessResource(ownedChatDraftRepo)
+
+    /** 1:1 通话编排（协议 minor 0.5）：信令消费、媒体引擎驱动与 UI 状态。 */
+    val callCenter: com.virjar.tk.shared.call.CallCenter get() = businessResource(ownedCallCenter)
     val groupBotManagementRepo: GroupBotManagementRepository get() = businessResource(ownedGroupBotManagementRepo)
     val sendQueue: SendQueue get() = businessResource(ownedSendQueue)
     val outgoingQueueSnapshots: kotlinx.coroutines.flow.StateFlow<OutgoingQueueSnapshot>
@@ -744,6 +748,16 @@ fun createSession(
     )
     construction.own("group-bot HTTP", groupBotManagementRepo::close)
 
+    val callCenter = com.virjar.tk.shared.call.CallCenter(
+        rpcClient = businessRpcClient,
+        callEvents = ep.callEvents,
+        callSignals = ep.callSignals,
+        workerScope = localMirrorRecoveryScope,
+        ensureActive = lifecycle::requireBusinessActive,
+        logger = sessionLogOwner.logger("CallCenter"),
+    )
+    construction.own("call center", callCenter::close)
+
     val result = ClientSession(
         deviceId = deviceId,
         deploymentIdentity = deploymentIdentity,
@@ -783,6 +797,7 @@ fun createSession(
         ),
         ownedHttpAuthExpiredRouter = httpAuthExpiredRouter,
         ownedGroupBotManagementRepo = groupBotManagementRepo,
+        ownedCallCenter = callCenter,
         ownedSendQueue = sendQueue,
         ownedLocalMutations = localMutations,
         ownedInviteLinkRecoveryCompletions = reliableCommandCompletions.inviteLinks,

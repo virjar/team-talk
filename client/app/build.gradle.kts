@@ -72,6 +72,8 @@ kotlin {
                 implementation(libs.activity.compose)
                 implementation(libs.media3.exoplayer)
                 implementation(libs.media3.ui)
+                // 通话视频渲染句柄与 SurfaceViewRenderer 消费（依赖同版本，:client:android 一致）
+                implementation("io.getstream:stream-webrtc-android:1.3.9")
             }
         }
     }

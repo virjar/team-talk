@@ -100,6 +100,8 @@ object MessageBodyPolicy {
             is ReactionBody -> validateReaction(body)
             is OfficeRefBody -> validateOfficeRef(body)
             is TaskRefBody -> body
+            // 通话记录由服务端构造，构造校验即准入，无用户输入需要清洗
+            is CallLogBody -> body
             // extensionType 是否已登记是服务端创建权限，不是接收/缓存解码条件；
             // 未知扩展消息必须能跨版本原样保存和转发。
         }
@@ -543,6 +545,7 @@ object MessageBodyPolicy {
         is ReactionBody -> MessageType.REACTION
         is OfficeRefBody -> MessageType.OFFICE_REF
         is TaskRefBody -> MessageType.TASK_REF
+        is CallLogBody -> MessageType.CALL_LOG
     }
 
     private const val MARKDOWN_STRUCTURE_CHARACTERS = "#>*_~`[]()|!"

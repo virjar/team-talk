@@ -70,6 +70,10 @@ object NotifyContracts {
         // 在线状态（服务端直写不持久化，但类型契约仍需锁定）
         NotifyType.PRESENCE to PresencePayload,
 
+        // 通话信令（瞬时直达，eventId=0）
+        NotifyType.CALL_EVENT to CallEventPayload,
+        NotifyType.CALL_SIGNAL to CallSignalPayload,
+
     )
 
     /** 仅连接降级投影使用；没有业务 payload，也不能作为新的业务事件持久化。 */

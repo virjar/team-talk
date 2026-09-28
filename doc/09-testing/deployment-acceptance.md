@@ -27,6 +27,7 @@ TeamTalk 的主业务验收连接当前选中部署配置函数的目标。它�
 [预览版指南](../01-getting-started/developer-preview.md#轻量业务验收)。
 
 `acceptanceTest` 是完整业务验收入口，只运行 `RemoteAcceptanceTest`，并由构建配置注入远程端点。不要通过手工拼接测试系统属性建立另一套隐含入口。
+1:1 通话信令远程验收在 `CallSignalingRemoteE2eTest`（同样由 `-Dtk.e2e.remote=true` 门控，账号前缀 `e2e-call-*`），覆盖振铃/接听/中继/挂断/CALL_LOG 与离线路径；TURN 数据面与协议向量见 `TurnServerTest`、`TurnProtocolTest` 本地任务。
 需要供脚本查看实际非敏感配置时，运行 `./gradlew writeDeploymentConfig`，读取
 `build/deployment/deployment-config.json`；不要直接解析 Kotlin 或把旧快照当作当前目标。
 

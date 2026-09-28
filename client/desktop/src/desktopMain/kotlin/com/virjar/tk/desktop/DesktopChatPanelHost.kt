@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.VideoCall
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -97,6 +99,8 @@ internal fun ChatPanelWrapper(
     messageFocusTarget: MessageFocusTarget? = null,
     messageFocusRequestId: Long = 0L,
     pendingTasksContent: (@Composable () -> Unit)? = null,
+    /** 1:1 通话编排（协议 minor 0.5）；null 时不显示通话入口。 */
+    callCenter: com.virjar.tk.shared.call.CallCenter? = null,
 ) {
     val messagesState = viewModel.messages.collectAsState()
     val messageDetails = com.virjar.tk.app.ui.screen.rememberMessageDetails(viewModel)
@@ -311,6 +315,40 @@ internal fun ChatPanelWrapper(
         ListHeader(
             title = chatName.ifEmpty { chatId.take(16) },
             actions = {
+                if (!isGroup && callCenter != null) {
+                    val callScope = rememberCoroutineScope()
+                    val chatPeerUid by viewModel.chatPeerUid.collectAsState()
+                    IconButton(
+                        onClick = presentationGate.guard {
+                            chatPeerUid?.let { peer ->
+                                callScope.launch { callCenter.startOutgoing(peer, video = false) }
+                            }
+                        },
+                        modifier = Modifier.size(40.dp).testTag("chat.call.voice"),
+                    ) {
+                        Icon(
+                            Icons.Filled.Call,
+                            contentDescription = "语音通话",
+                            tint = Tk.colors.secondaryText,
+                            modifier = Modifier.size(Tk.dimens.iconSize),
+                        )
+                    }
+                    IconButton(
+                        onClick = presentationGate.guard {
+                            chatPeerUid?.let { peer ->
+                                callScope.launch { callCenter.startOutgoing(peer, video = true) }
+                            }
+                        },
+                        modifier = Modifier.size(40.dp).testTag("chat.call.video"),
+                    ) {
+                        Icon(
+                            Icons.Filled.VideoCall,
+                            contentDescription = "视频通话",
+                            tint = Tk.colors.secondaryText,
+                            modifier = Modifier.size(Tk.dimens.iconSize),
+                        )
+                    }
+                }
                 if (isGroup) {
                     IconButton(
                         onClick = presentationGate.guard(onGroupSettings),

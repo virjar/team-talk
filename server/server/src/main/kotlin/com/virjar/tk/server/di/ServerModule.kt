@@ -48,6 +48,12 @@ import com.virjar.tk.server.domain.chat.ChatStore
 import com.virjar.tk.server.domain.chat.InviteLinkRepository
 import com.virjar.tk.server.domain.chat.ManagedChatPolicy
 import com.virjar.tk.server.domain.chat.RequiredChatParticipants
+import com.virjar.tk.server.domain.call.CallAdmission
+import com.virjar.tk.server.domain.call.CallChatSessions
+import com.virjar.tk.server.domain.call.CallIceServers
+import com.virjar.tk.server.domain.call.CallLogSink
+import com.virjar.tk.server.domain.call.CallOnlineChecker
+import com.virjar.tk.server.domain.call.CallService
 import com.virjar.tk.server.domain.contact.ContactRepository
 import com.virjar.tk.server.domain.contact.ContactService
 import com.virjar.tk.server.domain.conversation.ConversationRepository
@@ -179,6 +185,8 @@ internal fun createServerModule(
     syncDatasetId: String,
     tcpServerConfiguration: TcpServerConfiguration,
     tcpHealthProbeConfiguration: TcpHealthProbeConfiguration,
+    /** 内嵌 TURN（协议 minor 0.5）；null = 未启用，通话 ICE 只含 STUN/直连。 */
+    turnServer: com.virjar.tk.server.infra.turn.TurnServer? = null,
     messageStorePath: String = Environment.rocksdbDir.absolutePath,
     searchIndexPath: File = Environment.luceneIndexDir,
     contentSearchIndexPath: File = File(searchIndexPath.absolutePath + "-assets"),
@@ -365,6 +373,26 @@ internal fun createServerModule(
     single { RegistrationService(get(), get<PgUnitOfWork>(), get(), get()) }
     single { AuthService(get(), get(), get(), get(), get()) }
     single { ContactService(get<ContactRepository>(), get<PgUnitOfWork>(), get<UserRepository>()) }
+
+    // 通话（协议 minor 0.5）：在线判定来自连接注册表；ICE 端点在内嵌 TURN 启用时
+    // 由部署配置装配（阶段接入点），未启用时不下发 ICE 服务器（仅 P2P 直连）。
+    single {
+        val contacts = get<ContactRepository>()
+        CallService(
+            admission = CallAdmission { caller, callee -> contacts.isFriend(caller, callee) && !contacts.isBlockedEither(caller, callee) },
+            sessions = CallChatSessions { caller, callee -> get<ChatService>().createPersonalChat(caller, callee).chatId },
+            callLog = CallLogSink { chatId, callId, callerUid, calleeUid, video, durationSec, reasonCode ->
+                get<MessageService>().sendCallLog(chatId, callId, callerUid, calleeUid, video, durationSec, reasonCode)
+            },
+            publisher = get(),
+            onlineChecker = CallOnlineChecker { uid -> get<ClientRegistry>().isOnline(uid) },
+            iceServers = CallIceServers { validForSec ->
+                turnServer?.issueIceServer(validForSec)?.let { listOf(it) } ?: emptyList()
+            },
+        )
+    }
+    // 断连观察租约由 Koin 单例持有，防止被替代卸载
+    single { get<PresenceTransitionSource>().installPresenceObserver(get<CallService>()) }
     single<ChatService> {
         ChatService(
             chatStore = get(),
@@ -620,6 +648,9 @@ internal fun createServerModule(
             register(ConversationRpcContract.SERVICE) { session -> ConversationRpcImpl(session.uid, get()) }
             register(DeviceRpcContract.SERVICE) { session ->
                 DeviceRpcImpl(session.uid, get(), get(), session.deviceId, session.deviceCredentialEpoch, get())
+            }
+            register(com.virjar.tk.protocol.rpc.gen.CallRpcContract.SERVICE) { session ->
+                com.virjar.tk.server.protocol.rpc.CallRpcImpl(session.uid, get())
             }
             register(OrganizationRpcContract.SERVICE) { session -> OrganizationRpcImpl(session.uid, get()) }
             register(GroupFileRpcContract.SERVICE) { session -> GroupFileRpcImpl(session.uid, get()) }

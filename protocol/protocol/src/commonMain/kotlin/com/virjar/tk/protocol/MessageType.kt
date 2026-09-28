@@ -25,7 +25,10 @@ enum class MessageType(val code: Int) {
     INTERACTIVE_CARD(16),
     OFFICE_REF(17),
     @SinceProtocol(2)
-    TASK_REF(18);
+    TASK_REF(18),
+    /** 通话记录（服务端在呼叫终结时落库），旧客户端按未知类型跳过。 */
+    @SinceProtocol(5)
+    CALL_LOG(19);
 
     companion object {
         private val codeMap = entries.associateBy { it.code }

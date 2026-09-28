@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VideoCall
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,6 +40,9 @@ internal fun AndroidChatHeader(
     onBack: () -> Unit,
     onGroupDetail: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 1:1 通话入口（协议 minor 0.5）；null 时不显示（非私聊或未就绪）。 */
+    onVoiceCall: (() -> Unit)? = null,
+    onVideoCall: (() -> Unit)? = null,
 ) {
     val isGroup = isAndroidGroupChat(chatType)
 
@@ -95,6 +100,32 @@ internal fun AndroidChatHeader(
                     )
                 }
 
+                if (!isGroup && onVoiceCall != null) {
+                    IconButton(
+                        onClick = onVoiceCall,
+                        modifier = Modifier.testTag("chat.call.voice"),
+                    ) {
+                        Icon(
+                            Icons.Filled.Call,
+                            contentDescription = "语音通话",
+                            tint = Tk.colors.secondaryText,
+                            modifier = Modifier.size(Tk.dimens.iconSize),
+                        )
+                    }
+                }
+                if (!isGroup && onVideoCall != null) {
+                    IconButton(
+                        onClick = onVideoCall,
+                        modifier = Modifier.testTag("chat.call.video"),
+                    ) {
+                        Icon(
+                            Icons.Filled.VideoCall,
+                            contentDescription = "视频通话",
+                            tint = Tk.colors.secondaryText,
+                            modifier = Modifier.size(Tk.dimens.iconSize),
+                        )
+                    }
+                }
                 if (isGroup) {
                     IconButton(
                         onClick = onGroupDetail,

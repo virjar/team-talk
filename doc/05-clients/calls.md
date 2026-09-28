@@ -1,0 +1,73 @@
+# 1:1 通话
+
+语音与视频 1:1 通话（协议 minor 0.5）覆盖 Android、Desktop 与 iOS：WebRTC P2P 直连媒体，
+服务端只做信令路由与呼叫状态机，媒体面不经过服务端进程；NAT 兜底由**内嵌 TURN/STUN**
+提供（纯 Kotlin 实现于服务端进程内，无独立中继进程）。
+
+## 范围与边界
+
+- 好友私聊 1:1 语音/视频通话；群聊、系统账号与保存的消息会话不提供入口。
+- 被叫在线 → 实时振铃；被叫离线 → 主叫收到"不可达"，服务端自动落一条未接来电
+  （CALL_LOG），离线推送沿用普通消息链路。被叫忙线不打扰。
+- 未接来电通知、通话记录、历史检索按普通消息语义工作；不支持离线设备实时唤醒
+  （厂商透传通道与系统级通话界面属后续阶段）。
+- 不提供通话保持/转移/群聊会议（SFU）；媒体协商为非 trickle（ICE gathering 完成后
+  整段 SDP 交换），ICE 候选通道保留作兜底。
+
+## 协议契约（`@SinceProtocol(5)`，待发布 minor 0.5）
+
+| 契约 | 编号 | 说明 |
+|---|---|---|
+| `CallRpc` | serviceId `call`，method 1-4 | invite/answer/signal/hangup；invite 返回可达/忙线裁决与短期 ICE 凭据 |
+| `CALL_EVENT` | NotifyType 65（瞬时，eventId=0） | RING 只投被叫、ACCEPTED 只投主叫、ENDED 双方收敛；RING 携带本轮 ICE 服务器 |
+| `CALL_SIGNAL` | NotifyType 66（瞬时） | SDP/ICE 中继，服务端不理解内容 |
+| `CALL_LOG` | MessageType 19 | 服务端在呼叫终结时以主叫身份写入双方私聊；`clientMsgId=callId` 幂等；旧客户端按未知类型安全跳过 |
+
+瞬时信令不持久化、离线不补偿：信令丢失即本次呼叫失败，双方以本地超时（振铃 45s）收敛。
+未知 `CallEndReason` 读侧按连接中断收敛，不拒绝解码。
+
+## 服务端
+
+- `domain/call/CallService`：进程内呼叫表（振铃→接通→终结）。准入=好友且双向未拉黑；
+  忙线以 `CallInviteOutcome(busy)` 表达。依赖收窄为准入/会话定位/记录落库/在线判定/ICE
+  签发五个端口。
+- 超时由 `MaintenanceWorker("call-timeout-sweep")` 回收；参与方全部设备离线经 presence
+  观察按连接中断终结。进程重启即呼叫消失（有意设计，不做呼叫恢复）。
+- CALL_LOG 落库走服务端专用旁路（`sendCallLog`）；客户端提交的 CALL_LOG 消息被
+  `CREATABLE_MESSAGE_TYPES` 拒绝——通话记录是服务端权威事实。
+
+## 内嵌 TURN/STUN
+
+- `server/infra/turn`：RFC 5389/5766 UDP 子集（Binding、Allocate/Refresh/CreatePermission/
+  ChannelBind、Send/Data 指示与 ChannelData）。正确性由 RFC 5769 官方向量、已知消息类型
+  表与真实 UDP 全流程集成测试锁定。
+- 认证为 coturn 同款 time-limited credentials：`username=过期秒`、
+  `password=HMAC-SHA1(secret, username)`；凭据仅随 invite 按呼叫签发（1 小时有效）。
+- allocation/permission/channel 有硬生命周期与周期清扫；relay 端口范围与总量有界；
+  进程重启全部回收。
+- 部署配置 `server { turn { publicHost, secretFile, ... } }`：secret 是部署状态目录的
+  Git 忽略材料，部署时写入远端 `conf/env.sh`（600）；快照 JSON 只含非敏感字段。未配置
+  secretFile 时不启动 TURN，通话仅 P2P 直连。
+
+## 客户端
+
+- `client/shared`：`CallCenter` 消费瞬时信令流驱动 `CallMediaEngine` 抽象，向 UI 暴露
+  单一 `CallViewState`（振铃/连接/通话/结束）。本地忙时自动拒接来电；媒体失败按连接
+  中断终结。作为 ClientSession owned 资源接入生命周期。
+- 引擎实现：Android `AndroidCallEngine`（stream-webrtc-android，官方 `org.webrtc` API）、
+  Desktop `DesktopCallEngine`（webrtc-java；视频帧 I420→Skia 位图限频推送）；iOS 端
+  xcframework 绑定见 [iOS](ios.md)。
+- UI：`CallScreen`（commonMain）覆盖来电接听/拒接、去电等待、通话中控制（静音/免提/
+  翻转摄像头/挂断）与本地小窗预览；聊天头部私聊提供语音/视频入口。CALL_LOG 以气泡
+  卡片渲染（呼出/呼入、时长、未接原因）。
+- Android：接听/拨打前请求麦克风/摄像头权限；音频焦点与听筒/扬声器切换由
+  AudioManager 管理。来电在前后台都呈全屏覆盖层。
+
+## 验收入口
+
+- 服务端状态机：`CallServiceTest`（10 项行为）。
+- TURN 协议与数据面：`TurnProtocolTest`（RFC 5769 向量）、`TurnServerTest`（真实 UDP 全流程）。
+- 客户端编排：`CallCenterTest`（假 RPC+假引擎）。
+- 远程全链路：`CallSignalingRemoteE2eTest`（`-Dtk.e2e.remote=true`，目标 im.virjar.com；
+  覆盖振铃/接听/中继/挂断/CALL_LOG/离线/非参与方拒绝）。
+- 媒体面互通：双端真实对打（Android ↔ Desktop）按发布验收执行。

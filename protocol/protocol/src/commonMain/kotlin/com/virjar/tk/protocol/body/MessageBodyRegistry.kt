@@ -28,6 +28,7 @@ object MessageBodyRegistry {
         MessageType.REACTION to ReactionBody,
         MessageType.OFFICE_REF to OfficeRefBody,
         MessageType.TASK_REF to TaskRefBody,
+        MessageType.CALL_LOG to CallLogBody,
     )
 
     fun decode(messageType: MessageType?, buf: PacketBuffer): MessageBody? {

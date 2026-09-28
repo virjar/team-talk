@@ -128,6 +128,18 @@ class NotifyContractTest {
             serverEpoch = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             revision = 1L,
         )
+        NotifyType.CALL_EVENT -> com.virjar.tk.protocol.CallEventPayload(
+            callId = "01234567-89ab-4cde-8f01-23456789abcd",
+            fromUid = "u1",
+            kind = com.virjar.tk.protocol.model.CallEventKind.RING,
+            video = true,
+            endReasonCode = 0,
+            iceServers = listOf(com.virjar.tk.protocol.model.IceServer(listOf("turn:example.com:3478?transport=udp"), "u", "c")),
+        )
+        NotifyType.CALL_SIGNAL -> com.virjar.tk.protocol.CallSignalPayload(
+            callId = "01234567-89ab-4cde-8f01-23456789abcd",
+            body = com.virjar.tk.protocol.model.CallSignalBody.SessionDescription(isOffer = true, sdp = "v=0..."),
+        )
         NotifyType.EVENT_CURSOR_ADVANCED -> error("cursor marker has no payload")
     }
 

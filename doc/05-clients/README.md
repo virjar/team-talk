@@ -160,6 +160,7 @@ minor 升级走 schema 迁移，保留草稿、待发消息和其他可靠事实
 - [Desktop](desktop.md)：三栏、窗口和上下文容器。
 - [Android](android.md)：页面栈、触控和平台能力。
 - [iOS](ios.md)：Apple 平台实现、Xcode 构建、后台边界与验收。
+- [1:1 通话](calls.md)：协议 minor 0.5 的语音/视频通话、内嵌 TURN 与三端引擎。
 - [通知机器人](notification-bots.md)：群内创建、一次性凭据与外部系统入站通知。
 - [无头客户端](headless.md)：ImBot、tt-agent、CLI 与 MCP 接入。
 - [设计系统](design-system.md)：颜色、字阶、间距、组件与状态。

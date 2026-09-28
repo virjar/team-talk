@@ -1,6 +1,6 @@
 # TeamTalk wire schema v1
 major=0
-minor=4
+minor=5
 enum	com.virjar.tk.protocol.MessageType/1	0	-	active	RICH_TEXT
 enum	com.virjar.tk.protocol.MessageType/10	0	-	active	MERGE_FORWARD
 enum	com.virjar.tk.protocol.MessageType/11	0	-	active	REVOKE
@@ -11,6 +11,7 @@ enum	com.virjar.tk.protocol.MessageType/15	0	-	active	TYPING
 enum	com.virjar.tk.protocol.MessageType/16	0	-	active	INTERACTIVE_CARD
 enum	com.virjar.tk.protocol.MessageType/17	0	-	active	OFFICE_REF
 enum	com.virjar.tk.protocol.MessageType/18	2	-	active	TASK_REF
+enum	com.virjar.tk.protocol.MessageType/19	5	-	active	CALL_LOG
 enum	com.virjar.tk.protocol.MessageType/2	0	-	active	IMAGE
 enum	com.virjar.tk.protocol.MessageType/3	0	-	active	VOICE
 enum	com.virjar.tk.protocol.MessageType/4	0	-	active	VIDEO
@@ -49,6 +50,8 @@ enum	com.virjar.tk.protocol.NotifyType/61	0	-	active	ORGANIZATION_CHANGED
 enum	com.virjar.tk.protocol.NotifyType/62	0	-	active	EVENT_CURSOR_ADVANCED
 enum	com.virjar.tk.protocol.NotifyType/63	2	-	active	MENTION_SYNC
 enum	com.virjar.tk.protocol.NotifyType/64	3	-	active	GROUP_AVATAR_SYNC
+enum	com.virjar.tk.protocol.NotifyType/65	5	-	active	CALL_EVENT
+enum	com.virjar.tk.protocol.NotifyType/66	5	-	active	CALL_SIGNAL
 enum	com.virjar.tk.protocol.PacketType/1	0	-	active	AUTH
 enum	com.virjar.tk.protocol.PacketType/10	0	-	active	INVOKE
 enum	com.virjar.tk.protocol.PacketType/11	0	-	active	RESPONSE
@@ -69,11 +72,24 @@ enum	com.virjar.tk.protocol.PacketType/6	0	-	active	SYNC_REQUEST
 enum	com.virjar.tk.protocol.PacketType/7	0	-	active	SYNC_BATCH
 enum	com.virjar.tk.protocol.PacketType/8	0	-	active	SYNC_READY
 enum	com.virjar.tk.protocol.PacketType/9	0	-	active	SYNC_RESET
+enum	com.virjar.tk.protocol.model.CallEndReason/1	5	-	active	CANCELLED
+enum	com.virjar.tk.protocol.model.CallEndReason/2	5	-	active	DECLINED
+enum	com.virjar.tk.protocol.model.CallEndReason/3	5	-	active	BUSY
+enum	com.virjar.tk.protocol.model.CallEndReason/4	5	-	active	TIMEOUT
+enum	com.virjar.tk.protocol.model.CallEndReason/5	5	-	active	HANGUP
+enum	com.virjar.tk.protocol.model.CallEndReason/6	5	-	active	CONNECTION_LOST
+enum	com.virjar.tk.protocol.model.CallEventKind/1	5	-	active	RING
+enum	com.virjar.tk.protocol.model.CallEventKind/2	5	-	active	ACCEPTED
+enum	com.virjar.tk.protocol.model.CallEventKind/3	5	-	active	ENDED
 enum	com.virjar.tk.protocol.model.ChatType/1	0	-	active	PERSONAL
 enum	com.virjar.tk.protocol.model.ChatType/2	0	-	active	GROUP
 enum	com.virjar.tk.protocol.model.ChatType/3	0	-	active	SAVED
 rpc	auth/1	0	-	active	logout():kotlin.Unit
 rpc	auth/2	0	-	active	updatePassword(oldPassword:kotlin.String,newPassword:kotlin.String):kotlin.Unit
+rpc	call/1	5	-	active	invite(callId:kotlin.String,calleeUid:kotlin.String,video:kotlin.Boolean):com.virjar.tk.protocol.model.CallInviteOutcome
+rpc	call/2	5	-	active	answer(callId:kotlin.String,accept:kotlin.Boolean):kotlin.Boolean
+rpc	call/3	5	-	active	signal(callId:kotlin.String,body:com.virjar.tk.protocol.model.CallSignalBody):kotlin.Boolean
+rpc	call/4	5	-	active	hangup(callId:kotlin.String,reason:kotlin.Int):kotlin.Boolean
 rpc	chat/1	0	-	active	createPersonal(targetUid:kotlin.String):com.virjar.tk.protocol.model.Chat
 rpc	chat/10	0	-	active	setRole(chatId:kotlin.String,targetUid:kotlin.String,role:kotlin.Int):kotlin.Unit
 rpc	chat/11	0	-	active	muteMember(chatId:kotlin.String,targetUid:kotlin.String,durationSeconds:kotlin.Int):kotlin.Unit
@@ -187,6 +203,8 @@ rpc	task/9	3	-	active	modifySeries(command:com.virjar.tk.protocol.model.TaskSeri
 rpc	user/1	0	-	active	getProfile(targetUid:kotlin.String?):com.virjar.tk.protocol.model.User
 rpc	user/2	0	-	active	updateProfile(patch:com.virjar.tk.protocol.model.ProfilePatch):kotlin.Unit
 rpc	user/3	0	-	active	search(keyword:kotlin.String):List<com.virjar.tk.protocol.model.User>
+type	com.virjar.tk.protocol.CallEventPayload	5	-	active	CLASS(callId:kotlin.String,fromUid:kotlin.String,kind:com.virjar.tk.protocol.model.CallEventKind,video:kotlin.Boolean,endReasonCode:kotlin.Int,iceServers:kotlin.collections.List<com.virjar.tk.protocol.model.IceServer>)
+type	com.virjar.tk.protocol.CallSignalPayload	5	-	active	CLASS(callId:kotlin.String,body:com.virjar.tk.protocol.model.CallSignalBody)
 type	com.virjar.tk.protocol.ChatDraftChangedPayload	2	-	active	CLASS(chatId:kotlin.String,revision:kotlin.Long)
 type	com.virjar.tk.protocol.DisconnectSignal	0	-	active	OBJECT()
 type	com.virjar.tk.protocol.DocumentChangedPayload	2	-	active	CLASS(spaceId:kotlin.String,nodeId:kotlin.String?,kind:kotlin.Int,revision:kotlin.Long,policyRevision:kotlin.Long)
@@ -205,6 +223,7 @@ type	com.virjar.tk.protocol.TaskChangedPayload	2	-	active	CLASS(taskId:kotlin.St
 type	com.virjar.tk.protocol.TaskDuePayload	2	-	active	CLASS(taskId:kotlin.String,revision:kotlin.Long,remindedAt:kotlin.Long)
 type	com.virjar.tk.protocol.TaskStartedPayload	3	-	active	CLASS(taskId:kotlin.String,revision:kotlin.Long,remindedAt:kotlin.Long)
 type	com.virjar.tk.protocol.body.AttachmentBody	0	-	active	INTERFACE()
+type	com.virjar.tk.protocol.body.CallLogBody	5	-	active	CLASS(callId:kotlin.String,callerUid:kotlin.String,calleeUid:kotlin.String,video:kotlin.Boolean,durationSec:kotlin.Int,reasonCode:kotlin.Int)
 type	com.virjar.tk.protocol.body.CardBody	0	-	active	CLASS(targetUid:kotlin.String,targetName:kotlin.String,targetAvatar:com.virjar.tk.protocol.model.Attachment?)
 type	com.virjar.tk.protocol.body.EditBody	0	-	active	CLASS(editedMsgId:kotlin.String,newContent:kotlin.String)
 type	com.virjar.tk.protocol.body.FileBody	0	-	active	CLASS(attachment:com.virjar.tk.protocol.model.Attachment)
@@ -225,6 +244,10 @@ type	com.virjar.tk.protocol.body.TaskRefBody	2	-	active	CLASS(taskId:kotlin.Stri
 type	com.virjar.tk.protocol.body.VideoBody	0	-	active	CLASS(attachment:com.virjar.tk.protocol.model.Attachment,duration:kotlin.Int,width:kotlin.Int,height:kotlin.Int,thumbnail:com.virjar.tk.protocol.model.Attachment?)
 type	com.virjar.tk.protocol.body.VoiceBody	0	-	active	CLASS(attachment:com.virjar.tk.protocol.model.Attachment,duration:kotlin.Int)
 type	com.virjar.tk.protocol.model.Attachment	0	-	active	CLASS(path:kotlin.String,name:kotlin.String,contentType:kotlin.String,size:kotlin.Long)
+type	com.virjar.tk.protocol.model.CallInviteOutcome	5	-	active	CLASS(deliverable:kotlin.Boolean,busy:kotlin.Boolean,iceServers:kotlin.collections.List<com.virjar.tk.protocol.model.IceServer>)
+type	com.virjar.tk.protocol.model.CallSignalBody	5	-	active	CLASS()
+type	com.virjar.tk.protocol.model.CallSignalBody.IceCandidate	5	-	active	CLASS(candidate:kotlin.String,sdpMid:kotlin.String,sdpMLineIndex:kotlin.Int)
+type	com.virjar.tk.protocol.model.CallSignalBody.SessionDescription	5	-	active	CLASS(isOffer:kotlin.Boolean,sdp:kotlin.String)
 type	com.virjar.tk.protocol.model.Chat	0	-	active	CLASS(chatId:kotlin.String,chatType:kotlin.Int,name:kotlin.String?,avatar:kotlin.String?,creator:kotlin.String?,memberCount:kotlin.Int,maxSeq:kotlin.Long,notice:kotlin.String?,mutedAll:kotlin.Boolean)
 type	com.virjar.tk.protocol.model.ChatDraftCommand	2	-	active	CLASS(chatId:kotlin.String,expectedRevision:kotlin.Long,operationId:kotlin.String,issuedAt:kotlin.Long,content:com.virjar.tk.protocol.model.ChatDraftContent?,consumedClientMsgId:kotlin.String?)
 type	com.virjar.tk.protocol.model.ChatDraftContent	2	-	active	CLASS(markdown:kotlin.String,assets:kotlin.collections.List<com.virjar.tk.protocol.model.EmbeddedAsset>,mode:kotlin.Int,replyToClientMsgId:kotlin.String?,replyToServerSeq:kotlin.Long)
@@ -268,6 +291,7 @@ type	com.virjar.tk.protocol.model.FriendPresenceSnapshot	0	-	active	CLASS(server
 type	com.virjar.tk.protocol.model.GroupAvatar	3	-	active	CLASS(chatId:kotlin.String,attachment:com.virjar.tk.protocol.model.Attachment?)
 type	com.virjar.tk.protocol.model.GroupFileEntry	0	-	active	CLASS(entryId:kotlin.String,chatId:kotlin.String,parentId:kotlin.String?,kind:kotlin.Int,name:kotlin.String,attachment:com.virjar.tk.protocol.model.Attachment?,revision:kotlin.Long,contentVersion:kotlin.Long,createdBy:kotlin.String,createdAt:kotlin.Long,updatedBy:kotlin.String,updatedAt:kotlin.Long)
 type	com.virjar.tk.protocol.model.GroupFileVersion	0	-	active	CLASS(entryId:kotlin.String,version:kotlin.Long,attachment:com.virjar.tk.protocol.model.Attachment,createdBy:kotlin.String,createdAt:kotlin.Long)
+type	com.virjar.tk.protocol.model.IceServer	5	-	active	CLASS(urls:kotlin.collections.List<kotlin.String>,username:kotlin.String,credential:kotlin.String)
 type	com.virjar.tk.protocol.model.InviteLink	0	-	active	CLASS(token:kotlin.String,chatId:kotlin.String,name:kotlin.String,maxUses:kotlin.Int,useCount:kotlin.Int,expiresAt:kotlin.Long,revokedAt:kotlin.Long)
 type	com.virjar.tk.protocol.model.InvitePreview	3	-	active	CLASS(status:kotlin.Int,chatId:kotlin.String?,name:kotlin.String?,memberCount:kotlin.Int,alreadyJoined:kotlin.Boolean)
 type	com.virjar.tk.protocol.model.Member	0	-	active	CLASS(uid:kotlin.String,chatId:kotlin.String,role:kotlin.Int,nickname:kotlin.String?,joinedAt:kotlin.Long,user:com.virjar.tk.protocol.model.User?)

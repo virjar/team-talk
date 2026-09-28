@@ -31,6 +31,8 @@ fun generateEnvShContent(
     tcpPort: String,
     minimumProtocolMinor: Int? = null,
     tcpTlsEnabled: Boolean = sslEnabled,
+    turn: TurnDeployment? = null,
+    turnSecret: String? = null,
 ): String {
     requireCanonicalDeployPath(deployPath)
     require(tcpPort.matches(Regex("[1-9][0-9]{0,4}")) && tcpPort.toInt() in 1..65535) {
@@ -91,6 +93,21 @@ fun generateEnvShContent(
         "SSL_PRIVATE_KEY_PASSWORD=${posixShellQuote(requiredSecret(secrets, "SSL_PRIVATE_KEY_PASSWORD"))}",
     )
     lines.add("")
+
+    if (turn != null && turn.enabled) {
+        require(!turnSecret.isNullOrBlank() && turnSecret.length >= 16) {
+            "TURN secret file must contain at least 16 characters"
+        }
+        lines.add("# ── 内嵌 TURN/STUN（1:1 通话 NAT 兜底，协议 minor 0.5）──")
+        lines.add("TURN_ENABLED=true")
+        lines.add("TURN_PORT=${turn.port}")
+        lines.add("TURN_PUBLIC_HOST=${turn.publicHost}")
+        lines.add("TURN_RELAY_PORT_START=${turn.relayPortStart}")
+        lines.add("TURN_RELAY_PORT_END=${turn.relayPortEnd}")
+        lines.add("TURN_REALM=${turn.realm}")
+        lines.add("TURN_SECRET=${posixShellQuote(turnSecret)}")
+        lines.add("")
+    }
 
     for (vendor in OemPushVendors.ALL + "apns") {
         val prefix = "${vendor.uppercase()}_PUSH"

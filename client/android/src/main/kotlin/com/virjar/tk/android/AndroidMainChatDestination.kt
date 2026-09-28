@@ -203,6 +203,7 @@ internal fun NavGraphBuilder.chatDestination(
                     dataState.messageActions.save(message.chatId, message.serverSeq)
                 },
                 officeRefHost = dataState,
+                callCenter = dataState.callCenter,
                 taskBanner = {
                     dataState.tasks.attention.assigned?.let { summary ->
                         com.virjar.tk.app.ui.component.TaskAttentionBanner(

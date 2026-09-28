@@ -73,6 +73,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 import com.virjar.tk.shared.repository.ResolvedContentSearchHit
 import com.virjar.tk.shared.repository.asUploadSource
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import com.virjar.tk.app.ui.call.CallScreen
 
 /**
  * 已认证状态下的 Android 主导航外壳。
@@ -147,7 +151,24 @@ internal fun AndroidMainAppContent(
     val chatEmbeddedAssetImports = chatEmbeddedAssets.gateway
     val chatEmbeddedAssetSelector = chatEmbeddedAssets.selector
     val snackbarHostState = rememberAndroidSessionFeedback(dataState, currentTelemetryPage)
+    // 通话媒体引擎工厂一次性注入；引擎按通话创建
+    val callCenter = dataState.callCenter
+    val appContext = LocalContext.current.applicationContext
+    LaunchedEffect(callCenter) {
+        callCenter.bindEngineFactory { AndroidCallEngine(appContext) }
+    }
     Box(Modifier.fillMaxSize()) {
+        val callState by callCenter.state.collectAsState()
+        callState?.let { callView ->
+            AndroidCallPermissionGate(video = callView.video) {
+                CallScreen(
+                    state = callView,
+                    localCache = dataState.localCache,
+                    callCenter = callCenter,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
         // 已认证外壳同时拥有系统栏内边距与连接反馈。把横幅放在 NavHost 上方，
         // 让同样的离线真值在每个目标页都可见，又不会遮挡路由的应用栏或底部导航。
         Column(

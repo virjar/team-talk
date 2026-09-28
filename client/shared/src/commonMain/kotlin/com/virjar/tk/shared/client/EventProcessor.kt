@@ -72,6 +72,12 @@ class EventProcessor(
     private val _typingEvents = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 8)
     val typingEvents: SharedFlow<Pair<String, String>> = _typingEvents.asSharedFlow()
 
+    /** 通话信令（瞬时）：事件流（振铃/接听/结束）与媒体协商流（SDP/ICE）。 */
+    private val _callEvents = MutableSharedFlow<com.virjar.tk.protocol.CallEventPayload>(extraBufferCapacity = 16)
+    val callEvents: SharedFlow<com.virjar.tk.protocol.CallEventPayload> = _callEvents.asSharedFlow()
+    private val _callSignals = MutableSharedFlow<com.virjar.tk.protocol.CallSignalPayload>(extraBufferCapacity = 128)
+    val callSignals: SharedFlow<com.virjar.tk.protocol.CallSignalPayload> = _callSignals.asSharedFlow()
+
     /** 存在未读 @我 提示的会话集合；MENTION_SYNC 置位、已读清除（进程内状态）。 */
     private val _mentionedChatIds = MutableStateFlow<Set<String>>(emptySet())
     val mentionedChatIds: StateFlow<Set<String>> = _mentionedChatIds.asStateFlow()
@@ -581,6 +587,13 @@ class EventProcessor(
             NotifyType.TYPING -> {
                 val msg = decodePayload<Message>(notifyType, payload)
                 publicationGate.use(publicationLease) { _typingEvents.tryEmit(msg.chatId to msg.senderUid) }
+            }
+            NotifyType.CALL_EVENT -> {
+                // 通话信令是进程内瞬时事实：不落库、不推进游标，消费方是通话状态机
+                _callEvents.tryEmit(decodePayload<com.virjar.tk.protocol.CallEventPayload>(notifyType, payload))
+            }
+            NotifyType.CALL_SIGNAL -> {
+                _callSignals.tryEmit(decodePayload<com.virjar.tk.protocol.CallSignalPayload>(notifyType, payload))
             }
             NotifyType.READ_SYNC -> {
                 val sync = decodePayload<ReadSyncPayload>(notifyType, payload)

@@ -58,6 +58,8 @@ object MessageTextExtractor {
                 (if (ref.isDocument) "[文档] " else "[群文件] ") + ref.title
             }
             MessageType.TASK_REF -> (body as? TaskRefBody)?.let { "[任务] " + it.title }
+            // 通话记录无可搜索正文，预览由客户端按消息类型专门渲染
+            MessageType.CALL_LOG -> null
             MessageType.TYPING, null -> null
         }
     }

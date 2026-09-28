@@ -62,6 +62,14 @@ enum class NotifyType(val code: Int) {
     /** 群头像变更（内测反馈 T053）：全量成员持久事件，attachment=null 表示清除。 */
     @SinceProtocol(3)
     GROUP_AVATAR_SYNC(64),
+
+    // 1:1 通话信令（瞬时直达，eventId=0，不持久化、离线不补偿）
+    /** 呼叫事件：RING 只投被叫、ACCEPTED 只投主叫、ENDED 投对端。 */
+    @SinceProtocol(5)
+    CALL_EVENT(65),
+    /** 媒体协商中继：SDP/ICE 按呼叫表原样转发。 */
+    @SinceProtocol(5)
+    CALL_SIGNAL(66),
     /** 连接降级投影保留原 eventId 的无 payload 标记；禁止把它持久化为新业务事件。 */
     EVENT_CURSOR_ADVANCED(62);
 

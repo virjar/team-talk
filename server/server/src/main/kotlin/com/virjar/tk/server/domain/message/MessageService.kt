@@ -84,6 +84,39 @@ class MessageService(
     }
 
     /**
+     * 通话记录（协议 minor 0.5）：呼叫终结时由 CallService 以主叫身份写入双方私聊，
+     * clientMsgId 复用 callId 保证同一呼叫至多落一条。走普通发送链，MESSAGE_RECV
+     * 持久事件让离线推送链路自然生效（未接来电通知）。
+     */
+    suspend fun sendCallLog(
+        chatId: String,
+        callId: String,
+        callerUid: String,
+        calleeUid: String,
+        video: Boolean,
+        durationSec: Int,
+        reasonCode: Int,
+    ): Long {
+        val record = Message(
+            chatId = chatId,
+            clientMsgId = callId,
+            senderUid = callerUid,
+            messageType = MessageType.CALL_LOG.code,
+            timestamp = System.currentTimeMillis(),
+            body = com.virjar.tk.protocol.body.CallLogBody(
+                callId = callId,
+                callerUid = callerUid,
+                calleeUid = calleeUid,
+                video = video,
+                durationSec = durationSec,
+                reasonCode = reasonCode,
+            ),
+        )
+        // CALL_LOG 是服务端权威事实：只允许内部入口构造，客户端提交的同类型消息仍被拒
+        return sendMessage(senderUid = callerUid, message = record, authorizeAfterChatLock = null, systemCallLog = true)
+    }
+
+    /**
      * 服务号指令意图（CODE-01）：发往 sys_service 的人类消息构造冻结回复记录；
      * 未接线指令运行时或非服务号目标返回 null（不欠回复）。
      */
@@ -133,9 +166,10 @@ class MessageService(
         senderUid: String,
         message: Message,
         authorizeAfterChatLock: ((PgWriteTransactionContext) -> Unit)?,
+        systemCallLog: Boolean = false,
     ): Long {
         return projector.withProjectionReadyChats(message.chatId) {
-            sendMessageLocked(senderUid, message, authorizeAfterChatLock)
+            sendMessageLocked(senderUid, message, authorizeAfterChatLock, systemCallLog)
         }
     }
 
@@ -144,6 +178,7 @@ class MessageService(
         senderUid: String,
         message: Message,
         authorizeAfterChatLock: ((PgWriteTransactionContext) -> Unit)?,
+        systemCallLog: Boolean = false,
     ): Long {
         val chatId = message.chatId
         require(chatId.isNotBlank() && chatId.length <= MessageBodyPolicy.MAX_CHAT_ID_LENGTH) { "chatId 非法" }
@@ -155,7 +190,8 @@ class MessageService(
         }
         val messageType = MessageType.fromCode(message.messageType)
             ?: throw IllegalArgumentException("未知消息类型: ${message.messageType}")
-        require(messageType in CREATABLE_MESSAGE_TYPES) {
+        val creatable = if (systemCallLog) CREATABLE_MESSAGE_TYPES + MessageType.CALL_LOG else CREATABLE_MESSAGE_TYPES
+        require(messageType in creatable) {
             "消息类型 $messageType 不能通过新建消息入口发送"
         }
 
@@ -658,6 +694,7 @@ class MessageService(
             MessageType.OFFICE_REF,
             MessageType.TASK_REF,
         )
+
 
         private val EDITABLE_MESSAGE_TYPES = setOf(MessageType.RICH_TEXT)
     }

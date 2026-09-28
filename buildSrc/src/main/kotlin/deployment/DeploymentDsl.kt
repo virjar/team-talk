@@ -47,6 +47,7 @@ class DeploymentBuilder internal constructor() {
             tcpTlsCertificatePem = tcp.tlsConfiguration.certificateFile?.readText(Charsets.UTF_8),
             oemPush = clientConfiguration.oemPushConfigurations,
             apnsPush = clientConfiguration.apnsPushConfiguration,
+            turn = serverConfiguration.turnConfiguration.build(defaultHost),
         )
     }
 }
@@ -55,9 +56,36 @@ class DeploymentBuilder internal constructor() {
 class ServerDeploymentBuilder internal constructor() {
     internal val httpConfiguration = HttpDeploymentBuilder()
     internal val tcpConfiguration = TcpDeploymentBuilder()
+    internal val turnConfiguration = TurnDeploymentBuilder()
 
     fun http(configure: HttpDeploymentBuilder.() -> Unit) { httpConfiguration.apply(configure) }
     fun tcp(configure: TcpDeploymentBuilder.() -> Unit) { tcpConfiguration.apply(configure) }
+
+    /** 内嵌 TURN/STUN（1:1 通话 NAT 兜底）；未配置 secretFile 时不启用。 */
+    fun turn(configure: TurnDeploymentBuilder.() -> Unit) { turnConfiguration.apply(configure) }
+}
+
+@DeploymentDsl
+class TurnDeploymentBuilder internal constructor() {
+    var port: Int = 3478
+
+    /** 留空使用最终 HTTP URL 的主机；NAT 部署必须显式配置公网地址。 */
+    var publicHost: String = ""
+    var relayPortStart: Int = 51000
+    var relayPortEnd: Int = 51100
+    var realm: String = "teamtalk"
+
+    /** TURN 凭据 secret 文件（≥16 字节，Git 忽略）；null = 不启用。 */
+    var secretFile: File? = null
+
+    internal fun build(publicHostDefault: String) = TurnDeployment(
+        port = port,
+        publicHost = publicHost.ifBlank { publicHostDefault },
+        relayPortStart = relayPortStart,
+        relayPortEnd = relayPortEnd,
+        realm = realm,
+        secretFile = secretFile,
+    )
 }
 
 @DeploymentDsl

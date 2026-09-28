@@ -16,6 +16,12 @@ fun deploymentConfiguration(rootDir: File): DeploymentConfig = deployment {
     server {
         http { url = "https://im.virjar.com" }
         tcp { port = 5100 }
+        // 内嵌 TURN/STUN（1:1 通话 NAT 兜底，协议 minor 0.5）：secret 是部署状态目录的
+        // Git 忽略材料；文件不存在时部署不携带 TURN 配置（通话仅 P2P 直连）。
+        turn {
+            publicHost = "im.virjar.com"
+            secretFile = File(rootDir, "buildSrc/deployment/turn/turn-secret").takeIf { it.isFile }
+        }
     }
 
     // 管理员本机部署；密码与私钥另行提供。
