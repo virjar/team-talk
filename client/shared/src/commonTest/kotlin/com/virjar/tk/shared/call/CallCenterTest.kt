@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -80,6 +81,9 @@ class CallCenterTest {
         val callEvents = MutableSharedFlow<CallEventPayload>(extraBufferCapacity = 16)
         val callSignals = MutableSharedFlow<CallSignalPayload>(extraBufferCapacity = 16)
         val engines = mutableListOf<FakeEngine>()
+        /** 真实时间执行域：runTest 虚拟时钟不推进外部事件等待，官方建议经此视图逃逸。 */
+        private val realTime = Dispatchers.Default.limitedParallelism(1)
+
         val center = CallCenter(
             rpcClient = rpc,
             callEvents = callEvents,
@@ -95,16 +99,34 @@ class CallCenterTest {
             }
         }
 
-        suspend fun settle() {
-            // 信令消费在真实 Default 线程上执行：让出一个真实调度片
-            kotlinx.coroutines.withContext(Dispatchers.Default) { Thread.sleep(50) }
+        /**
+         * 确定性等待信令订阅就绪：SharedFlow 在订阅建立前 emit 会直接丢弃。
+         * runTest 的虚拟时钟不推进挂起等待，经 limitedParallelisim 视图逃逸到真实时间
+         * （kotlinx 官方建议），等待 subscriptionCount 快照翻转。
+         */
+        suspend fun awaitSubscribed() {
+            try {
+                kotlinx.coroutines.withContext(realTime) {
+                    kotlinx.coroutines.withTimeout(5_000) {
+                        callEvents.subscriptionCount.first { it > 0 }
+                        callSignals.subscriptionCount.first { it > 0 }
+                    }
+                }
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                assertTrue(false, "信令订阅未在 5s 内就绪")
+            }
         }
 
         /** 条件轮询等待：并行测试负载下固定 sleep 会抖动，以状态收敛为准。 */
         suspend fun awaitTrue(timeoutMillis: Long = 5_000, condition: () -> Boolean) {
-            val deadline = System.currentTimeMillis() + timeoutMillis
-            while (!condition() && System.currentTimeMillis() < deadline) {
-                kotlinx.coroutines.withContext(Dispatchers.Default) { Thread.sleep(20) }
+            try {
+                kotlinx.coroutines.withContext(realTime) {
+                    kotlinx.coroutines.withTimeout(timeoutMillis) {
+                        while (!condition()) kotlinx.coroutines.delay(20)
+                    }
+                }
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                // 落到下方断言给出统一失败信息
             }
             assertTrue(condition(), "condition not met within timeout")
         }
@@ -140,6 +162,7 @@ class CallCenterTest {
     @Test
     fun `主叫流程 - 振铃接通后发起offer并挂断`() = runTest {
         val h = Harness()
+        h.awaitSubscribed()
         val outcome = h.center.startOutgoing("peer", video = true)
         assertTrue(outcome.deliverable)
         val view = h.center.state.value!!
@@ -163,7 +186,7 @@ class CallCenterTest {
     @Test
     fun `被叫流程 - 来电接听后收到offer并进入ACTIVE`() = runTest {
         val h = Harness()
-        h.settle() // 等待信令订阅在 worker 线程上就绪
+        h.awaitSubscribed()
         h.callEvents.emit(ring("call-9", video = true))
         h.awaitTrue { h.center.state.value != null }
         val view = h.center.state.value!!
@@ -185,6 +208,7 @@ class CallCenterTest {
     @Test
     fun `对端终结 - 进入ENDED并清理引擎`() = runTest {
         val h = Harness()
+        h.awaitSubscribed()
         h.center.startOutgoing("peer", video = false)
         val callId = h.center.state.value!!.callId
         h.callEvents.emit(ended(callId, CallEndReason.CANCELLED))
@@ -197,6 +221,7 @@ class CallCenterTest {
     @Test
     fun `本地忙时来电自动拒接且不打断当前通话`() = runTest {
         val h = Harness()
+        h.awaitSubscribed()
         h.center.startOutgoing("peer-a", video = false)
         val firstCallId = h.center.state.value!!.callId
         h.callEvents.emit(ring("incoming-1"))
@@ -207,6 +232,7 @@ class CallCenterTest {
     @Test
     fun `媒体失败按连接中断终结`() = runTest {
         val h = Harness()
+        h.awaitSubscribed()
         h.center.startOutgoing("peer", video = false)
         h.engines.single().failed()
         h.awaitTrue { h.center.state.value?.phase == CallPhase.ENDED }
@@ -216,11 +242,11 @@ class CallCenterTest {
     @Test
     fun `静音与扬声器转发到引擎`() = runTest {
         val h = Harness()
+        h.awaitSubscribed()
         h.center.startOutgoing("peer", video = false)
         h.center.setMuted(true)
         h.center.setSpeakerphone(false)
         h.center.switchCamera()
-        h.settle()
         val events = h.engines.single().events
         assertTrue(events.contains("muted:true") && events.contains("speaker:false") && events.contains("switchCamera"))
         assertEquals(true, h.center.state.value!!.muted)
