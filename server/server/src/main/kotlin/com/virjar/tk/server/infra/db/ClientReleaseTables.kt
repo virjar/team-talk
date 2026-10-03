@@ -39,6 +39,9 @@ internal object ClientReleases : Table("client_release") {
     /** 该发布配套的壳摘要（构建侧填），仅诊断展示用。 */
     val shellDigest = varchar("shell_digest", 128).nullable()
 
+    /** 快照发布令牌；null = 非令牌发布（正式通道沿用版本号判定）。 */
+    val snapshotToken = varchar("snapshot_token", 36).nullable()
+
     /** ACTIVE 可被通道指向；DISABLED 运维停用；SUPERSEDED 仅为历史状态保留。 */
     val status = varchar("status", 16)
 

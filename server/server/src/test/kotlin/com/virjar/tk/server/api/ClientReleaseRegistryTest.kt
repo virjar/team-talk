@@ -390,6 +390,46 @@ class ClientReleaseRegistryTest {
     }
 
     @Test
+    fun `快照发布按令牌判定最新——同版本覆盖发布触达旧令牌客户端`() {
+        PostgresSchemaLease.open().use { lease ->
+            DatabaseFactory.create(jdbcUrl = lease.jdbcUrl, user = lease.user, password = lease.password, maxPoolSize = 4)
+                .use { database ->
+                    val storeRoot = Files.createTempDirectory("release-store-").toFile()
+                    val releaseService = service(database, storeRoot)
+                    // 同版本同构建号两次发布，仅身份与令牌不同（开发期覆盖发布场景）
+                    val first = uploadZip(
+                        metadata("0.0.4", 9, "snapshot").copy(buildIdentity = "sha256:first", snapshotToken = "token-1"),
+                        mapOf("lib/app.jar" to "one".toByteArray()), "p".toByteArray(),
+                    )
+                    val second = uploadZip(
+                        metadata("0.0.4", 9, "snapshot").copy(buildIdentity = "sha256:second", snapshotToken = "token-2"),
+                        mapOf("lib/app.jar" to "two".toByteArray()), "p".toByteArray(),
+                    )
+                    try {
+                        releaseService.importRelease("ci", first)
+                        releaseService.importRelease("ci", second)
+                        val base = ClientReleaseService.CheckQuery("desktop", "macos", "aarch64", "snapshot", "0.0.4", 9, 1, null)
+                        // 未回传令牌的旧客户端永远跟随最后发布者
+                        assertEquals("UPDATE_AVAILABLE", releaseService.check(base).status)
+                        // 持有旧令牌：同版本号覆盖发布照样触达
+                        assertEquals("UPDATE_AVAILABLE", releaseService.check(base.copy(snapshotToken = "token-1")).status)
+                        // 持有当前令牌：唯一判"已是最新"的方式
+                        assertEquals("UP_TO_DATE", releaseService.check(base.copy(snapshotToken = "token-2")).status)
+                        // 令牌判定优先于版本/构建比较（修订号回退不再影响触达）
+                        assertEquals("UP_TO_DATE", releaseService.check(base.copy(snapshotToken = "token-2", version = "0.0.1", build = 1)).status)
+                        // 令牌随 manifest 下发，客户端持久化后回传
+                        val current = releaseService.check(base).release!!
+                        assertEquals("token-2", releaseService.manifest(current.id)!!.snapshotToken)
+                    } finally {
+                        first.delete()
+                        second.delete()
+                        storeRoot.deleteRecursively()
+                    }
+                }
+        }
+    }
+
+    @Test
     fun `超过50MiB的真实上传可重试且跨通道晋级复用发布`() {
         PostgresSchemaLease.open().use { lease ->
             DatabaseFactory.create(jdbcUrl = lease.jdbcUrl, user = lease.user, password = lease.password, maxPoolSize = 4)

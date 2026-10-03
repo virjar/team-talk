@@ -98,6 +98,9 @@ private val schemaMigrations = listOf(
     SchemaMigration("add_push_registration_timestamp") {
         exec("ALTER TABLE oem_push_registrations ADD COLUMN IF NOT EXISTS registered_at bigint NOT NULL DEFAULT 0")
     },
+    SchemaMigration("add_client_release_snapshot_token") {
+        exec("ALTER TABLE client_release ADD COLUMN IF NOT EXISTS snapshot_token varchar(36)")
+    },
 )
 
 /** Caller owns the schema_metadata lock; new migrations must not commit before their completion receipt. */

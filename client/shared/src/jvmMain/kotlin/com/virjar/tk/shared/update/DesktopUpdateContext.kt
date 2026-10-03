@@ -46,6 +46,7 @@ object PayloadLayout {
         val files: List<PayloadFile>,
         val buildIdentity: String? = null,
         val channel: String = "stable",
+        val snapshotToken: String? = null,
     )
 
     data class CurrentPointer(
@@ -76,12 +77,14 @@ object PayloadLayout {
             files = files,
             buildIdentity = props.getProperty("buildIdentity"),
             channel = props.getProperty("channel") ?: "stable",
+            snapshotToken = props.getProperty("snapshotToken"),
         )
     }
 
     fun writeDescriptor(versionDir: File, descriptor: PayloadDescriptor) {
         val props = Properties().apply {
             descriptor.buildIdentity?.let { setProperty("buildIdentity", it) }
+            descriptor.snapshotToken?.let { setProperty("snapshotToken", it) }
             setProperty("channel", descriptor.channel)
             setProperty(PROP_VERSION, descriptor.version)
             setProperty(PROP_BUILD, descriptor.build.toString())

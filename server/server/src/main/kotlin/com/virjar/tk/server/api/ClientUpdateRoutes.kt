@@ -60,6 +60,7 @@ internal fun Route.clientUpdateRoutes(
                     build = q["build"]?.toLongOrNull(),
                     shellAbi = q["shellAbi"]?.toIntOrNull(),
                     buildIdentity = q["buildIdentity"]?.takeIf { it.isNotBlank() },
+                    snapshotToken = q["snapshotToken"]?.takeIf { it.isNotBlank() },
                 ),
             )
             call.response.headers.append("Cache-Control", "no-store")

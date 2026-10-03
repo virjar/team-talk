@@ -199,12 +199,14 @@ class DesktopUpdaterTest {
                         PayloadLayout.PayloadFile("lib/a.jar", "a".repeat(64), 1),
                         PayloadLayout.PayloadFile("lib/b.jar", "b".repeat(64), 2),
                     ),
+                    snapshotToken = "snap-token-1",
                 ),
             )
             val descriptor = PayloadLayout.readDescriptor(dir)!!
             assertEquals("0.0.4", descriptor.version)
             assertEquals(9, descriptor.build)
             assertEquals(2, descriptor.minShellAbi)
+            assertEquals("snap-token-1", descriptor.snapshotToken, "快照令牌须持久化供下次检查回传")
             assertEquals(listOf("lib/a.jar", "lib/b.jar"), descriptor.files.map { it.path })
 
             PayloadLayout.writeCurrentPointer(root, PayloadLayout.CurrentPointer("0.0.4", 9))

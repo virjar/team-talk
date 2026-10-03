@@ -48,6 +48,7 @@ class DesktopUpdater(
             append("&channel=").append(channel)
             append("&version=").append(URLEncoder.encode(context.version, "UTF-8"))
             context.descriptor.buildIdentity?.let { append("&buildIdentity=").append(URLEncoder.encode(it, "UTF-8")) }
+            context.descriptor.snapshotToken?.let { append("&snapshotToken=").append(URLEncoder.encode(it, "UTF-8")) }
             append("&build=").append(context.build)
             append("&shellAbi=").append(context.shellAbi)
         }
@@ -146,6 +147,7 @@ class DesktopUpdater(
         files = manifest.files.map { PayloadLayout.PayloadFile(it.path, it.sha256, it.size) },
         buildIdentity = manifest.buildIdentity,
         channel = release.channel,
+        snapshotToken = manifest.snapshotToken,
     )
 
     private class StagingPlan(val reusable: Set<String>, val totalBytes: Long)

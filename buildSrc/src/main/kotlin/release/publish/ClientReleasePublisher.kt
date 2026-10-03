@@ -40,7 +40,7 @@ class ClientReleasePublisher(
         val UPLOAD_DEADLINE = Duration.ofMinutes(31)
     }
 
-    fun publish(bundle: File, identity: BundleIdentity): PublicationResult {
+    fun publish(bundle: File, identity: BundleIdentity, snapshotToken: String = ""): PublicationResult {
         val channel = when (identity.distributionKind) {
             "release" -> "stable"
             "private-first" -> "preview"
@@ -66,7 +66,7 @@ class ClientReleasePublisher(
                     .map { it.name to installerLabel(target, it.name) }
                 val upload = File(staging, "$key.zip")
                 buildUploadZip(upload) { writer ->
-                    writer.entry("release.json", metadataJson(channel, identity, UploadTarget(
+                    writer.entry("release.json", metadataJson(channel, identity, snapshotToken, UploadTarget(
                         clientType = "desktop", platform = platform, arch = arch,
                         build = identity.desktopRevision.toLong(),
                         notes = noteText, minShellAbi = minShellAbi,
@@ -92,7 +92,7 @@ class ClientReleasePublisher(
             val apk = ReleaseBundle.assets(bundle).single { it.extension == "apk" }
             val androidUpload = File(staging, "android.zip")
             buildUploadZip(androidUpload) { writer ->
-                writer.entry("release.json", metadataJson(channel, identity, UploadTarget(
+                writer.entry("release.json", metadataJson(channel, identity, snapshotToken, UploadTarget(
                     clientType = "android", platform = "android", arch = "any",
                     build = identity.version.buildNumber + 1L,
                     notes = noteText,
@@ -106,7 +106,7 @@ class ClientReleasePublisher(
             val headless = File(bundle, "assets/${HeadlessDistribution.archiveName(identity.buildIdentity)}")
             val headlessUpload = File(staging, "headless.zip")
             buildUploadZip(headlessUpload) { writer ->
-                writer.entry("release.json", metadataJson(channel, identity, UploadTarget(
+                writer.entry("release.json", metadataJson(channel, identity, snapshotToken, UploadTarget(
                     clientType = "headless", platform = "any", arch = "any",
                     build = identity.version.buildNumber.toLong(),
                     notes = noteText, bundleFilename = headless.name,
@@ -156,13 +156,19 @@ class ClientReleasePublisher(
     )
 
     /** buildSrc 不启用序列化编译插件：release.json 用 JsonObject 显式构建。 */
-    private fun metadataJson(channel: String, identity: BundleIdentity, target: UploadTarget): ByteArray {
+    private fun metadataJson(
+        channel: String,
+        identity: BundleIdentity,
+        snapshotToken: String,
+        target: UploadTarget,
+    ): ByteArray {
         val root = kotlinx.serialization.json.buildJsonObject {
             put("clientType", target.clientType)
             put("platform", target.platform)
             put("arch", target.arch)
             put("version", identity.version.name)
             put("buildIdentity", identity.buildIdentity)
+            if (snapshotToken.isNotBlank()) put("snapshotToken", snapshotToken)
             put("build", target.build)
             put("channel", channel)
             target.notes?.let { put("notes", it) }

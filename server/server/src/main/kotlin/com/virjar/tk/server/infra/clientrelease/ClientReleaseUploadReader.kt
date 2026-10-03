@@ -27,6 +27,8 @@ data class ClientReleaseUploadMetadata(
     val installers: List<InstallerSpec> = emptyList(),
     val activate: Boolean = true,
     val buildIdentity: String = "",
+    /** 快照发布令牌（UUID）；空 = 非令牌发布（正式通道沿用版本号判定）。 */
+    val snapshotToken: String = "",
 ) {
     @Serializable
     data class InstallerSpec(val filename: String, val label: String)

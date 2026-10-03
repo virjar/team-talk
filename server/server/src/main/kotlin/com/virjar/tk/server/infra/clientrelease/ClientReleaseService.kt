@@ -59,6 +59,7 @@ internal class ClientReleaseService(
         val build: Long?,
         val shellAbi: Int?,
         val buildIdentity: String? = null,
+        val snapshotToken: String? = null,
     )
 
     // ── 解析（公开只读） ──────────────────────────────────────────────
@@ -68,9 +69,16 @@ internal class ClientReleaseService(
             ?: return ClientUpdateCheckResponse(ClientUpdateContracts.STATUS_CHANNEL_DISABLED, null)
         val info = releaseInfo(release.id)?.copy(channel = query.channel)
             ?: return ClientUpdateCheckResponse(ClientUpdateContracts.STATUS_CHANNEL_DISABLED, null)
-        val upToDate = query.version != null && query.build != null &&
-            query.version == release.version && query.build == release.build &&
-            (query.buildIdentity == null || info.buildIdentity == null || query.buildIdentity == info.buildIdentity)
+        // 快照通道按发布令牌判定"已是最新"：令牌一致才最新；未回传（旧客户端）
+        // 或令牌不同（最后发布者赢）一律推送，不比较版本号/修订号——历史重写或
+        // 同版本覆盖发布都不再依赖单调性。
+        val upToDate = if (!release.snapshotToken.isNullOrBlank()) {
+            query.snapshotToken == release.snapshotToken
+        } else {
+            query.version != null && query.build != null &&
+                query.version == release.version && query.build == release.build &&
+                (query.buildIdentity == null || info.buildIdentity == null || query.buildIdentity == info.buildIdentity)
+        }
         if (upToDate) {
             return ClientUpdateCheckResponse(ClientUpdateContracts.STATUS_UP_TO_DATE, info)
         }
@@ -107,6 +115,7 @@ internal class ClientReleaseService(
             minShellAbi = row[ClientReleases.minShellAbi],
             files = files,
             buildIdentity = row[ClientReleases.buildIdentity].ifBlank { null },
+            snapshotToken = row[ClientReleases.snapshotToken],
         )
     }
 
@@ -136,6 +145,7 @@ internal class ClientReleaseService(
         ClientReleaseInfo(
             id = releaseId,
             buildIdentity = row[ClientReleases.buildIdentity].ifBlank { null },
+            snapshotToken = row[ClientReleases.snapshotToken],
             clientType = row[ClientReleases.clientType],
             platform = row[ClientReleases.platform],
             arch = row[ClientReleases.arch],
@@ -209,6 +219,7 @@ internal class ClientReleaseService(
         val build: Long,
         val channelKind: String?,
         val minShellAbi: Int?,
+        val snapshotToken: String?,
     )
 
     private fun latestAndroidChannelRelease(): ResolvedRelease? = tx {
@@ -222,7 +233,7 @@ internal class ClientReleaseService(
             val row = releaseById(pointer[ClientChannels.currentReleaseId]!!)
                 ?.takeIf { it[ClientReleases.status] == STATUS_ACTIVE } ?: return@firstNotNullOfOrNull null
             ResolvedRelease(row[ClientReleases.id], row[ClientReleases.version], row[ClientReleases.build],
-                pointer[ClientChannels.channel], null)
+                pointer[ClientChannels.channel], null, row[ClientReleases.snapshotToken])
         }
     }
 
@@ -250,6 +261,7 @@ internal class ClientReleaseService(
             version = row[ClientReleases.version],
             build = row[ClientReleases.build],
             channelKind = row[ClientReleases.channel],
+            snapshotToken = row[ClientReleases.snapshotToken],
             minShellAbi = row[ClientReleases.minShellAbi],
         )
     }
@@ -277,6 +289,7 @@ internal class ClientReleaseService(
                         it[version] = parsed.metadata.version
                         it[build] = parsed.metadata.build
                         it[buildIdentity] = identity
+                        it[snapshotToken] = parsed.metadata.snapshotToken.ifBlank { null }
                         it[uploadSha256] = uploadSha
                         it[channel] = parsed.metadata.channel
                         it[notesZh] = parsed.metadata.notes

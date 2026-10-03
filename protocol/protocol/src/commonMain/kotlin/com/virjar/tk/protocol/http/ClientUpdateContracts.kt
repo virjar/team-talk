@@ -68,6 +68,7 @@ data class ClientReleaseInfo(
     val minShellAbi: Int? = null,
     val manifestUrl: String? = null,
     val bundleUrl: String? = null,
+    val snapshotToken: String? = null,
     val fileCount: Int = 0,
     val totalBytes: Long = 0,
     val installers: List<ClientInstallerInfo> = emptyList(),
@@ -95,6 +96,8 @@ data class ClientReleaseManifest(
     val minShellAbi: Int? = null,
     val files: List<ClientPayloadFile>,
     val buildIdentity: String? = null,
+    /** 快照发布令牌：客户端持久化并回传，令牌一致才判"已是最新"（最后发布者赢）。 */
+    val snapshotToken: String? = null,
 )
 
 @Serializable
