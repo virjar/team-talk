@@ -106,7 +106,10 @@ internal fun ChatMessageList(
         // 内测 T027：离开最新消息且有新消息时提示，点击回到底部。
         val newestSeq = messages.firstOrNull()?.serverSeq ?: 0L
         var seenNewestSeq by remember { mutableStateOf<Long?>(null) }
-        val atLatest by remember(state) { derivedStateOf { state.firstVisibleItemIndex == 0 } }
+        // 内测 T071：原先 firstVisibleItemIndex==0 即判"在最新"，上滑一行就脱离最新、
+        // 胶囊立刻出现，过于灵敏。放宽为前 3 个 item 内仍视为在最新（约 3 行气泡距离）；
+        // 读取仍限 firstVisibleItemIndex，不触 layoutInfo（T063 组合期互失效教训）。
+        val atLatest by remember(state) { derivedStateOf { state.firstVisibleItemIndex < 3 } }
         LaunchedEffect(newestSeq, atLatest) {
             if (atLatest || seenNewestSeq == null) seenNewestSeq = newestSeq
         }
