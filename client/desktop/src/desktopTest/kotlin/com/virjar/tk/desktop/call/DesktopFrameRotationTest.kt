@@ -51,7 +51,7 @@ class DesktopFrameRotationTest {
     @Test
     fun `rotation 0 输出保持原象限`() {
         val out = ByteArray(4 * 4 * 4)
-        DesktopCallEngine.convertI420ToBgra(QuadrantI420(), 4, 4, 0, out)
+        DesktopVideoFramePump.convertI420ToBgra(QuadrantI420(), 4, 4, 0, out)
         assertEquals(0, grayAt(out, 4, 0, 0))
         assertEquals(85, grayAt(out, 4, 3, 0))
         assertEquals(170, grayAt(out, 4, 0, 3))
@@ -61,7 +61,7 @@ class DesktopFrameRotationTest {
     @Test
     fun `rotation 90 顺时针 象限右旋且宽高换位`() {
         val out = ByteArray(4 * 4 * 4)
-        DesktopCallEngine.convertI420ToBgra(QuadrantI420(), 4, 4, 90, out)
+        DesktopVideoFramePump.convertI420ToBgra(QuadrantI420(), 4, 4, 90, out)
         // 源 TL(0)→输出 TR；TR(85)→BR；BR(255)→BL；BL(170)→TL
         assertEquals(170, grayAt(out, 4, 0, 0))
         assertEquals(0, grayAt(out, 4, 3, 0))
@@ -72,7 +72,7 @@ class DesktopFrameRotationTest {
     @Test
     fun `rotation 180 象限对角互换`() {
         val out = ByteArray(4 * 4 * 4)
-        DesktopCallEngine.convertI420ToBgra(QuadrantI420(), 4, 4, 180, out)
+        DesktopVideoFramePump.convertI420ToBgra(QuadrantI420(), 4, 4, 180, out)
         assertEquals(255, grayAt(out, 4, 0, 0))
         assertEquals(170, grayAt(out, 4, 3, 0))
         assertEquals(85, grayAt(out, 4, 0, 3))
@@ -82,7 +82,7 @@ class DesktopFrameRotationTest {
     @Test
     fun `rotation 270 逆时针 象限左旋`() {
         val out = ByteArray(4 * 4 * 4)
-        DesktopCallEngine.convertI420ToBgra(QuadrantI420(), 4, 4, 270, out)
+        DesktopVideoFramePump.convertI420ToBgra(QuadrantI420(), 4, 4, 270, out)
         // 源 TR(85)→输出 TL；BR(255)→TR；TL(0)→BL；BL(170)→BR
         assertEquals(85, grayAt(out, 4, 0, 0))
         assertEquals(255, grayAt(out, 4, 3, 0))
@@ -112,7 +112,7 @@ class DesktopFrameRotationTest {
         }
         // 输出缓冲按换位后的尺寸给：6x4 源 90° → 4x6 输出
         val out90 = ByteArray(w * h * 4)
-        DesktopCallEngine.convertI420ToBgra(buffer, w, h, 90, out90)
+        DesktopVideoFramePump.convertI420ToBgra(buffer, w, h, 90, out90)
         // 全灰帧只验证转换完整遍历不越界不缺像素（越界会抛异常或尾部留零）
         for (i in out90.indices step 4) assertEquals(128, out90[i].toInt() and 0xFF)
     }

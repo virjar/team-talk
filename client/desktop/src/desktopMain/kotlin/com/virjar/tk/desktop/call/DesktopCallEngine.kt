@@ -26,17 +26,14 @@ import dev.onvoid.webrtc.media.MediaStream
 import dev.onvoid.webrtc.media.audio.AudioOptions
 import dev.onvoid.webrtc.media.audio.AudioTrackSource
 import dev.onvoid.webrtc.media.audio.AudioTrack
-import dev.onvoid.webrtc.media.video.I420Buffer
 import dev.onvoid.webrtc.media.MediaDevices
 import dev.onvoid.webrtc.media.video.VideoCaptureCapability
 import dev.onvoid.webrtc.media.video.VideoDeviceSource
-import dev.onvoid.webrtc.media.video.VideoFrame
 import dev.onvoid.webrtc.media.video.VideoTrack
 import dev.onvoid.webrtc.media.video.VideoTrackSink
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.jetbrains.skia.ColorType
-import org.jetbrains.skia.ImageInfo
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -265,7 +262,10 @@ class DesktopCallEngine : CallMediaEngine {
         val track = factory.createVideoTrack(VIDEO_TRACK_ID, source)
         localVideoTrack = track
         connection.addTrack(track, listOf(STREAM_ID))
-        track.addSink(FrameSink(isLocal = true))
+        track.addSink(
+            DesktopVideoFramePump(isLocal = true, logger = logger, throttleNanos = lastFramePublishNanos,
+                localFirstFrame = localVideoFirstFrame) { localVideo.value = DesktopVideoHandle(it) },
+        )
         // 首帧看门狗：start() 成功≠有帧。macOS 对未授权/未签名进程的采集会话会
         // 静默拒绝（session 正常 running 但永远 0 帧，TCC 状态停在"未询问"），
         // 设备被占用同理。5 秒无首帧立即上报 UI，不再让用户对着黑屏猜。
@@ -278,72 +278,6 @@ class DesktopCallEngine : CallMediaEngine {
                 )
             }
         }, 5, java.util.concurrent.TimeUnit.SECONDS)
-    }
-
-    /** 帧泵：I420 → BGRA 位图，~15fps 限频后在引擎线程推送。 */
-    private inner class FrameSink(private val isLocal: Boolean) : VideoTrackSink {
-        private var firstFrameLogged = false
-        private var lastRotation = -1
-
-        // 像素缓冲与位图跨帧复用：每帧 new Bitmap() 的 native 像素分配在 JVM GC 压力
-        // 不足时永不回收（实测 1 小时通话堆积 200GB+）。复用后整个通话 native 分配 O(1)，
-        // 分辨率变化时才重建。
-        private var reuseBitmap: org.jetbrains.skia.Bitmap? = null
-        private var reusePixels: ByteArray? = null
-        private var reuseWidth = 0
-        private var reuseHeight = 0
-
-        override fun onVideoFrame(frame: VideoFrame) {
-            val wasFirst = !firstFrameLogged
-            // 归一化角度；方向翻转（用户旋转手机）单独记一条，便于排查"画面跟着转"
-            val rotation = ((frame.rotation % 360) + 360) % 360
-            if (wasFirst) {
-                firstFrameLogged = true
-                logger.fault(
-                    "[ice] 首帧到达 isLocal=$isLocal ${frame.buffer.getWidth()}x${frame.buffer.getHeight()} rotation=$rotation",
-                )
-                if (isLocal) localVideoFirstFrame.set(true)
-            } else if (rotation != lastRotation) {
-                logger.fault("[ice] 帧方向变化 isLocal=$isLocal rotation=$rotation")
-            }
-            lastRotation = rotation
-            val now = System.nanoTime()
-            if (now - lastFramePublishNanos.get() < FRAME_INTERVAL_NANOS) return
-            lastFramePublishNanos.set(now)
-            try {
-                val buffer = frame.buffer
-                val width = buffer.getWidth()
-                val height = buffer.getHeight()
-                val outWidth = if (rotation == 90 || rotation == 270) height else width
-                val outHeight = if (rotation == 90 || rotation == 270) width else height
-                var bitmap = reuseBitmap
-                var pixels = reusePixels
-                if (bitmap == null || pixels == null || outWidth != reuseWidth || outHeight != reuseHeight) {
-                    pixels = ByteArray(outWidth * outHeight * 4)
-                    bitmap = org.jetbrains.skia.Bitmap()
-                    bitmap.installPixels(
-                        ImageInfo.makeN32(outWidth, outHeight, org.jetbrains.skia.ColorAlphaType.OPAQUE),
-                        pixels,
-                        outWidth * 4,
-                    )
-                    reuseBitmap = bitmap
-                    reusePixels = pixels
-                    reuseWidth = outWidth
-                    reuseHeight = outHeight
-                }
-                convertI420ToBgra(buffer.toI420(), width, height, rotation, pixels)
-                // installPixels 复用同一数组重绑，确保 Skia 侧指针刷新
-                bitmap.installPixels(
-                    ImageInfo.makeN32(outWidth, outHeight, org.jetbrains.skia.ColorAlphaType.OPAQUE),
-                    pixels,
-                    outWidth * 4,
-                )
-                if (isLocal) localVideo.value = DesktopVideoHandle(bitmap) else remoteVideo.value = DesktopVideoHandle(bitmap)
-            } catch (failure: Exception) {
-                if (!firstFrameLogged) logger.fault("[ice] 帧转换失败 isLocal=$isLocal: ${failure.message}")
-                // 单帧转换失败只丢帧，不断媒体
-            }
-        }
     }
 
     private inner class CreateObserver(private val tag: String) : CreateSessionDescriptionObserver {
@@ -451,7 +385,10 @@ class DesktopCallEngine : CallMediaEngine {
             logger.fault("[ice] onTrack: kind=${track?.getKind()} state=${track?.getState()}")
             if (track is VideoTrack) {
                 remoteVideoTrack = track
-                remoteSink = FrameSink(isLocal = false).also { track.addSink(it) }
+                remoteSink = DesktopVideoFramePump(isLocal = false, logger = logger,
+                    throttleNanos = lastFramePublishNanos, localFirstFrame = localVideoFirstFrame) {
+                    remoteVideo.value = DesktopVideoHandle(it)
+                }.also { track.addSink(it) }
             }
         }
 
@@ -459,7 +396,10 @@ class DesktopCallEngine : CallMediaEngine {
             logger.fault("[ice] onAddTrack: kind=${receiver.getTrack()?.getKind()}")
             (receiver.getTrack() as? VideoTrack)?.let { track ->
                 remoteVideoTrack = track
-                remoteSink = FrameSink(isLocal = false).also { track.addSink(it) }
+                remoteSink = DesktopVideoFramePump(isLocal = false, logger = logger,
+                    throttleNanos = lastFramePublishNanos, localFirstFrame = localVideoFirstFrame) {
+                    remoteVideo.value = DesktopVideoHandle(it)
+                }.also { track.addSink(it) }
             }
         }
     }
@@ -469,58 +409,9 @@ class DesktopCallEngine : CallMediaEngine {
         private const val AUDIO_TRACK_ID = "call-audio"
         private const val VIDEO_TRACK_ID = "call-video"
         private const val STREAM_ID = "call-stream"
-        private val FRAME_INTERVAL_NANOS = 66_000_000L
 
         /** 挂断排水窗口：capture stop 后等在途回调清空再 dispose，见 close() 注释。 */
         private const val CAPTURE_DRAIN_MILLIS = 300L
 
-        /**
-         * I420 → BGRA（BT.601 有限范围），原地写入复用缓冲 out。
-         *
-         * [rotation] 是帧携带的显示旋转（RTP CVO 透传，如手机竖屏拍摄=传感器横放
-         * buffer + 90°/270°）：直接烤进像素映射，输出宽高按角度换位，不做第二趟
-         * 旋转拷贝。90/270 的行主序遍历对 CPU cache 不友好，但 ~15fps 限频下
-         * 720p 实测无压力，换来零额外分配。
-         */
-        fun convertI420ToBgra(buffer: I420Buffer, width: Int, height: Int, rotation: Int, out: ByteArray) {
-            val y = buffer.getDataY()
-            val u = buffer.getDataU()
-            val v = buffer.getDataV()
-            val strideY = buffer.getStrideY()
-            val strideU = buffer.getStrideU()
-            val strideV = buffer.getStrideV()
-            val swap = rotation == 90 || rotation == 270
-            val outWidth = if (swap) height else width
-            val outHeight = if (swap) width else height
-            val pixels = out
-            var p = 0
-            for (row in 0 until outHeight) {
-                for (col in 0 until outWidth) {
-                    // 输出像素 (col,row) 反查源平面坐标（srcCol,srcRow）
-                    val srcCol: Int
-                    val srcRow: Int
-                    when (rotation) {
-                        90 -> { srcCol = row; srcRow = height - 1 - col }          // 顺时针：源左上 → 输出右上
-                        180 -> { srcCol = width - 1 - col; srcRow = height - 1 - row }
-                        270 -> { srcCol = width - 1 - row; srcRow = col }          // 逆时针：源左上 → 输出左下
-                        else -> { srcCol = col; srcRow = row }
-                    }
-                    val yp = y.get(srcRow * strideY + srcCol).toInt() and 0xFF
-                    val up = (u.get((srcRow / 2) * strideU + srcCol / 2).toInt() and 0xFF) - 128
-                    val vp = (v.get((srcRow / 2) * strideV + srcCol / 2).toInt() and 0xFF) - 128
-                    var r = yp + (1.402f * vp).toInt()
-                    var g = yp - ((0.344136f * up).toInt() + (0.714136f * vp).toInt())
-                    var b = yp + (1.772f * up).toInt()
-                    r = r.coerceIn(0, 255)
-                    g = g.coerceIn(0, 255)
-                    b = b.coerceIn(0, 255)
-                    pixels[p] = b.toByte()
-                    pixels[p + 1] = g.toByte()
-                    pixels[p + 2] = r.toByte()
-                    pixels[p + 3] = 0xFF.toByte()
-                    p += 4
-                }
-            }
-        }
     }
 }
