@@ -8,9 +8,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.Alignment.Companion as AlignmentCompat
 import androidx.compose.ui.text.style.TextOverflow
 import com.virjar.tk.app.navigation.feature.task.*
 import com.virjar.tk.app.ui.UiActionAdmission
@@ -18,6 +22,7 @@ import com.virjar.tk.app.ui.component.rich.MarkdownText
 import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.protocol.model.TaskPolicy
 import com.virjar.tk.protocol.model.TaskOptions
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -167,25 +172,82 @@ internal fun TaskEditorPane(
     if (choosingContext) TaskContextDialog(feature, admission, onDismiss = { choosingContext = false })
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TaskDateTimeFields(
     label: String, input: TaskDeadlineInput, tag: String, clearTag: String, clearLabel: String,
     enabled: Boolean, onChange: ((TaskDeadlineInput) -> TaskDeadlineInput) -> Unit,
 ) {
+    // 内测 T070：保留手填（高级用户/测试 tag 不变），加日历/时钟选择器按钮
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
     Text(label, style = MaterialTheme.typography.labelLarge)
-    Row(horizontalArrangement = Arrangement.spacedBy(Tk.spacing.sm)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Tk.spacing.sm), verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(value = input.date, onValueChange = { value -> onChange { it.copy(date = value) } },
             enabled = enabled, singleLine = true, label = { Text("日期") }, placeholder = { Text("2026-09-08") },
             modifier = Modifier.weight(1.2f).testTag("$tag.date"))
+        IconButton(onClick = { showDatePicker = true }, enabled = enabled,
+            modifier = Modifier.testTag("$tag.pickDate")) {
+            Icon(Icons.Filled.DateRange, contentDescription = "选择日期")
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(Tk.spacing.sm), verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(value = input.time, onValueChange = { value -> onChange { it.copy(time = value) } },
             enabled = enabled, singleLine = true, label = { Text("时间") }, placeholder = { Text("18:00") },
             modifier = Modifier.weight(1f).testTag("$tag.time"))
+        IconButton(onClick = { showTimePicker = true }, enabled = enabled,
+            modifier = Modifier.testTag("$tag.pickTime")) {
+            Icon(Icons.Filled.Schedule, contentDescription = "选择时间")
+        }
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("本地时区：${TimeZone.currentSystemDefault().id}", style = MaterialTheme.typography.labelSmall,
             color = Tk.colors.metaText, modifier = Modifier.weight(1f))
         TextButton(onClick = { onChange { TaskDeadlineInput() } }, enabled = enabled,
             modifier = Modifier.testTag(clearTag)) { Text(clearLabel) }
+    }
+    if (showDatePicker) {
+        // DatePicker 的选中值是 UTC 日零点毫秒；用 epochDays 换算，不涉时区扩展
+        val initialMillis = runCatching {
+            LocalDate.parse(input.date).toEpochDays() * 86_400_000L
+        }.getOrNull()
+        val state = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { millis ->
+                        val date = LocalDate.fromEpochDays(
+                            Math.floorDiv(millis, 86_400_000L).toInt(),
+                        ).toString()
+                        onChange { it.copy(date = date) }
+                    }
+                    showDatePicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("取消") } },
+        ) {
+            DatePicker(state = state, title = null, headline = null, showModeToggle = false)
+        }
+    }
+    if (showTimePicker) {
+        val initial = runCatching {
+            val parts = input.time.split(":")
+            Pair(parts[0].toIntOrNull()?.coerceIn(0, 23) ?: 9, parts[1].toIntOrNull()?.coerceIn(0, 59) ?: 0)
+        }.getOrDefault(9 to 0)
+        val state = rememberTimePickerState(initialHour = initial.first, initialMinute = initial.second, is24Hour = true)
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            title = { Text("选择时间") },
+            text = { TimePicker(state = state) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onChange { it.copy(time = "%02d:%02d".format(state.hour, state.minute)) }
+                    showTimePicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = { TextButton(onClick = { showTimePicker = false }) { Text("取消") } },
+        )
     }
 }
 
