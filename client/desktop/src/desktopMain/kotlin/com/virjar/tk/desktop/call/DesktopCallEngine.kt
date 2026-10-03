@@ -4,6 +4,8 @@ import com.virjar.tk.protocol.model.CallSignalBody
 import com.virjar.tk.protocol.model.IceServer
 import com.virjar.tk.app.ui.call.DesktopVideoHandle
 import com.virjar.tk.shared.call.CallMediaEngine
+import com.virjar.tk.shared.call.sanitizeIceCandidate
+import com.virjar.tk.shared.call.snapshotAndClear
 import com.virjar.tk.shared.call.CallMediaObserver
 import dev.onvoid.webrtc.CreateSessionDescriptionObserver
 import dev.onvoid.webrtc.PeerConnectionObserver
@@ -80,14 +82,12 @@ class DesktopCallEngine : CallMediaEngine {
     private val bufferedRemoteCandidates = mutableListOf<RTCIceCandidate>()
     private val negotiationLock = Any()
 
-    /** 剥离 candidate 行里的可选扩展属性：webrtc-java 会带 ufrag/network-id/network-cost，
-     *  旧版 libwebrtc（Android）解析含 ufrag 的候选行会失败，导致 set-remote 整体报
-     *  "SessionDescription is NULL"、addIceCandidate 静默丢弃。这些属性均为可选提示。 */
-    private fun sanitizeCandidate(sdp: String): String =
-        sdp.replace(Regex(" ufrag \\S+"), "")
-            .replace(Regex(" network-id \\S+"), "")
-            .replace(Regex(" network-cost \\S+"), "")
-            .trim()
+    /**
+     * 剥离 candidate 行里的可选扩展属性：webrtc-java 会带 ufrag/network-id/network-cost，
+     * 旧版 libwebrtc（Android）解析含 ufrag 的候选行会失败，导致 set-remote 整体报
+     *  "SessionDescription is NULL"、addIceCandidate 静默丢弃。规则与 Android 引擎
+     * 共享（shared 的 sanitizeIceCandidate，commonTest 锁定）。
+     */
     private val logger = com.virjar.tk.shared.log.PlatformOnlyTkLogger("DesktopCallEngine")
 
     /** gathering 兜底时延：非 trickle 等 COMPLETE，但 STUN/VPN 异常时 gather 可能停滞，
@@ -164,7 +164,7 @@ class DesktopCallEngine : CallMediaEngine {
 
     override fun onRemoteCandidate(candidate: CallSignalBody.IceCandidate) {
         logger.fault("[ice] 远端候选 mid=${candidate.sdpMid} idx=${candidate.sdpMLineIndex}: ${candidate.candidate.take(100)}")
-        val ice = RTCIceCandidate(candidate.sdpMid, candidate.sdpMLineIndex, sanitizeCandidate(candidate.candidate))
+        val ice = RTCIceCandidate(candidate.sdpMid, candidate.sdpMLineIndex, sanitizeIceCandidate(candidate.candidate))
         if (remoteDescriptionSet) {
             try {
                 pc?.addIceCandidate(ice)
@@ -383,11 +383,7 @@ class DesktopCallEngine : CallMediaEngine {
                     remoteDescriptionSet = true
                     // 先取快照再清空：also{clear()} 会返回已清空的接收者，缓冲候选
                     // 被整体丢弃（真机"answer 完成但 ICE 永不 CHECKING"的根因）。
-                    val buffered = synchronized(bufferedRemoteCandidates) {
-                        val snapshot = bufferedRemoteCandidates.toList()
-                        bufferedRemoteCandidates.clear()
-                        snapshot
-                    }
+                    val buffered = synchronized(bufferedRemoteCandidates) { snapshotAndClear(bufferedRemoteCandidates) }
                     logger.fault("[ice] set-remote 完成，flush 缓冲候选 ${buffered.size} 条")
                     buffered.forEach { ice ->
                         try {
@@ -412,7 +408,7 @@ class DesktopCallEngine : CallMediaEngine {
 
     private inner class PeerObserver : PeerConnectionObserver {
         override fun onIceCandidate(candidate: RTCIceCandidate) {
-            val sanitized = sanitizeCandidate(candidate.sdp)
+            val sanitized = sanitizeIceCandidate(candidate.sdp)
             sentCandidates.incrementAndGet()
             logger.fault(
                 "[ice] 本地候选(mid=${candidate.sdpMid},idx=${candidate.sdpMLineIndex},累计发送=${sentCandidates.get()}): " +

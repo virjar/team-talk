@@ -62,6 +62,23 @@
   卡片渲染（呼出/呼入、时长、未接原因）。
 - Android：接听/拨打前请求麦克风/摄像头权限；音频焦点与听筒/扬声器切换由
   AudioManager 管理。来电在前后台都呈全屏覆盖层。
+- 双端互操作契约收敛在 `client/shared` 的 `IceInterop`（纯函数，commonTest 锁定）：
+  候选行剥离 `ufrag/network-id/network-cost`、缓冲先快照再清空、SDP 候选计数。
+  两套引擎必须调用同一实现，禁止在平台侧复制规则——历史上复制粘贴导致"修一漏一"。
+
+### 静默失败防线（引擎观测点约定）
+
+真机联调的最大教训：多数故障的表象是"看起来在工作"而非报错。新增或改动引擎/协商
+代码时，以下调用类别必须配计数或日志，评审按此检查：
+
+- **返回 void 的 native 调用**：`addIceCandidate`、`addTrack`、`removeTrack` 等——
+  至少在关键路径打点（已应用候选数、远端描述候选总数）。
+- **回调可能永不触发的等待**：gather 完成回调、set-remote 成功回调、首帧——
+  必须有兜底时延或看门狗（gather 3s 兜底、摄像头 5s 首帧看门狗、
+  RINGING/CONNECTING 阶段看门狗），超时要写 fault 日志并上抛 UI。
+- **异步失败只进平台的暗渠**：双端引擎统一接 `TkLogger`（trace=流程、fault=故障），
+  不允许 `android.util.Log`/`System.err` 直写。
+- **批量缓冲的清空**：一律 `snapshotAndClear`（锁内），禁止 `also { it.clear() }`。
 
 ## 验收入口
 
