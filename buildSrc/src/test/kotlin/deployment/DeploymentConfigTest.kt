@@ -13,6 +13,37 @@ import kotlin.test.assertTrue
 
 class DeploymentConfigTest {
     @Test
+    fun `turn env 由 TURN_SECRET 存在性驱动，缺失不报错、过短 fail fast`() {
+        val base = Properties().apply {
+            requiredDeploymentSecretKeys.forEach { setProperty(it, "fixture-secret") }
+        }
+        val turn = TurnDeployment(publicHost = "im.virjar.com")
+
+        // secrets 无 TURN_SECRET：不写任何 TURN_ 行（通话退化为 P2P 直连，部署不失败）
+        val disabled = generateEnvShContent(base, false, "443", "/opt/teamtalk", 8080, "5100", turn = turn)
+        assertFalse(disabled.contains("TURN_"))
+
+        // 存在且 ≥16 字符：完整 TURN_ 块
+        val secret = "0123456789abcdef"
+        val enabled = generateEnvShContent(
+            Properties(base).apply { setProperty("TURN_SECRET", secret) },
+            false, "443", "/opt/teamtalk", 8080, "5100",
+            turn = turn, turnSecret = secret,
+        )
+        assertTrue(enabled.contains("TURN_ENABLED=true"))
+        assertTrue(enabled.contains("TURN_PUBLIC_HOST=im.virjar.com"))
+        assertTrue(enabled.contains("TURN_SECRET='0123456789abcdef'"))
+
+        assertFailsWith<IllegalArgumentException> {
+            generateEnvShContent(
+                Properties(base).apply { setProperty("TURN_SECRET", "short") },
+                false, "443", "/opt/teamtalk", 8080, "5100",
+                turn = turn, turnSecret = "short",
+            )
+        }
+    }
+
+    @Test
     fun `deployment mode accepts only an empty target or a complete installation`() {
         assertEquals(
             DeploymentMode.FIRST_DEPLOY,

@@ -133,13 +133,10 @@ data class DeploymentConfig(
             put("tcpTlsCertificatePem", tcpTlsCertificatePem)
             turn?.let { turnConfig ->
                 putJsonObject("turn") {
-                    put("enabled", turnConfig.enabled)
                     put("port", turnConfig.port)
                     put("publicHost", turnConfig.publicHost)
                     put("relayPorts", "${turnConfig.relayPortStart}-${turnConfig.relayPortEnd}")
                     put("realm", turnConfig.realm)
-                    // secret 内容绝不进入快照；只记文件名以便核对
-                    turnConfig.secretFile?.let { put("secretFile", it.name) }
                 }
             }
         }

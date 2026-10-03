@@ -16,6 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DeploymentFailClosedTest {
@@ -154,6 +155,41 @@ class DeploymentFailClosedTest {
                 "ADMIN_USER",
                 "ADMIN_PASSWORD",
             ).forEach { key -> assertTrue(persisted.getProperty(key).isNotBlank(), key) }
+        }
+
+    @Test
+    fun `upgrade pull-back carries optional TURN_SECRET and stays silent when absent`() {
+        // 远端 env.sh 携带 TURN_SECRET：随必需键一起带回，换机部署不丢已启用的 TURN
+        val turnSecret = "t".repeat(32)
+        val withTurn = canonicalUpgradeEnv() + "\nTURN_SECRET=${posixShellQuote(turnSecret)}"
+        val parsed = parseRequiredUpgradeSecrets(withTurn).also { parseOptionalUpgradeSecrets(withTurn, it) }
+        assertEquals(turnSecret, parsed.getProperty("TURN_SECRET"))
+
+        // 远端没有：可选键保持缺失，不报错（TURN 不启动）
+        val withoutTurn = canonicalUpgradeEnv()
+        val parsedWithout = parseRequiredUpgradeSecrets(withoutTurn)
+            .also { parseOptionalUpgradeSecrets(withoutTurn, it) }
+        assertNull(parsedWithout.getProperty("TURN_SECRET"))
+
+        // 可选键"存在但畸形"响亮失败：静默按缺失处理会在下次部署悄悄关掉线上已启用的 TURN
+        val malformed = canonicalUpgradeEnv() + "\nTURN_SECRET='t"
+        val failure = assertFailsWith<IllegalArgumentException> {
+            parseRequiredUpgradeSecrets(malformed).also { parseOptionalUpgradeSecrets(malformed, it) }
+        }
+        assertTrue(failure.message.orEmpty().contains("TURN_SECRET"))
+    }
+
+    @Test
+    fun `saveSecrets persists optional TURN_SECRET instead of dropping it silently`() =
+        withTempDirectory { root ->
+            val secretFile = File(root, "deployment.secrets")
+            val secrets = completeSecrets().apply { setProperty("TURN_SECRET", "turn-secret-0123456789") }
+            saveSecrets(secretFile, secrets)
+            val persisted = Properties().apply {
+                secretFile.reader(StandardCharsets.UTF_8).use { load(it) }
+            }
+            assertEquals("turn-secret-0123456789", persisted.getProperty("TURN_SECRET"))
+            requiredDeploymentSecretKeys.forEach { key -> assertTrue(persisted.getProperty(key).isNotBlank(), key) }
         }
 
     @Test

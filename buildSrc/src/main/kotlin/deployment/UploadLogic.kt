@@ -106,9 +106,7 @@ fun deployServer(
                 null
             }
 
-            val turnSecret = config.turn?.secretFile
-                ?.takeIf { it.isFile }
-                ?.readText(Charsets.UTF_8)?.trim()
+            val turnSecret = secrets.getProperty("TURN_SECRET")?.trim()
             if (isFirstDeploy) {
                 println("=== First Deploy ===")
                 deployNew(

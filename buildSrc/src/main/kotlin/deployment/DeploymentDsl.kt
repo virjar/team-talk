@@ -61,7 +61,7 @@ class ServerDeploymentBuilder internal constructor() {
     fun http(configure: HttpDeploymentBuilder.() -> Unit) { httpConfiguration.apply(configure) }
     fun tcp(configure: TcpDeploymentBuilder.() -> Unit) { tcpConfiguration.apply(configure) }
 
-    /** 内嵌 TURN/STUN（1:1 通话 NAT 兜底）；未配置 secretFile 时不启用。 */
+    /** 内嵌 TURN/STUN（1:1 通话 NAT 兜底）；凭据走 deployment.secrets 的 TURN_SECRET 键，存在即启用。 */
     fun turn(configure: TurnDeploymentBuilder.() -> Unit) { turnConfiguration.apply(configure) }
 }
 
@@ -69,14 +69,11 @@ class ServerDeploymentBuilder internal constructor() {
 class TurnDeploymentBuilder internal constructor() {
     var port: Int = 3478
 
-    /** 留空使用最终 HTTP URL 的主机；NAT 部署必须显式配置公网地址。 */
+    /** 留空（默认）取 HTTP URL 的主机——单体部署两者一致，仅对外地址不同时覆写。 */
     var publicHost: String = ""
     var relayPortStart: Int = 51000
     var relayPortEnd: Int = 51100
     var realm: String = "teamtalk"
-
-    /** TURN 凭据 secret 文件（≥16 字节，Git 忽略）；null = 不启用。 */
-    var secretFile: File? = null
 
     internal fun build(publicHostDefault: String) = TurnDeployment(
         port = port,
@@ -84,7 +81,6 @@ class TurnDeploymentBuilder internal constructor() {
         relayPortStart = relayPortStart,
         relayPortEnd = relayPortEnd,
         realm = realm,
-        secretFile = secretFile,
     )
 }
 

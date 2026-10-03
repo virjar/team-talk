@@ -27,7 +27,7 @@ class DeploymentDslTest {
                 deployHost = "private.example.com",
                 deployUser = "teamtalk",
                 sslPort = 8443,
-                // turn 未显式配置也会物化默认块（enabled=false），env.sh 依赖该块存在
+                // turn 未显式配置也物化默认块；publicHost 从 HTTP URL 主机推导
                 turn = TurnDeployment(publicHost = "private.example.com"),
             ),
             config,

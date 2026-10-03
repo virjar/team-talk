@@ -28,11 +28,21 @@ internal val requiredDeploymentSecretKeys = listOf(
     "ADMIN_USER",
     "ADMIN_PASSWORD",
 )
+
+/**
+ * 可选部署 Secret：缺失不构成错误，对应功能按"凭据存在即启用"降级（TURN 不启动，
+ * 通话退化为 P2P 直连）。升级回拉时随远端 env.sh 一起带回，避免换机部署丢失后
+ * 意外关闭已启用的功能。
+ */
+internal val optionalDeploymentSecretKeys = listOf("TURN_SECRET")
+
 private val ownerOnlyPermissions = setOf(OWNER_READ, OWNER_WRITE)
+private val deploymentSecretKeyAlternation = (requiredDeploymentSecretKeys + optionalDeploymentSecretKeys)
+    .joinToString("|") { Regex.escape(it) }
 private val requiredSecretKeyAlternation = requiredDeploymentSecretKeys
     .joinToString("|") { Regex.escape(it) }
 private val secretAssignment = Regex(
-    """^($requiredSecretKeyAlternation)=(.*)$""",
+    """^($deploymentSecretKeyAlternation)=(.*)$""",
 )
 private val secretReference = Regex(
     """(?<![A-Za-z0-9_])(?:$requiredSecretKeyAlternation)(?![A-Za-z0-9_])""",
@@ -73,7 +83,7 @@ internal fun readRequiredUpgradeSecretsFromRemote(
         "Cannot read required deployment secrets from remote conf/env.sh",
     )
     val secrets = try {
-        parseRequiredUpgradeSecrets(envContent)
+        parseRequiredUpgradeSecrets(envContent).also { parseOptionalUpgradeSecrets(envContent, it) }
     } catch (failure: IllegalArgumentException) {
         throw GradleException(
             "Cannot safely read required deployment secrets from remote conf/env.sh",
@@ -100,6 +110,7 @@ internal fun parseRequiredUpgradeSecrets(content: String): Properties {
         }
 
         val key = match.groupValues[1]
+        if (key !in requiredDeploymentSecretKeys) return@forEachIndexed
         require(key !in parsedValues) { "Duplicate required deployment secret assignment for $key" }
         val value = try {
             decodeGeneratedShellAssignmentValue(match.groupValues[2])
@@ -121,6 +132,35 @@ internal fun parseRequiredUpgradeSecrets(content: String): Properties {
     }
     return Properties().apply {
         parsedValues.forEach { (key, value) -> setProperty(key, value) }
+    }
+}
+
+/**
+ * 升级回拉补充可选 Secret：远端 env.sh 携带可选键时带回本地，保证换机/重建部署
+ * 状态目录后已启用的可选功能（如 TURN）不被静默关闭。远端没有就保持本地缺失。
+ */
+internal fun parseOptionalUpgradeSecrets(content: String, destination: Properties) {
+    content.lineSequence().forEachIndexed { index, line ->
+        val match = secretAssignment.matchEntire(line) ?: return@forEachIndexed
+        val key = match.groupValues[1]
+        if (key !in optionalDeploymentSecretKeys) return@forEachIndexed
+        // 可选键"存在但读不懂"必须响亮失败：静默按缺失处理会在下一次部署悄悄关掉
+        // 线上已启用的功能（如 TURN）——那是比部署失败更难察觉的数据丢失。
+        val value = try {
+            decodeGeneratedShellAssignmentValue(match.groupValues[2])
+        } catch (failure: IllegalArgumentException) {
+            throw IllegalArgumentException(
+                "Malformed optional deployment secret assignment for $key at line ${index + 1}",
+                failure,
+            )
+        }
+        require(value.isNotBlank() && value != "null") {
+            "Optional deployment secret $key must not be empty"
+        }
+        require(destination.getProperty(key) == null) {
+            "Duplicate optional deployment secret assignment for $key"
+        }
+        destination.setProperty(key, value)
     }
 }
 
@@ -241,6 +281,12 @@ private fun secretFileContent(secrets: Properties): String {
         append("# SSL\n")
         append("SSL_KEYSTORE_PASSWORD=").append(propertyValue(values.getValue("SSL_KEYSTORE_PASSWORD"))).append('\n')
         append("SSL_PRIVATE_KEY_PASSWORD=").append(propertyValue(values.getValue("SSL_PRIVATE_KEY_PASSWORD"))).append('\n')
+        // 可选键只在存在时持久化；saveSecrets 的调用方（回拉/首次生成）都以本函数为
+        // 唯一序列化出口，缺了这段会把可选功能凭据静默丢掉。
+        secrets.getProperty("TURN_SECRET")?.takeIf { it.isNotBlank() && it != "null" }?.let { turnSecret ->
+            append("\n# TURN (optional; presence enables embedded TURN/STUN)\n")
+            append("TURN_SECRET=").append(propertyValue(turnSecret)).append('\n')
+        }
     }
 }
 

@@ -94,9 +94,10 @@ fun generateEnvShContent(
     )
     lines.add("")
 
-    if (turn != null && turn.enabled) {
-        require(!turnSecret.isNullOrBlank() && turnSecret.length >= 16) {
-            "TURN secret file must contain at least 16 characters"
+    // 启用条件 = 部署配置带 turn 块 且 secrets 含 TURN_SECRET（凭据存在即启用）
+    if (turn != null && !turnSecret.isNullOrBlank()) {
+        require(turnSecret.length >= 16) {
+            "deployment.secrets 的 TURN_SECRET 至少 16 字符"
         }
         lines.add("# ── 内嵌 TURN/STUN（1:1 通话 NAT 兜底，协议 minor 0.5）──")
         lines.add("TURN_ENABLED=true")
