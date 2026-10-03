@@ -207,19 +207,14 @@ private fun TaskDateTimeFields(
             modifier = Modifier.testTag(clearTag)) { Text(clearLabel) }
     }
     if (showDatePicker) {
-        // DatePicker 的选中值是 UTC 日零点毫秒；用 epochDays 换算，不涉时区扩展
-        val initialMillis = runCatching {
-            LocalDate.parse(input.date).toEpochDays() * 86_400_000L
-        }.getOrNull()
+        val initialMillis = runCatching { datePickerDayMillis(LocalDate.parse(input.date)) }.getOrNull()
         val state = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(onClick = {
                     state.selectedDateMillis?.let { millis ->
-                        val date = LocalDate.fromEpochDays(
-                            Math.floorDiv(millis, 86_400_000L).toInt(),
-                        ).toString()
+                        val date = localDateFromDatePickerDayMillis(millis).toString()
                         onChange { it.copy(date = date) }
                     }
                     showDatePicker = false

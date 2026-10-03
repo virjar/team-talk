@@ -10,8 +10,7 @@ import com.virjar.tk.app.navigation.feature.task.TaskRecurrenceInput
 import com.virjar.tk.app.navigation.feature.task.taskRecurrenceLabel
 import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.protocol.model.TaskRecurrenceRule
-import kotlin.time.Instant
-import kotlinx.datetime.*
+import kotlinx.datetime.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,12 +64,12 @@ internal fun TaskRecurrenceFields(
     if (choosingDate) {
         // Material DatePicker 的日期是 UTC 零点，不能按设备时区再移动一天。
         val datePicker = rememberDatePickerState(initialSelectedDateMillis = runCatching {
-            LocalDate.parse(input.firstDate).atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds()
+            datePickerDayMillis(LocalDate.parse(input.firstDate))
         }.getOrNull())
         DatePickerDialog(onDismissRequest = { choosingDate = false }, confirmButton = {
             TextButton(onClick = {
                 datePicker.selectedDateMillis?.let { selected ->
-                    onChange { it.copy(firstDate = Instant.fromEpochMilliseconds(selected).toLocalDateTime(TimeZone.UTC).date.toString()) }
+                    onChange { it.copy(firstDate = localDateFromDatePickerDayMillis(selected).toString()) }
                 }
                 choosingDate = false
             }, enabled = datePicker.selectedDateMillis != null, modifier = Modifier.testTag("task.editor.recurrence.calendar.confirm")) { Text("确定") }

@@ -25,7 +25,6 @@ import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
-import org.webrtc.MediaStreamTrack
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.DefaultVideoDecoderFactory
@@ -37,21 +36,18 @@ import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import org.webrtc.audio.JavaAudioDeviceModule
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import kotlin.concurrent.Volatile
 
 /**
  * Android 通话媒体引擎：Stream 发行版 Google WebRTC（org.webrtc 官方 API）。
  *
  * 协商采用非 trickle：SDP 在 ICE gathering 完成后整体上送；对端候选在远端描述就绪前
- * 缓冲。听筒/扬声器与音频焦点由 AudioManager 管理，静音作用于本地音频轨。
+ * 缓冲，远端 SDP 在引擎 start 完成前缓存（被叫 answer RPC 先于引擎就绪发出，主叫
+ * offer 可能抢先到达）。听筒/扬声器与音频焦点由 AudioManager 管理，静音作用于本地音频轨。
  */
 class AndroidCallEngine(private val context: Context) : CallMediaEngine {
 
     private val eglBase: EglBase = EglBase.create()
-    private val workExecutor: ExecutorService = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "call-engine").apply { isDaemon = true }
-    }
 
     private val logger = PlatformOnlyTkLogger("AndroidCallEngine")
     private var observer: CallMediaObserver? = null
@@ -63,14 +59,14 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
     private var audioSource: AudioSource? = null
     private var localVideoTrack: VideoTrack? = null
     private var localAudioTrack: AudioTrack? = null
-    private var videoEnabled = false
     private var muted = false
     private var speakerOn = true
 
-    private var pendingLocalSdp: SessionDescription? = null
-    private val gatheredCandidates = mutableListOf<String>()
-    private var gatheringDone = false
-    private var remoteDescriptionSet = false
+    // 协商状态跨引擎线程与 webrtc 回调线程读写，可见性靠 @Volatile
+    @Volatile private var pendingLocalSdp: SessionDescription? = null
+    @Volatile private var gatheringDone = false
+    @Volatile private var remoteDescriptionSet = false
+    @Volatile private var pendingRemoteSdp: Pair<Boolean, String>? = null
     private val bufferedRemoteCandidates = mutableListOf<IceCandidate>()
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -81,8 +77,8 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
 
     override fun start(video: Boolean, iceServers: List<IceServer>, observer: CallMediaObserver) {
         this.observer = observer
-        this.videoEnabled = video
-        synchronized(gatheredCandidates) { gatheredCandidates.clear() }
+        pendingLocalSdp = null
+        pendingRemoteSdp = null
         gatheringDone = false
         remoteDescriptionSet = false
         requestAudioFocus()
@@ -105,6 +101,11 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
             pc.addTrack(track, listOf(STREAM_ID))
         }
         if (video) startCamera(factory, pc)
+        pendingRemoteSdp?.let { (isOffer, sdp) ->
+            pendingRemoteSdp = null
+            logger.trace("[ice] start 完成，应用缓存的远端 SDP")
+            onRemoteSessionDescription(isOffer, sdp)
+        }
     }
 
     override fun initiateOffer() {
@@ -118,7 +119,13 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
 
     override fun onRemoteSessionDescription(isOffer: Boolean, sdp: String) {
         logger.trace("[ice] 远端 SDP offer=$isOffer len=${sdp.length} 候选数=${countSdpCandidates(sdp)}")
-        val pc = peerConnection ?: return
+        val pc = peerConnection ?: run {
+            // 信令可能先于引擎 start 到达（被叫 answer RPC 先于 startEngine 返回，主叫
+            // offer 抢先送达）：缓存待 start 完成后应用，静默丢弃会让本次呼叫永远等不到协商。
+            pendingRemoteSdp = isOffer to sdp
+            logger.fault("[ice] pc 未就绪，缓存远端 SDP（start 后应用）")
+            return
+        }
         val type = if (isOffer) SessionDescription.Type.OFFER else SessionDescription.Type.ANSWER
         // set-remote 解析失败不能冲垮信令收集器；按媒体失败终结，由看门狗/对端收敛。
         runCatching {
@@ -179,7 +186,6 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
         abandonAudioFocus()
         remoteVideo.value = null
         localVideo.value = null
-        workExecutor.shutdown()
     }
 
     private fun startCamera(factory: PeerConnectionFactory, pc: PeerConnection) {
@@ -199,6 +205,11 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
         localVideoTrack = track
         pc.addTrack(track, listOf(STREAM_ID))
         localVideo.value = AndroidLocalVideoHandle(track, eglBase.eglBaseContext)
+    }
+
+    /** 远端视频轨到达（onTrack/onAddTrack 两条回调路径），包装为平台渲染句柄发布。 */
+    private fun attachRemoteVideoTrack(track: VideoTrack) {
+        remoteVideo.value = AndroidRemoteVideoHandle(track, eglBase.eglBaseContext)
     }
 
     private fun obtainFactory(): PeerConnectionFactory {
@@ -244,19 +255,15 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
     }
 
     private fun publishLocalDescriptionIfNeeded(description: SessionDescription) {
-        if (description.type == SessionDescription.Type.OFFER || description.type == SessionDescription.Type.ANSWER) {
-            pendingLocalSdp = description
-        }
+        pendingLocalSdp = description
         if (!gatheringDone) return
-        pendingLocalSdp?.let { sdp ->
-            pendingLocalSdp = null
-            // 候选只经候选信号通道补传，不 munging 进 SDP（跨引擎解析不可靠）。
-            logger.trace("[ice] 上送本地 SDP offer=${sdp.type == SessionDescription.Type.OFFER}")
-            observer?.onLocalDescription(
-                isOffer = sdp.type == SessionDescription.Type.OFFER,
-                sdp = sdp.description,
-            )
-        }
+        pendingLocalSdp = null
+        // 候选只经候选信号通道补传，不 munging 进 SDP（跨引擎解析不可靠）。
+        logger.trace("[ice] 上送本地 SDP offer=${description.type == SessionDescription.Type.OFFER}")
+        observer?.onLocalDescription(
+            isOffer = description.type == SessionDescription.Type.OFFER,
+            sdp = description.description,
+        )
     }
 
     private open inner class SdpAdapter(private val tag: String) : SdpObserver {
@@ -270,10 +277,12 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
                 "set-local-offer", "set-local-answer" -> publishLocalDescriptionIfNeeded(pc.localDescription)
                 "set-remote" -> {
                     remoteDescriptionSet = true
+                    // 先取快照再清空：also{clear()} 会返回已清空的接收者，缓冲候选被整体丢弃
                     val buffered = synchronized(bufferedRemoteCandidates) { snapshotAndClear(bufferedRemoteCandidates) }
                     runCatching { buffered.forEach { pc.addIceCandidate(it) } }
                         .onFailure { logger.fault("[ice] 候选批量应用失败: ${it.message}") }
-                    if (tag == "set-remote" && pc.remoteDescription?.type == SessionDescription.Type.OFFER) {
+                    if (pc.remoteDescription?.type == SessionDescription.Type.OFFER) {
+                        // createAnswer 成功后经 SdpAdapter 走 set-local-answer 链上送
                         pc.createAnswer(object : SdpAdapter("answer") {
                             override fun onCreateSuccess(description: SessionDescription) {
                                 pc.setLocalDescription(SdpAdapter("set-local-answer"), description)
@@ -294,18 +303,18 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
     }
 
     private inner class PeerObserver : PeerConnection.Observer {
-        override fun onIceCandidate(candidate: IceCandidate) {
-            val sanitized = sanitizeIceCandidate(candidate.sdp)
-            logger.trace("[ice] 本地候选: ${sanitized.take(110)}")
-            synchronized(gatheredCandidates) { gatheredCandidates.add(sanitized) }
-            observer?.onLocalCandidate(
-                CallSignalBody.IceCandidate(
-                    candidate = candidate.sdp,
-                    sdpMid = candidate.sdpMid ?: "",
-                    sdpMLineIndex = candidate.sdpMLineIndex,
-                ),
-            )
-        }
+    override fun onIceCandidate(candidate: IceCandidate) {
+        // 上送清洗后的行（shared 契约）：原始行带 ufrag/network-id 扩展，跨引擎对端解析不可靠
+        val sanitized = sanitizeIceCandidate(candidate.sdp)
+        logger.trace("[ice] 本地候选: ${sanitized.take(110)}")
+        observer?.onLocalCandidate(
+            CallSignalBody.IceCandidate(
+                candidate = sanitized,
+                sdpMid = candidate.sdpMid ?: "",
+                sdpMLineIndex = candidate.sdpMLineIndex,
+            ),
+        )
+    }
 
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
             logger.trace("[ice] gather 状态: $state")
@@ -336,17 +345,11 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
         override fun onRemoveStream(stream: MediaStream) {}
 
         override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) {
-            val track = receiver.track() ?: return
-            if (track.kind() == MediaStreamTrack.VIDEO_TRACK_KIND) {
-                remoteVideo.value = AndroidRemoteVideoHandle(track as VideoTrack, eglBase.eglBaseContext)
-            }
+            (receiver.track() as? VideoTrack)?.let(::attachRemoteVideoTrack)
         }
 
         override fun onTrack(transceiver: org.webrtc.RtpTransceiver) {
-            val track = transceiver.receiver.track() ?: return
-            if (track is VideoTrack) {
-                remoteVideo.value = AndroidRemoteVideoHandle(track, eglBase.eglBaseContext)
-            }
+            (transceiver.receiver.track() as? VideoTrack)?.let(::attachRemoteVideoTrack)
         }
 
         override fun onConnectionChange(newState: PeerConnection.PeerConnectionState) {

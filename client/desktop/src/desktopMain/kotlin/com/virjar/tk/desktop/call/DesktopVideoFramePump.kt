@@ -21,14 +21,14 @@ import java.util.concurrent.atomic.AtomicLong
  *   堆积 200GB+）。
  * - 限频：本地/远端共用引擎级 [throttleNanos]（~15fps），发布线程为 webrtc 回调线程。
  *
- * [localFirstFrame] 由引擎的摄像头首帧看门狗消费；[publish] 收到的位图归泵所有
- * 并会在后续帧被复写，消费方不得缓存像素内容。
+ * [localFirstFrame] 仅供本地泵传值（引擎摄像头首帧看门狗消费），远端泵传 null；
+ * [publish] 收到的位图归泵所有并会在后续帧被复写，消费方不得缓存像素内容。
  */
 internal class DesktopVideoFramePump(
     private val isLocal: Boolean,
     private val logger: TkLogger,
     private val throttleNanos: AtomicLong,
-    private val localFirstFrame: AtomicBoolean,
+    private val localFirstFrame: AtomicBoolean?,
     private val publish: (Bitmap) -> Unit,
 ) : VideoTrackSink {
 
@@ -49,7 +49,7 @@ internal class DesktopVideoFramePump(
             logger.fault(
                 "[ice] 首帧到达 isLocal=$isLocal ${frame.buffer.getWidth()}x${frame.buffer.getHeight()} rotation=$rotation",
             )
-            if (isLocal) localFirstFrame.set(true)
+            if (isLocal) localFirstFrame?.set(true)
         } else if (rotation != lastRotation) {
             logger.fault("[ice] 帧方向变化 isLocal=$isLocal rotation=$rotation")
         }

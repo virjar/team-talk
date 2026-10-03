@@ -32,10 +32,6 @@ import dev.onvoid.webrtc.media.video.VideoDeviceSource
 import dev.onvoid.webrtc.media.video.VideoTrack
 import dev.onvoid.webrtc.media.video.VideoTrackSink
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import org.jetbrains.skia.ColorType
-import java.nio.ByteBuffer
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -47,10 +43,6 @@ import java.util.concurrent.atomic.AtomicLong
  * 远端音频由 libwebrtc 的音频设备模块直接渲染，静音作用于本地音频轨。
  */
 class DesktopCallEngine : CallMediaEngine {
-
-    private val workExecutor = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "desktop-call-engine").apply { isDaemon = true }
-    }
 
     // webrtc-java 的 factory 持有 native 全局组件（网络线程/ADM/field trials）：
     // 每次 dispose 会破坏全局状态，同进程后续通话的 ICE 全部失效（首通正常、
@@ -72,19 +64,12 @@ class DesktopCallEngine : CallMediaEngine {
     private var closed = AtomicBoolean(false)
 
     private var pendingLocalSdp: RTCSessionDescription? = null
-    private val gatheredCandidates = mutableListOf<String>()
     private val sentCandidates = java.util.concurrent.atomic.AtomicInteger(0)
     private var gatheringDone = false
     private var remoteDescriptionSet = false
     private val bufferedRemoteCandidates = mutableListOf<RTCIceCandidate>()
     private val negotiationLock = Any()
 
-    /**
-     * 剥离 candidate 行里的可选扩展属性：webrtc-java 会带 ufrag/network-id/network-cost，
-     * 旧版 libwebrtc（Android）解析含 ufrag 的候选行会失败，导致 set-remote 整体报
-     *  "SessionDescription is NULL"、addIceCandidate 静默丢弃。规则与 Android 引擎
-     * 共享（shared 的 sanitizeIceCandidate，commonTest 锁定）。
-     */
     private val logger = com.virjar.tk.shared.log.PlatformOnlyTkLogger("DesktopCallEngine")
 
     /** gathering 兜底时延：非 trickle 等 COMPLETE，但 STUN/VPN 异常时 gather 可能停滞，
@@ -100,7 +85,6 @@ class DesktopCallEngine : CallMediaEngine {
         this.observer = observer
         pendingLocalSdp = null
         sentCandidates.set(0)
-        synchronized(negotiationLock) { gatheredCandidates.clear() }
         gatheringDone = false
         remoteDescriptionSet = false
         logger.fault("[ice] ${System.identityHashCode(this)} start video=$video iceServers=" + iceServers.joinToString("|") { server -> server.urls.joinToString(",") })
@@ -230,7 +214,6 @@ class DesktopCallEngine : CallMediaEngine {
         safely { localAudioTrack?.dispose() }
         remoteVideo.value = null
         localVideo.value = null
-        workExecutor.shutdown()
     }
 
     private fun startCamera(connection: RTCPeerConnection) {
@@ -327,9 +310,8 @@ class DesktopCallEngine : CallMediaEngine {
                         }
                     }
                     if (connection.remoteDescription?.sdpType == dev.onvoid.webrtc.RTCSdpType.OFFER) {
-                        connection.createAnswer(RTCAnswerOptions(), CreateObserver("answer").also {
-                            // createAnswer 成功后由 CreateObserver 设置本地描述
-                        })
+                        // createAnswer 成功后由 CreateObserver 走 set-local-answer 链上送
+                        connection.createAnswer(RTCAnswerOptions(), CreateObserver("answer"))
                     }
                 }
             }
@@ -342,13 +324,13 @@ class DesktopCallEngine : CallMediaEngine {
 
     private inner class PeerObserver : PeerConnectionObserver {
         override fun onIceCandidate(candidate: RTCIceCandidate) {
+            // 上送清洗后的行（shared 契约）：原始行带 ufrag/network-id 扩展，跨引擎对端解析不可靠
             val sanitized = sanitizeIceCandidate(candidate.sdp)
             sentCandidates.incrementAndGet()
             logger.fault(
                 "[ice] 本地候选(mid=${candidate.sdpMid},idx=${candidate.sdpMLineIndex},累计发送=${sentCandidates.get()}): " +
                     sanitized.take(110),
             )
-            synchronized(negotiationLock) { gatheredCandidates.add(sanitized) }
             observer?.onLocalCandidate(
                 CallSignalBody.IceCandidate(sanitized, candidate.sdpMid ?: "", candidate.sdpMLineIndex),
             )
@@ -381,27 +363,22 @@ class DesktopCallEngine : CallMediaEngine {
         }
 
         override fun onTrack(transceiver: RTCRtpTransceiver) {
-            val track = transceiver.receiver.getTrack()
-            logger.fault("[ice] onTrack: kind=${track?.getKind()} state=${track?.getState()}")
-            if (track is VideoTrack) {
-                remoteVideoTrack = track
-                remoteSink = DesktopVideoFramePump(isLocal = false, logger = logger,
-                    throttleNanos = lastFramePublishNanos, localFirstFrame = localVideoFirstFrame) {
-                    remoteVideo.value = DesktopVideoHandle(it)
-                }.also { track.addSink(it) }
-            }
+            (transceiver.receiver.getTrack() as? VideoTrack)?.let(::attachRemoteVideoTrack)
         }
 
         override fun onAddTrack(receiver: RTCRtpReceiver, streams: Array<out MediaStream>) {
-            logger.fault("[ice] onAddTrack: kind=${receiver.getTrack()?.getKind()}")
-            (receiver.getTrack() as? VideoTrack)?.let { track ->
-                remoteVideoTrack = track
-                remoteSink = DesktopVideoFramePump(isLocal = false, logger = logger,
-                    throttleNanos = lastFramePublishNanos, localFirstFrame = localVideoFirstFrame) {
-                    remoteVideo.value = DesktopVideoHandle(it)
-                }.also { track.addSink(it) }
-            }
+            (receiver.getTrack() as? VideoTrack)?.let(::attachRemoteVideoTrack)
         }
+    }
+
+    /** 远端视频轨到达（onTrack/onAddTrack 两条回调路径）：挂帧泵并记日志。 */
+    private fun attachRemoteVideoTrack(track: VideoTrack) {
+        logger.fault("[ice] 远端视频轨到达: state=${track.getState()}")
+        remoteVideoTrack = track
+        remoteSink = DesktopVideoFramePump(isLocal = false, logger = logger,
+            throttleNanos = lastFramePublishNanos, localFirstFrame = null) {
+            remoteVideo.value = DesktopVideoHandle(it)
+        }.also { track.addSink(it) }
     }
 
     companion object {

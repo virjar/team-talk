@@ -19,7 +19,11 @@ class SchemaMigrationIntegrationTest {
             val datasetId = open(lease).use { it.datasetId }
             lease.openConnection().use { connection -> connection.createStatement().use { statement ->
                 statement.execute("ALTER TABLE oem_push_registrations DROP COLUMN registered_at")
-                statement.execute("DELETE FROM schema_migrations WHERE name = 'add_push_registration_timestamp'")
+                // 模拟"该迁移之前"的旧库：目标行及其后所有 ledger 行一起删——按名单行删会在
+                // 列表又追加迁移（如 add_client_release_snapshot_token）后留下版本空洞，
+                // 触发 applySchemaMigrations 的历史一致性校验。
+                statement.execute("DELETE FROM schema_migrations WHERE version >= " +
+                    "(SELECT min(version) FROM schema_migrations WHERE name = 'add_push_registration_timestamp')")
                 statement.execute("INSERT INTO users (uid, username, name, password_hash, created_at, updated_at) " +
                     "VALUES ('apns-kept-user', 'apns-kept-user', 'kept', 'fixture-only', 11, 12)")
                 statement.execute("INSERT INTO credentials (token_hash, token_type, uid, device_id, device_flag, " +

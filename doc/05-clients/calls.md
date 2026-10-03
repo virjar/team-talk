@@ -65,6 +65,8 @@
 - 双端互操作契约收敛在 `client/shared` 的 `IceInterop`（纯函数，commonTest 锁定）：
   候选行剥离 `ufrag/network-id/network-cost`、缓冲先快照再清空、SDP 候选计数。
   两套引擎必须调用同一实现，禁止在平台侧复制规则——历史上复制粘贴导致"修一漏一"。
+  候选**上送**也必须发清洗后的行：Android 曾把清洗结果只存进本地死列表、实际发送
+  原始行，靠对端新版 libwebrtc 宽容才未暴露。
 
 ### 静默失败防线（引擎观测点约定）
 
@@ -76,6 +78,9 @@
 - **回调可能永不触发的等待**：gather 完成回调、set-remote 成功回调、首帧——
   必须有兜底时延或看门狗（gather 3s 兜底、摄像头 5s 首帧看门狗、
   RINGING/CONNECTING 阶段看门狗），超时要写 fault 日志并上抛 UI。
+- **信令先于引擎就绪到达**：被叫的 answer RPC 先于 `startEngine` 返回，主叫
+  offer 可能抢在 PeerConnection 创建前送达——必须缓存待 start 后应用（双端
+  `pendingRemoteSdp`），静默丢弃会让呼叫永远停在"连接中"。
 - **异步失败只进平台的暗渠**：双端引擎统一接 `TkLogger`（trace=流程、fault=故障），
   不允许 `android.util.Log`/`System.err` 直写。
 - **批量缓冲的清空**：一律 `snapshotAndClear`（锁内），禁止 `also { it.clear() }`。
