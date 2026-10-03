@@ -45,7 +45,7 @@ SDK 或平台壳里另外硬编码一个发行字符串。`major` 范围 `0..327
 
 ```mermaid
 flowchart LR
-    Frozen["当前发行：协议 0.4 冻结"] --> New{"是否新增契约"}
+    Frozen["当前发行：协议 0.5 冻结"] --> New{"是否新增契约"}
     New -->|否| Fix["实现修复：保留协议号"]
     New -->|是| Pending["开启下一 minor，同批共用"]
     Pending --> QA["开发与内测：源码 SHA + schema 哈希"]
