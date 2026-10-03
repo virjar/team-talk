@@ -27,6 +27,8 @@ class DeploymentDslTest {
                 deployHost = "private.example.com",
                 deployUser = "teamtalk",
                 sslPort = 8443,
+                // turn 未显式配置也会物化默认块（enabled=false），env.sh 依赖该块存在
+                turn = TurnDeployment(publicHost = "private.example.com"),
             ),
             config,
         )
@@ -107,6 +109,7 @@ class DeploymentDslTest {
                 deployHost = "192.0.2.10",
                 client = ClientDistributionIdentity("com.example.internal", "TeamTalk 内部版", "TeamTalkInternal"),
                 tcpTlsCertificatePem = certificate.readText(Charsets.UTF_8),
+                turn = TurnDeployment(publicHost = "192.0.2.10"),
             )
             assertEquals(expected.toCanonicalJson(), config.toCanonicalJson())
             certificate.delete()

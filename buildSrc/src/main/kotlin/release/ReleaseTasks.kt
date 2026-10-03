@@ -52,7 +52,18 @@ fun registerReleaseTasks(
     }
     val contract = if (privateDistribution) ProtocolContractPolicy.verifyDevelopment(root, version.protocolMajor,
         version.protocolMinor, version.minimumProtocolMinor) else null
-    val desktopRevision = if (snapshot) metadata.snapshotDesktopRevision(version, sourceCommit) else version.buildNumber + 1
+    // 快照修订号由提交历史推导，历史重写（squash/rebase）会让推导值回退，把更新通道
+    // 引向降级。受 Git 跟踪的地板值兜底：重写历史后把已发布的最大 revision 写入
+    // buildSrc/desktop-revision-floor.txt 即可恢复单调。
+    val desktopRevision = if (snapshot) {
+        val derived = metadata.snapshotDesktopRevision(version, sourceCommit)
+        val floor = File(root, "buildSrc/desktop-revision-floor.txt")
+            .takeIf(File::isFile)?.readText()?.trim()?.toIntOrNull() ?: 0
+        require(floor in 0..65535) { "desktop-revision-floor.txt must be 0..65535" }
+        maxOf(derived, floor)
+    } else {
+        version.buildNumber + 1
+    }
     project.extensions.extraProperties.set("desktopRevision", desktopRevision)
     val identity = BundleIdentity(version, sourceCommit, config,
         distributionKind = if (privateDistribution) mode else "release",
