@@ -53,9 +53,10 @@
 - allocation/permission/channel 有硬生命周期与周期清扫；relay 端口范围与总量有界；
   进程重启全部回收。
 - 部署配置 `server { turn { ... } }` 只含非敏感参数（端口、relay 范围、realm、对外地址
-  ——默认取 HTTP URL 主机）；凭据是 `deployment.secrets` 的 `TURN_SECRET` 键（≥16 字节，
-  可选、不自动生成），部署时写入远端 `conf/env.sh`（600），升级部署自动回拉。secrets 含
-  该键即启用；缺失时不启动 TURN，通话仅 P2P 直连。
+  ——默认取 HTTP URL 主机）；凭据是 `deployment.secrets` 的 `TURN_SECRET` 键（≥16 字节），
+  首次部署自动生成并默认启用，部署时写入远端 `conf/env.sh`（600），升级部署自动回拉。
+  TURN 与 STUN 同一配置块——没有它客户端只剩 host 候选，而用户大多在 NAT 后，
+  跨网通话基本打不通，所以默认开启；需放行 UDP 3478 与 relay 端口范围。
 
 ## 客户端
 

@@ -190,7 +190,13 @@ private fun decodeGeneratedShellAssignmentValue(encoded: String): String {
     }
 }
 
-/** 补齐所有缺失的首次部署 Secret；升级路径永远不会调用该生成器。 */
+/**
+ * 补齐所有缺失的首次部署 Secret；升级路径永远不会调用该生成器。
+ *
+ * TURN_SECRET 也默认生成：内嵌 TURN/STUN 同一配置块，缺凭据时 STUN 也不启动，
+ * 客户端只剩 host 候选——真实用户大多在 NAT 后，跨网通话基本不可用。默认开启
+ * （需放行 UDP 3478 与 relay 端口范围；不放行只是中继不可达，不影响其余功能）。
+ */
 internal fun ensureFirstDeploymentSecretsComplete(secrets: Properties) {
     fun missing(key: String): Boolean = secrets.getProperty(key).let {
         it.isNullOrBlank() || it == "null"
@@ -201,6 +207,10 @@ internal fun ensureFirstDeploymentSecretsComplete(secrets: Properties) {
         println("  Generated ADMIN_PASSWORD (new)")
     }
     if (missing("DATABASE_PASSWORD")) secrets.setProperty("DATABASE_PASSWORD", genPassword())
+    if (missing("TURN_SECRET")) {
+        secrets.setProperty("TURN_SECRET", genPassword())
+        println("  Generated TURN_SECRET (embedded TURN/STUN on by default)")
+    }
     val keystorePasswordMissing = missing("SSL_KEYSTORE_PASSWORD")
     val privateKeyPasswordMissing = missing("SSL_PRIVATE_KEY_PASSWORD")
     when {

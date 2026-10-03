@@ -82,7 +82,8 @@ HTTPS 安装则同时让 HTTP connector 使用它；客户端信任规则见[传
 8. 启动 TeamTalk；只有 `/health` 返回 HTTP 200、总体 `UP`、所有必需组件（含 `maintenance`）全部为 `UP`，且
    `buildIdentity` 与 staged server manifest 精确相同后才输出部署完成。
 
-首次自动生成的数据库、管理后台和 TLS secret 会完整写入本地不入库文件，并以 owner-only、拒绝
+首次自动生成的数据库、管理后台、TLS 与 TURN（内嵌 TURN/STUN，默认启用）secret 会完整写入本地
+不入库文件，并以 owner-only、拒绝
 符号链接、同目录临时文件原子替换的方式保存；远端 env.sh 同样以 mode 600 原子发布。env.sh 中的
 值使用 POSIX 单引号编码，`$`、反引号、反斜线及引号不会被 shell 二次求值。secret 仍应另外纳入
 组织密码管理。

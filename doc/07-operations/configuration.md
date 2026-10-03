@@ -52,7 +52,7 @@ DSL 按用途分层：`server` 配置用户访问的 HTTP/TCP，`deploy` 配置�
 | `server.tcp.host` | 默认取最终 HTTP URL 的主机，TCP 入口不同时显式填写 | `tcpAddress` 的主机 |
 | `server.tcp.port` | 默认 5100，范围 1–65535 | `tcpAddress` 的端口 |
 | `server.tcp.tls.certificateFile` | 可选的公共 PEM `File`；未配置时沿用 SDK 默认策略（远端 WebPKI），配置后读取一张 X.509 证书，禁止私钥；文件不可读或格式错误直接失败 | `tcpTlsCertificatePem` |
-| `server.turn.*` | 内嵌 TURN/STUN（1:1 通话 NAT 兜底）的非敏感参数：端口、relay 范围、realm 与对外地址（默认取 HTTP URL 主机，单体部署两者一致）。凭据**不走配置**：`deployment.secrets` 含 `TURN_SECRET` 键（≥16 字节，可选、不自动生成）即启用，缺失时通话仅 P2P 直连；升级部署自动从远端 env.sh 回拉该键 | `turn` |
+| `server.turn.*` | 内嵌 TURN/STUN（1:1 通话 NAT 兜底）的非敏感参数：端口、relay 范围、realm 与对外地址（默认取 HTTP URL 主机，单体部署两者一致）。凭据**不走配置**：`deployment.secrets` 的 `TURN_SECRET` 键（≥16 字节）首次部署自动生成、默认启用（用户大多在 NAT 后，无 STUN/TURN 时跨网通话基本打不通）；升级部署自动从远端 env.sh 回拉该键。需放行 UDP `3478` 与 relay 端口范围，不放行仅影响通话 | `turn` |
 | `deploy.directory` | 默认 `/opt/teamtalk`，必须是规范化的非根绝对路径 | `deployPath` |
 | `deploy.ssh.host` | 默认取最终 HTTP URL 的主机，可单独填写 SSH hostname 或 IPv4 | `deployHost` |
 | `deploy.ssh.port` | 默认 22，范围 1–65535 | `deployPort` |

@@ -154,6 +154,8 @@ class DeploymentFailClosedTest {
                 "SSL_PRIVATE_KEY_PASSWORD",
                 "ADMIN_USER",
                 "ADMIN_PASSWORD",
+                // TURN 凭据默认生成：真实用户大多在 NAT 后，缺 STUN/TURN 时跨网通话基本不可用
+                "TURN_SECRET",
             ).forEach { key -> assertTrue(persisted.getProperty(key).isNotBlank(), key) }
         }
 
