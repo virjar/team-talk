@@ -90,11 +90,18 @@ internal fun closeLuceneIndexRuntime(
         val previous = closeFailure
         if (previous == null) closeFailure = failure else previous.addSuppressed(failure)
     }
+
+    // POSIX 记录锁按进程持有：同进程对同一 write.lock 的另一句柄关闭会连带释放本
+    // 写者的锁对象（Linux CI 上终局化运行时与换新路径竞争时观察到），后续释放里
+    // 的 ensureValid 抛 AlreadyClosedException。锁已失效 = 无人持有 = 释放的目标
+    // 终态本就达成；这两个诊断索引按设计可丢弃，不该把这种竞态升级为关闭失败。
+    fun benignIfLockAlreadyGone(failure: Throwable?): Throwable? =
+        if (failure is org.apache.lucene.store.AlreadyClosedException) null else failure
     runCatching { opened.searchers.close() }.exceptionOrNull()?.let(::capture)
     if (rollback) {
-        runCatching { opened.writer.rollback() }.exceptionOrNull()?.let(::capture)
+        runCatching { opened.writer.rollback() }.exceptionOrNull()?.let(::benignIfLockAlreadyGone)?.let(::capture)
     } else {
-        runCatching { opened.writer.close() }.exceptionOrNull()?.let(::capture)
+        runCatching { opened.writer.close() }.exceptionOrNull()?.let(::benignIfLockAlreadyGone)?.let(::capture)
     }
     runCatching { opened.directory.close() }.exceptionOrNull()?.let(::capture)
     runCatching { opened.analyzer.close() }.exceptionOrNull()?.let(::capture)

@@ -85,6 +85,7 @@ class DesktopEngineVariableIsolationTest {
 
     @Test
     fun `变量A - 共享factory加音频轨`() = runBlocking {
+        assumeRealAudioEngineEnvironment()
         val factory = SharedTestFactory.get()
         val states = CopyOnWriteArrayList<String>()
         val connected = CountDownLatch(2)
@@ -101,6 +102,7 @@ class DesktopEngineVariableIsolationTest {
 
     @Test
     fun `变量F - E基础上候选剥离ufrag`() = runBlocking {
+        assumeRealAudioEngineEnvironment()
         val factory = SharedTestFactory.get()
         val states = CopyOnWriteArrayList<String>()
         val connected = CountDownLatch(2)
@@ -139,6 +141,7 @@ class DesktopEngineVariableIsolationTest {
 
 @Test
     fun `变量E - 默认ADM加音频轨加DataChannel`() = runBlocking {
+        assumeRealAudioEngineEnvironment()
         val factory = SharedTestFactory.get()
         val states = CopyOnWriteArrayList<String>()
         val connected = CountDownLatch(2)
@@ -161,6 +164,7 @@ class DesktopEngineVariableIsolationTest {
 
     @Test
     fun `变量B - 双factory纯DataChannel`() = runBlocking {
+        assumeRealAudioEngineEnvironment()
         val fa = SharedTestFactory.get()
         val fb = SharedTestFactory.get()
         val states = CopyOnWriteArrayList<String>()
@@ -176,6 +180,7 @@ class DesktopEngineVariableIsolationTest {
     }
 @Test
     fun `变量G - F基础上仿真引擎时序-候选缓冲flush加offer延迟`() = runBlocking {
+        assumeRealAudioEngineEnvironment()
         val factory = SharedTestFactory.get()
         val states = CopyOnWriteArrayList<String>()
         val connected = CountDownLatch(2)

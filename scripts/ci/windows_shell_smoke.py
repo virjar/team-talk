@@ -14,6 +14,9 @@ import time
 import uuid
 import zipfile
 
+# 与 client/desktop-bootstrap/build.gradle.kts 的 SHELL_ABI 保持同步：
+# 夹具按当前壳 ABI 声明种子并断言 BootstrapMain 上报的 teamtalk.shell.abi。
+SHELL_ABI = "2"
 
 # GetProcessById holds the OS process handle before waiting/killing. Recheck the
 # CIM creation time so PID reuse cannot turn cleanup into a different process.
@@ -79,7 +82,7 @@ def prepare_payload(root, installation, javac, token):
         for file in classes.rglob("*.class"):
             archive.write(file, file.relative_to(classes).as_posix())
     descriptor = (
-        "version=0.0.0-ci-smoke\nbuild=1\nminShellAbi=1\n"
+        f"version=0.0.0-ci-smoke\nbuild=1\nminShellAbi={SHELL_ABI}\n"
         f"buildIdentity=ci-smoke-{token}\nfiles.count=1\n"
         "file.0.path=lib/smoke.jar\n"
         f"file.0.sha256={hashlib.sha256(jar.read_bytes()).hexdigest()}\nfile.0.size={jar.stat().st_size}\n"
@@ -127,7 +130,7 @@ def validate_report(report, root, installation, executable, arguments):
         raise AssertionError(f"Bootstrap received a different restart launcher: {report['launcher']}")
     if Path(report["payloadDir"]).resolve().parent != (root / "versions").resolve():
         raise AssertionError("Bootstrap did not isolate the payload root")
-    if (report["version"], report["build"], report["shellAbi"]) != ("0.0.0-ci-smoke", "1", "1"):
+    if (report["version"], report["build"], report["shellAbi"]) != ("0.0.0-ci-smoke", "1", SHELL_ABI):
         raise AssertionError(f"Bootstrap payload context differs: {report}")
     if report["args"] != arguments:
         raise AssertionError(f"Argument quoting failed: {report['args']}")

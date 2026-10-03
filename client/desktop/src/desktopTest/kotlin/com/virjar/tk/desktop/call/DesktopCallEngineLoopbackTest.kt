@@ -46,21 +46,7 @@ class DesktopCallEngineLoopbackTest {
         // libwebrtc 音频采集依赖真实音频设备。GitHub Actions 的 Linux runner 无音频
         // 子系统：枚举可能挂起、返回 dummy 或 ADM 初始化阻塞，结果都不可信——直接跳过，
         // 环回只在本地开发机（有真实声卡）执行。枚举仍放守护线程限时，防其他无头环境挂起。
-        val headlessLinuxCi = System.getenv("CI") == "true" &&
-            System.getProperty("os.name").lowercase().contains("linux")
-        assumeTrue("环回测试不在无音频子系统的 Linux CI 上执行", !headlessLinuxCi)
-        var audioDevicesAvailable = false
-        val probe = Thread {
-            audioDevicesAvailable = runCatching {
-                dev.onvoid.webrtc.media.MediaDevices.getAudioCaptureDevices().isNotEmpty()
-            }.getOrDefault(false)
-        }.apply { isDaemon = true }
-        probe.start()
-        probe.join(5_000)
-        assumeTrue(
-            "环回测试需要音频采集设备（枚举超时或无设备，无头环境跳过）",
-            !probe.isAlive && audioDevicesAvailable,
-        )
+        assumeRealAudioEngineEnvironment()
 
         val caller = DesktopCallEngine()
         val callee = DesktopCallEngine()

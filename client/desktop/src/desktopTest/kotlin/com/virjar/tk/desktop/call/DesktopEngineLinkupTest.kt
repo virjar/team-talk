@@ -112,6 +112,7 @@ class DesktopEngineLinkupTest {
 
     @Test
     fun `L1半对接 - 引擎A与裸PC-B`() = runBlocking {
+        assumeRealAudioEngineEnvironment()
         val engineA = DesktopCallEngine()
         val states = CopyOnWriteArrayList<String>()
         val connected = CountDownLatch(2)
@@ -189,6 +190,7 @@ class DesktopEngineLinkupTest {
     // 视频用例=真机 set-remote 回调死的本机复现器，保持启用
     @Test
     fun `L1 视频链路 - 有摄像头时双向视频接通`() = runBlocking {
+        assumeRealAudioEngineEnvironment()
         val hasCamera = try {
             dev.onvoid.webrtc.media.MediaDevices.getVideoCaptureDevices().isNotEmpty()
         } catch (failure: Throwable) {

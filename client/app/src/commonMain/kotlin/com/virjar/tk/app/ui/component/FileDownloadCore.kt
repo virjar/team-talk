@@ -218,7 +218,7 @@ class FileDownloadCore<L>(
             } catch (failure: Exception) {
                 abandon(pending)
                 if (reportUnavailable) throw failure
-                adapter.warn("附件操作准备失败: ${failure.javaClass.simpleName}")
+                adapter.warn("附件操作准备失败: ${failure::class.simpleName}")
                 return@launchFileOperation
             }
             if (!prepared) {

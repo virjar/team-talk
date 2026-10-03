@@ -184,6 +184,7 @@ class DesktopMediaLoopTest {
 
     @Test
     fun `传输层环回 - DataChannel 经 ICE DTLS 双向消息`() = runBlocking {
+        assumeRealAudioEngineEnvironment()
         val factory = PeerConnectionFactory()
         val iceServers = listOf<RTCIceServer>()
         val a = endpoint("A", factory, iceServers)
@@ -222,6 +223,7 @@ class DesktopMediaLoopTest {
     @Ignore("本机音频设备枚举在 native 层 abort，音频帧级验证由 L2 真机机器人承担")
     @Test
     fun `音频环回 - 音频轨协商成功且远端轨可用`() = runBlocking {
+        assumeRealAudioEngineEnvironment()
         val factory = PeerConnectionFactory()
         val a = endpoint("A", factory, emptyList())
         val b = endpoint("B", factory, emptyList())

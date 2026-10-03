@@ -237,7 +237,11 @@ private fun TaskDateTimeFields(
             text = { TimePicker(state = state) },
             confirmButton = {
                 TextButton(onClick = {
-                    onChange { it.copy(time = "%02d:%02d".format(state.hour, state.minute)) }
+                    onChange {
+                        val hour = state.hour.toString().padStart(2, '0')
+                        val minute = state.minute.toString().padStart(2, '0')
+                        it.copy(time = "$hour:$minute")
+                    }
                     showTimePicker = false
                 }) { Text("确定") }
             },
