@@ -9,6 +9,7 @@ import com.virjar.tk.protocol.model.CallSignalBody
 import com.virjar.tk.protocol.model.IceServer
 import com.virjar.tk.protocol.rpc.gen.CallRpcProxy
 import com.virjar.tk.protocol.rpc.RpcInvoker
+import com.virjar.tk.protocol.rpc.RpcProtocolUnavailableException
 import com.virjar.tk.shared.log.TkLogger
 import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CoroutineScope
@@ -93,7 +94,17 @@ class CallCenter(
         if (_state.value?.phase == CallPhase.ENDED) _state.value = null
         check(_state.value == null) { "已有进行中的通话" }
         val callId = newCallId()
-        val outcome = callRpc.invite(callId = callId, calleeUid = peerUid, video = video)
+        val outcome = runCatching { callRpc.invite(callId = callId, calleeUid = peerUid, video = video) }
+            .getOrElse { failure ->
+                // 服务端协商版本不含通话契约（私有部署先升客户端后升服务端）：按不可达
+                // 收敛。放任版本门禁异常会冲垮 UI 协程（桌面记成 fatal 遥测）。
+                if (failure is RpcProtocolUnavailableException) {
+                    logger.fault("服务端协议版本不含通话契约，通话不可用")
+                    CallInviteOutcome(deliverable = false, busy = false, iceServers = emptyList())
+                } else {
+                    throw failure
+                }
+            }
         if (!outcome.deliverable) return outcome
         _state.value = CallViewState(
             callId = callId, peerUid = peerUid, direction = CallDirection.OUTGOING,

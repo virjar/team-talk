@@ -19,8 +19,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
+import com.virjar.tk.protocol.rpc.RpcProtocolUnavailableException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -140,7 +142,11 @@ class CallCenterTest {
             val calls = mutableListOf<Pair<String, Int>>()
             var inviteOutcome = CallInviteOutcome(deliverable = true, busy = false, iceServers = emptyList())
 
+            /** 非空时 invoke 抛出该异常（模拟旧服务端的版本门禁拒绝）。 */
+            var inviteFailure: Throwable? = null
+
             override suspend fun invoke(service: String, methodId: Int, payload: ByteArray?): ResponsePayload {
+                inviteFailure?.let { throw it }
                 calls += service to methodId
                 // 与生成 Proxy 的解码约定一致：invite 返回 outcome，其余返回 Boolean
                 val body = when (methodId) {
@@ -163,6 +169,17 @@ class CallCenterTest {
         callId = callId, fromUid = "peer", kind = CallEventKind.ENDED,
         video = false, endReasonCode = reason.code, iceServers = emptyList(),
     )
+
+    @Test
+    fun `旧版本服务端点通话 - 版本门禁异常按不可达收敛不进通话界面`() = runTest {
+        val h = Harness()
+        h.awaitSubscribed()
+        h.rpc.inviteFailure = RpcProtocolUnavailableException()
+        val outcome = h.center.startOutgoing("peer", video = false)
+        assertFalse(outcome.deliverable)
+        assertFalse(outcome.busy)
+        assertNull(h.center.state.value)
+    }
 
     @Test
     fun `主叫流程 - 振铃接通后发起offer并挂断`() = runTest {

@@ -1,8 +1,9 @@
 # 1:1 通话
 
-语音与视频 1:1 通话（协议 minor 0.5）覆盖 Android、Desktop 与 iOS：WebRTC P2P 直连媒体，
+语音与视频 1:1 通话（协议 minor 0.5）覆盖 Android 与 Desktop：WebRTC P2P 直连媒体，
 服务端只做信令路由与呼叫状态机，媒体面不经过服务端进程；NAT 兜底由**内嵌 TURN/STUN**
-提供（纯 Kotlin 实现于服务端进程内，无独立中继进程）。
+提供（纯 Kotlin 实现于服务端进程内，无独立中继进程）。iOS 通话入口与媒体引擎不在本期
+（iOS 客户端收到来电信令时无 UI 呈现，由振铃看门狗 50s 自动拒接）。
 
 ## 范围与边界
 
@@ -13,6 +14,12 @@
   （厂商透传通道与系统级通话界面属后续阶段）。
 - 不提供通话保持/转移/群聊会议（SFU）；媒体协商为非 trickle（ICE gathering 完成后
   整段 SDP 交换），ICE 候选通道保留作兜底。
+- **混布（服务端已升 minor 5、被叫客户端未升）**：服务端按连接协商版本投影——
+  CALL_EVENT/CALL_SIGNAL 对旧连接静默不下发（被叫无感知，主叫按无应答超时收敛）；
+  CALL_LOG 消息事件对旧客户端替换为游标推进（本地不落不可解码行），历史 RPC 投影为
+  "此消息需要升级客户端查看"占位，客户端升级后按历史拉取自愈。反向混布（客户端已升、
+  服务端未升）：通话入口点击按"不可达"收敛（RPC 版本门禁异常被 CallCenter 转换），
+  其余功能不受影响。
 
 ## 协议契约（`@SinceProtocol(5)`，待发布 minor 0.5）
 
@@ -55,8 +62,8 @@
   单一 `CallViewState`（振铃/连接/通话/结束）。本地忙时自动拒接来电；媒体失败按连接
   中断终结。作为 ClientSession owned 资源接入生命周期。
 - 引擎实现：Android `AndroidCallEngine`（stream-webrtc-android，官方 `org.webrtc` API）、
-  Desktop `DesktopCallEngine`（webrtc-java；视频帧 I420→Skia 位图限频推送）；iOS 端
-  xcframework 绑定见 [iOS](ios.md)。
+  Desktop `DesktopCallEngine`（webrtc-java；视频帧 I420→Skia 位图限频推送）。iOS 引擎
+  属后续阶段（见上文范围边界）。
 - UI：`CallScreen`（commonMain）覆盖来电接听/拒接、去电等待、通话中控制（静音/免提/
   翻转摄像头/挂断）与本地小窗预览；聊天头部私聊提供语音/视频入口。CALL_LOG 以气泡
   卡片渲染（呼出/呼入、时长、未接原因）。
