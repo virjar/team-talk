@@ -290,7 +290,12 @@ class SearchIndex : MessageSearch {
         return try {
             val luceneQuery = buildQuery(resources.analyzer, query, chatIds, senderUid, startTimestamp, endTimestamp)
 
-            val sort = Sort(SortField(FIELD_TIMESTAMP, SortField.Type.LONG, true))
+            // 相关性优先、时间倒序打破平局：QueryParser 默认 OR，查询拆成多词后
+            // 只命中公共词（如"渠道标识"）的消息会与全词命中的同分参加时间排序，
+            // 精确匹配被新消息淹没（内测第四期反馈）。FIELD_SCORE 在前使 BM25
+            // 更高（命中更多/更稀有词）的结果置顶；浏览模式（MatchAll）全同分，
+            // 行为退化为纯时间倒序，与旧排序一致。
+            val sort = Sort(SortField.FIELD_SCORE, SortField(FIELD_TIMESTAMP, SortField.Type.LONG, true))
             val topDocs: TopDocs = searcher.search(luceneQuery, Math.addExact(offset, limit), sort)
 
             val highlighter = Highlighter(
