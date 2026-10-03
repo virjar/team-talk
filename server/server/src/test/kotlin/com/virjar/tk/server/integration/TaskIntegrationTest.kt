@@ -2,7 +2,6 @@ package com.virjar.tk.server.integration
 
 import com.virjar.tk.protocol.*
 import com.virjar.tk.protocol.body.TaskRefBody
-import com.virjar.tk.protocol.body.plainTextContentOrNull
 import com.virjar.tk.protocol.model.*
 import com.virjar.tk.protocol.payload.InvokePayload
 import com.virjar.tk.protocol.rpc.gen.TaskRpcContract
@@ -253,15 +252,19 @@ class TaskIntegrationTest {
         fun rpc(version: ProtocolVersion) = MessageRpcImpl(peer, ctx.messageService, ctx.conversationService, ctx.reactionService, version)
         val old = rpc(ProtocolVersion(0, 1)); val current = rpc(ProtocolVersion(0, 2))
         assertEquals(stored, current.getHistory(chat.chatId, 0, 10).first { it.serverSeq == seq })
+        // 旧协商版本的占位形态：保留类型码与身份、剥正文、打投影标记位
         val placeholder = old.getHistory(chat.chatId, 0, 10).first { it.serverSeq == seq }
-        assertEquals(MessageType.RICH_TEXT.code, placeholder.messageType)
+        assertEquals(MessageType.TASK_REF.code, placeholder.messageType)
         assertEquals(stored.clientMsgId, placeholder.clientMsgId)
-        assertEquals("此消息需要升级客户端查看", placeholder.body?.plainTextContentOrNull())
-        assertEquals(MessageType.RICH_TEXT.code, old.search(chat.chatId, "TaskProbe", 10).single().messageType)
-        assertEquals(MessageType.RICH_TEXT.code, old.saveMessage(chat.chatId, seq, id()).messageType)
+        assertEquals(null, placeholder.body)
+        assertTrue(placeholder.flags and Message.FLAG_PROJECTION_PLACEHOLDER != 0)
+        val searched = old.search(chat.chatId, "TaskProbe", 10).single()
+        assertTrue(searched.flags and Message.FLAG_PROJECTION_PLACEHOLDER != 0 && searched.body == null)
+        val saved = old.saveMessage(chat.chatId, seq, id())
+        assertTrue(saved.flags and Message.FLAG_PROJECTION_PLACEHOLDER != 0 && saved.body == null)
         val target = ctx.chatService.createPersonalChat(peer, assignee)
         val forwarded = old.forward(chat.chatId, seq, target.chatId)
-        assertEquals(MessageType.RICH_TEXT.code, forwarded.messageType)
+        assertTrue(forwarded.flags and Message.FLAG_PROJECTION_PLACEHOLDER != 0 && forwarded.body == null)
         assertEquals(task.title, (ctx.messageService.getHistory(peer, target.chatId, 0, 10).single().body as TaskRefBody).title)
     }
 }

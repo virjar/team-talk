@@ -21,7 +21,7 @@ class ProtocolEventProjectionTest {
         assertSame(event, eventFrameForProtocol(event, ProtocolVersion(0, 2)))
     }
     @Test
-    fun `task events and references advance old cursors without exposing undecodable bodies`() {
+    fun `task events advance old cursors while message references project as placeholders`() {
         val taskId = "bb161090-0261-4c0f-9bde-9af48557d3f0"
         val message = Message("chat-a", "message-a", 3L, "user-a", com.virjar.tk.protocol.MessageType.TASK_REF.code, 1L,
             body = com.virjar.tk.protocol.body.TaskRefBody(taskId, "任务标题", "任务 · 待处理"))
@@ -32,7 +32,18 @@ class ProtocolEventProjectionTest {
         )
         val old = eventFrameForProtocol(SyncBatchPayload(events), ProtocolVersion(0, 1)) as SyncBatchPayload
         assertEquals(listOf(20L, 21L, 22L), old.events.map { it.eventId })
-        old.events.forEach { assertEquals(NotifyType.EVENT_CURSOR_ADVANCED.code, it.notifyType); assertNull(it.payload) }
+        // 旧版本可解的 notify（TASK_CHANGED/DUE）降级为游标推进
+        old.events.take(2).forEach { assertEquals(NotifyType.EVENT_CURSOR_ADVANCED.code, it.notifyType); assertNull(it.payload) }
+        // 消息事件不跳过：占位形态保留身份与类型码、剥正文、打标记位——旧客户端红点
+        // 背后有可见的"当前版本不支持"，且 hasBody=false 可被旧解码器干净解析
+        val projectedMessage = old.events.last()
+        assertEquals(NotifyType.MESSAGE_RECV.code, projectedMessage.notifyType)
+        val placeholder = ProtoCodec.decode(Message, checkNotNull(projectedMessage.payload))
+        assertEquals(message.clientMsgId, placeholder.clientMsgId)
+        assertEquals(message.serverSeq, placeholder.serverSeq)
+        assertEquals(com.virjar.tk.protocol.MessageType.TASK_REF.code, placeholder.messageType)
+        assertEquals(null, placeholder.body)
+        assertEquals(0, placeholder.flags and Message.FLAG_PROJECTION_PLACEHOLDER.inv())
         val current = eventFrameForProtocol(SyncBatchPayload(events), ProtocolVersion(0, 2)) as SyncBatchPayload
         assertEquals(events, current.events)
     }
@@ -74,12 +85,18 @@ class ProtocolEventProjectionTest {
         val message = Message(
             chatId = "chat-a", clientMsgId = "message-a", serverSeq = 3L,
             senderUid = "user-a", messageType = 255, timestamp = 1L,
+            flags = Message.FLAG_FORWARDED,
         )
         val event = NotifyPayload(11L, NotifyType.MESSAGE_RECV.code, ProtoCodec.encode(message))
         val projected = eventFrameForProtocol(event, ProtocolVersions.CURRENT) as NotifyPayload
         assertEquals(11L, projected.eventId)
-        assertEquals(NotifyType.EVENT_CURSOR_ADVANCED.code, projected.notifyType)
-        assertNull(projected.payload)
+        assertEquals(NotifyType.MESSAGE_RECV.code, projected.notifyType)
+        val placeholder = ProtoCodec.decode(Message, checkNotNull(projected.payload))
+        assertEquals(message.clientMsgId, placeholder.clientMsgId)
+        assertEquals(255, placeholder.messageType)
+        assertEquals(null, placeholder.body)
+        // 既有 flags 保留，仅叠加投影标记位
+        assertEquals(Message.FLAG_FORWARDED or Message.FLAG_PROJECTION_PLACEHOLDER, placeholder.flags)
     }
 
     @Test

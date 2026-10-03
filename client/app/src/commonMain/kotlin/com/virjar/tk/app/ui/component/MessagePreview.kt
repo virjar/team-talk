@@ -15,6 +15,9 @@ import com.virjar.tk.protocol.MessageType
  */
 object MessagePreview {
 
+    /** 服务端按连接版本投影/未知类型的统一占位文案（向前兼容兜底，双层防线的客户端侧）。 */
+    const val UNSUPPORTED_PLACEHOLDER_TEXT = "[当前版本不支持此消息]"
+
     /**
      * 返回消息的单行预览文本。
      *
@@ -27,8 +30,17 @@ object MessagePreview {
             if (message.flags and Message.FLAG_REVOKED != 0) return "撤回了一条消息"
             if (message.flags and Message.FLAG_EDITED != 0) return previewBody(message.body) + "（已编辑）"
         }
+        if (isUnsupportedPlaceholder(message)) return UNSUPPORTED_PLACEHOLDER_TEXT
         return previewBody(message.body, message.messageType)
     }
+
+    /**
+     * 服务端投影占位（FLAG_PROJECTION_PLACEHOLDER，正文被剥除，升级刷新前一律按占位展示）
+     * 或本版本不认识的类型（旁路到达的向前兼容兜底）。
+     */
+    fun isUnsupportedPlaceholder(message: Message): Boolean =
+        (message.flags and Message.FLAG_PROJECTION_PLACEHOLDER != 0 && message.body == null) ||
+            (message.body == null && MessageType.fromCode(message.messageType) == null)
 
     /** 仅按 body 生成预览（不考虑 flags）。 */
     fun previewBody(body: MessageBody?, messageType: Int = MessageType.RICH_TEXT.code): String = when (body) {

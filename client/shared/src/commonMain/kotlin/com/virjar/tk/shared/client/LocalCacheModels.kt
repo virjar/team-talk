@@ -154,11 +154,9 @@ internal fun com.virjar.tk.shared.database.Organization_member.toLocalModel() = 
 
 internal fun com.virjar.tk.shared.database.Message.toLocalModel(): Message {
     val bodyBytes = body
-    val decodedBody = if (bodyBytes != null) {
+    val msgType = MessageType.fromCode(message_type.toInt())
+    val decodedBody = if (bodyBytes != null && msgType != null) {
         try {
-            val msgType = requireNotNull(MessageType.fromCode(message_type.toInt())) {
-                "Unknown cached message type: $message_type"
-            }
             val buffer = PacketBuffer(bodyBytes)
             val decoded = requireNotNull(MessageBodyRegistry.decode(msgType, buffer)) {
                 "Message type $msgType has no body reader"
@@ -180,6 +178,17 @@ internal fun com.virjar.tk.shared.database.Message.toLocalModel(): Message {
             throw failure
         }
     } else {
+        // 未知类型的缓存行（更高版本服务端/对端写入的消息经投影占位或旁路到达）：
+        // 保身位不抛错，渲染层按 null body 出"当前版本不支持"提示；已知类型但字节
+        // 畸变仍走上方 fail-fast。
+        if (bodyBytes != null && msgType == null) {
+            com.virjar.tk.shared.log.platformLog(
+                "fault",
+                "LocalCache",
+                "Unknown cached message type chatId=$chat_id msgId=$client_msg_id type=$message_type",
+                null,
+            )
+        }
         null
     }
     return Message(

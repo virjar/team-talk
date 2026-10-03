@@ -75,6 +75,20 @@ class EventProcessorTest {
     }
 
     @Test
+    fun `未知通知类型跳过投影但持久游标照常推进`() = runBlocking {
+        // 向前兼容兜底：未知码（更新服务端的新事件，服务端版本投影的第二道防线）
+        // 不能断连重放——持久事件抛错会无限循环。
+        val owned = EventProcessor(ImClient(), FakeLocalCache())
+        owned.start()
+        try {
+            owned.processNotify(NotifyPayload(eventId = 77L, notifyType = 255, payload = byteArrayOf(1, 2, 3)))
+            assertEquals(77L, owned.lastEventId.value)
+        } finally {
+            owned.stop()
+        }
+    }
+
+    @Test
     fun `own authoritative echo refreshes outgoing aggregate after durable projection`() = runBlocking {
         val local = FakeLocalCache()
         var refreshes = 0

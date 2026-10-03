@@ -13,6 +13,7 @@ import com.virjar.tk.shared.client.MessagePageLoadResult
 import com.virjar.tk.shared.client.OutgoingFailureCode
 import com.virjar.tk.shared.client.SessionLocalMutationWriter
 import com.virjar.tk.app.client.collapseClientLifecycleFailures
+import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
@@ -210,6 +211,24 @@ class ChatViewModel(
             }
         }
 
+        // 服务端投影占位的自愈（向前兼容）：旧版本落下的 FLAG_PROJECTION_PLACEHOLDER 行，
+        // 本版本已认识其类型时，按历史权威页重拉替换——占位在升级后自动还原为真实内容。
+        // 可刷新占位只可能来自更早版本写下的本地行（实时占位必然是本版本不认识的类型），
+        // 因此每次打开至多刷新一轮，无循环风险。
+        scope.launch {
+            var attempted = false
+            messages.collect { projected ->
+                if (attempted || projected.isEmpty()) return@collect
+                val refreshable = projected.filter {
+                    it.flags and Message.FLAG_PROJECTION_PLACEHOLDER != 0 &&
+                        MessageType.fromCode(it.messageType) != null
+                }
+                if (refreshable.isEmpty()) return@collect
+                attempted = true
+                refreshProjectionPlaceholders(refreshable)
+            }
+        }
+
         // 当持久会话投影达到它请求的水位线时，一次读取动作就成功了。
         // 本地路径原子地推进投影 + outbox；一个已经收敛的权威投影
         // 满足同样的幂等用户可见效果。
@@ -230,6 +249,7 @@ class ChatViewModel(
         }
 
         reactionOwner.start()
+
 
         scope.launch {
             connectionState.collectLatest { state ->
@@ -740,6 +760,24 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * 按历史权威页刷新投影占位行：服务端视角本版本已支持这些类型，重拉即得到真实
+     * 内容并原子替换本地占位（同 clientMsgId 权威覆盖）。失败不重试——下次打开会话
+     * 再触发（[messages] 采集器的 attempted 守卫只作用于单次打开）。
+     */
+    private suspend fun refreshProjectionPlaceholders(placeholders: List<Message>) {
+        var fromSeq = placeholders.maxOf { it.serverSeq }
+        val minSeq = placeholders.minOf { it.serverSeq }
+        repeat(PLACEHOLDER_REFRESH_MAX_PAGES) {
+            val page = messageRepo.getHistory(chatId, fromSeq, Message.MAX_QUERY_PAGE_SIZE).getOrNull()
+                ?: return
+            if (page.isEmpty()) return
+            if (page.minOf { it.serverSeq } <= minSeq) return
+            fromSeq = page.minOf { it.serverSeq } - 1
+            if (fromSeq <= 0L) return
+        }
+    }
+
     /** 把原因投影限定在失败行，并至多调度一次回执读取/key。 */
     private fun bindOutgoingFailureCodes(projectedMessages: List<Message>): List<String> {
         val failedIds = projectedMessages.asSequence()
@@ -957,6 +995,9 @@ class ChatViewModel(
 
     private companion object {
         const val HISTORY_PAGE_SIZE = 10
+
+        /** 占位自愈单次打开的拉取页上限：防御异常数据把刷新拉成全量历史。 */
+        const val PLACEHOLDER_REFRESH_MAX_PAGES = 20
     }
 }
 

@@ -229,7 +229,12 @@ fun MessageBodyRenderer(
             durationSec = body.durationSec,
             reason = body.reason,
         )
-        null -> SystemHintText(MessagePreview.previewBody(null, message.messageType))
+        null -> if (MessagePreview.isUnsupportedPlaceholder(message)) {
+            // 服务端投影占位/未知类型：统一"当前版本不支持"提示（向前兼容兜底）
+            SystemHintText("[当前版本不支持此消息，升级客户端后可查看]")
+        } else {
+            SystemHintText(MessagePreview.previewBody(null, message.messageType))
+        }
     }
 
     if (message.flags and Message.FLAG_EDITED != 0) {

@@ -61,9 +61,35 @@ data class Message(
         const val FLAG_REVOKED = 1   // bit0：消息已被撤回
         const val FLAG_EDITED = 2    // bit1：消息已被编辑
         const val FLAG_FORWARDED = 4 // bit2：消息是转发来的
+        // bit3：服务端按连接协商版本下发的占位形态——保留原始类型码与消息身份、剥掉
+        // 正文（hasBody=false），让协商版本更低的对端仍可解码并渲染"当前版本不支持"；
+        // 客户端升级到认识该类型后按此标记重拉历史自愈。持久事件本体永不带此位。
+        const val FLAG_PROJECTION_PLACEHOLDER = 8
 
         /** 连接投影只需类型身份；共用有界头部 decoder，避免解码/分配整份消息正文。 */
         fun readMessageType(payload: ByteArray): Int = readHeader(PacketBuffer(payload)).messageType
+
+        /**
+         * 从持久事件的原始字节构造占位形态：只读有界前缀（身份 + timestamp/flags），
+         * 不触碰正文——旧版本对端解码 hasBody=false 干净通过（未知类型 body=null，
+         * 无尾字节残留），渲染层按标记位出"当前版本不支持"提示。
+         */
+        fun readProjectionPlaceholder(payload: ByteArray): Message {
+            val buf = PacketBuffer(payload)
+            val header = readHeader(buf)
+            val timestamp = buf.readVarLong()
+            val flags = buf.readVarInt()
+            return Message(
+                chatId = header.chatId,
+                clientMsgId = header.clientMsgId,
+                serverSeq = header.serverSeq,
+                senderUid = header.senderUid,
+                messageType = header.messageType,
+                timestamp = timestamp,
+                flags = flags or FLAG_PROJECTION_PLACEHOLDER,
+                body = null,
+            )
+        }
 
         private data class Header(
             val chatId: String,

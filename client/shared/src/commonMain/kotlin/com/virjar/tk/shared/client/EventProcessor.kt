@@ -396,17 +396,24 @@ class EventProcessor(
             publicationGate.use(publicationLease) { reportProgress(notify.eventId) }
             return
         }
-        val notifyType = NotifyType.fromCode(notify.notifyType)
-        val payload = notify.payload
-        if (notifyType == NotifyType.EVENT_CURSOR_ADVANCED) {
-            require(payload == null) { "EVENT_CURSOR_ADVANCED must not carry a payload" }
-        }
-        if (payload == null) {
-            require(notifyType in NotifyContracts.exempt) {
-                "Notify $notifyType is missing its required payload"
-            }
+        // 向前兼容兜底：未知通知码 = 更新服务端的新事件（正常应被服务端按连接版本投影
+        // 掉，这里是第二道防线）。跳过投影但照常推进游标——持久事件若在这里抛错会
+        // 断连重放同一条、无限循环。已知通知的解码失败仍属损坏，维持 fail-fast 语义。
+        val notifyType = runCatching { NotifyType.fromCode(notify.notifyType) }.getOrNull()
+        if (notifyType == null) {
+            logger.fault("跳过未知通知类型 code=${notify.notifyType} eventId=${notify.eventId}（服务端版本更高？）")
         } else {
-            handleNotifyPayload(notifyType, payload, notify.eventId)
+            val payload = notify.payload
+            if (notifyType == NotifyType.EVENT_CURSOR_ADVANCED) {
+                require(payload == null) { "EVENT_CURSOR_ADVANCED must not carry a payload" }
+            }
+            if (payload == null) {
+                require(notifyType in NotifyContracts.exempt) {
+                    "Notify $notifyType is missing its required payload"
+                }
+            } else {
+                handleNotifyPayload(notifyType, payload, notify.eventId)
+            }
         }
         // 只有完整投影成功后才单调落盘。异常故意向监听/批次循环传播：调用方必须
         // 立即停止后续事件并关闭连接，重连从最后一个已持久化 cursor 继续。

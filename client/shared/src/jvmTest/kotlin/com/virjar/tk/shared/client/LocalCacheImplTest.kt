@@ -2423,7 +2423,7 @@ class LocalCacheImplTest {
     }
 
     @Test
-    fun `损坏的持久消息正文必须携带行上下文 fail fast`() {
+    fun `已知类型的损坏正文必须携带行上下文 fail fast，未知类型保身位降级`() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         AppDatabase.Schema.create(driver)
         AppDatabase(driver).appDatabaseQueries.insertMessage(
@@ -2431,7 +2431,7 @@ class LocalCacheImplTest {
             client_msg_id = "corrupt-message",
             server_seq = 1L,
             sender_uid = "sender",
-            message_type = 999L,
+            message_type = 1L,
             timestamp = 1L,
             flags = 0L,
             body = byteArrayOf(1),
@@ -2445,7 +2445,25 @@ class LocalCacheImplTest {
 
         assertTrue(failure.message?.contains("chatId=corrupt-chat") == true)
         assertTrue(failure.message?.contains("msgId=corrupt-message") == true)
-        assertTrue(failure.message?.contains("type=999") == true)
+        assertTrue(failure.message?.contains("type=1") == true)
+
+        // 未知类型（更高版本客户端/服务端写入，或投影旁路到达）：不抛错——渲染层
+        // 按 null body 出"当前版本不支持"占位（向前兼容第二道防线）
+        AppDatabase(driver).appDatabaseQueries.insertMessage(
+            chat_id = "unknown-chat",
+            client_msg_id = "unknown-message",
+            server_seq = 2L,
+            sender_uid = "sender",
+            message_type = 999L,
+            timestamp = 1L,
+            flags = 8L,
+            body = null,
+            send_status = 0L,
+        )
+        val unknown = cache.getMessages("unknown-chat", 10).single()
+        assertEquals(999, unknown.messageType)
+        assertEquals(null, unknown.body)
+        assertTrue(unknown.flags and Message.FLAG_PROJECTION_PLACEHOLDER != 0)
     }
 
     @Test
