@@ -67,6 +67,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.koin.ktor.plugin.Koin
 import org.koin.ktor.ext.getKoin
 import org.slf4j.LoggerFactory
@@ -83,6 +84,7 @@ private const val CLIENT_TELEMETRY_RETENTION_INTERVAL_MILLIS = 60L * 60L * 1_000
 private const val CLIENT_TELEMETRY_RETENTION_CATCH_UP_MILLIS = 5_000L
 private const val CONNECTION_TRACE_RETENTION_INTERVAL_MILLIS = 60L * 60L * 1_000L
 private const val CONNECTION_TRACE_RETENTION_RETRY_MILLIS = 60_000L
+private const val CALL_SERVICE_SHUTDOWN_TIMEOUT_MILLIS = 5_000L
 
 fun main() {
     // 0. Environment 必须先于 logback 初始化，确保 LOG_DIR 系统属性已设置
@@ -361,6 +363,17 @@ internal fun Application.module(
             logger.info("Resumed {} unfinished service broadcasts", resumedBroadcasts.size)
         }
 
+        // CallService must outlive the coordinator's observer lease, but close before its dependencies.
+        val calls = resources.ownDependencyBarrier(
+            name = "call service",
+            resource = koin.get<com.virjar.tk.server.domain.call.CallService>(),
+            close = { service ->
+                runBlocking(Dispatchers.IO) {
+                    withTimeout(CALL_SERVICE_SHUTDOWN_TIMEOUT_MILLIS) { service.closeAndJoin() }
+                }
+            },
+            dependenciesMayClose = { it.workersTerminated },
+        )
         val presenceCoordinator = resources.own(
             "presence coordinator",
             koin.get<PresenceCoordinator>(),
@@ -382,7 +395,6 @@ internal fun Application.module(
         val attachmentRetention = koin.get<AttachmentRetentionService>()
         val tasks = koin.get<com.virjar.tk.server.domain.task.TaskService>()
         val oemPush = koin.get<com.virjar.tk.server.infra.push.OemPushNotifications>()
-        val calls = koin.get<com.virjar.tk.server.domain.call.CallService>()
         val reliableCommandReceiptMaintenance = ReliableCommandReceiptMaintenance(koin.get())
         var reliableCommandReceiptBacklogReported = false
 

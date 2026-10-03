@@ -159,16 +159,6 @@ internal fun AndroidMainAppContent(
     }
     Box(Modifier.fillMaxSize()) {
         val callState by callCenter.state.collectAsState()
-        callState?.let { callView ->
-            AndroidCallPermissionGate(video = callView.video) {
-                CallScreen(
-                    state = callView,
-                    localCache = dataState.localCache,
-                    callCenter = callCenter,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        }
         // 已认证外壳同时拥有系统栏内边距与连接反馈。把横幅放在 NavHost 上方，
         // 让同样的离线真值在每个目标页都可见，又不会遮挡路由的应用栏或底部导航。
         Column(
@@ -272,6 +262,18 @@ internal fun AndroidMainAppContent(
                     navController = navController,
                     dataState = dataState,
                     actionAdmission = actionAdmission,
+                )
+            }
+        }
+        // 通话覆盖层在外壳 Column 之后声明：Box 后绘制者在上。外壳带不透明 surface
+        // 背景，覆盖层若先声明会被整个盖住——真机来电/去电 UI 从不显示即此因。
+        callState?.let { callView ->
+            AndroidCallPermissionGate(video = callView.video) {
+                CallScreen(
+                    state = callView,
+                    localCache = dataState.localCache,
+                    callCenter = callCenter,
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         }

@@ -415,7 +415,7 @@ tasks.withType<JavaExec>().configureEach {
 // 该值由根 ReleaseTasks 在配置期写入 extra。
 val desktopShellBuildNumber = (rootProject.extra.get("desktopRevision") as Number).toLong()
 // 与 client/desktop-bootstrap 的 SHELL_ABI 常量保持一致（壳布局/启动协议变更时同步递增）。
-val desktopShellAbi = 1
+val desktopShellAbi = 2
 val desktopReleaseChannel = rootProject.extra.get("clientReleaseChannel") as String
 val desktopIconDir = layout.projectDirectory.dir("packaging/icons")
 

@@ -284,6 +284,10 @@ follower 必须等 drain 完整结束并重放同一终态 Throwable；清理钩
 继续清空内存身份并断开不属于 construction stack 的 `ImClient`。
 本地命令镜像恢复 worker 在缓存关闭前取消并等待退出；仅发出取消信号不能保证同步数据库访问已经结束。
 worker 的终态认证通知交给所属恢复 scope 外的投递路径，避免会话关闭等待当前 worker 自己退出。
+`CallCenter` 还持有平台 WebRTC 引擎，quiesce 会在取消共享 worker scope 前显式调用其 `close()` 停止媒体并
+释放引擎；取消 scope 只负责停止信令与状态收集，不能代替原生媒体资源关闭。事件处理器关闭后还要
+单独停止 checkpoint bootstrap 自己持有的第二个 `RpcClient`，并关闭合并唤醒 channel；这两项不随主
+`RpcClient` 或 worker scope 自动释放。
 
 业务 RPC、消息/typing、ACK 注册和事件同步控制各持有不可复活的 session admission。quiesce 在发布
 `QUIESCED` 前同步退休业务 wire 与 sync wire；EventLoop 在 admission 锁内完成“校验 owner generation
@@ -1093,6 +1097,10 @@ headless JVM 的账号库与 GUI 使用同一恢复路径：确认损坏时移�
 各图形端媒体缓存共用 app 的 `MediaCacheBudget`，统一字节、4,096 条目、并发预留和 consumer pin；
 `MediaCacheTargetCoordinator` 只让同一文件等待已有下载，缓存命中和其他文件不排在全局网络锁后面。
 目录枚举、文件校验、认证下载和原子改名仍由平台适配器负责，已发行缓存格式保持不变。
+Android、iOS、Desktop 的附件控制器共用 app 层 `FileDownloadCore`，统一缓存探测、操作准入与代次、同路径下载合并、
+下载完成后的动作交接、状态终结和遥测；平台适配器继续拥有认证缓存租约、平台线程、打开行为与会话门禁。
+Android 的系统导出先完成权限裁决，再用 `actWithLease` 接入共享下载并在租约有效期内注册本地复制；图片剪贴板复用同一入口。
+这样平台专属文件动作不再复制并发状态机，也不会把 Android 的 SAF、剪贴板或会话注册规则带入其他平台。
 媒体缓存使用与 SQLite 不同的生命周期：deployment + dataset + uid 仍决定命中目录，但同一物理媒体根只有一份
 字节与条目预算、一组并发 reservation 和一张按规范化绝对路径计数的 consumer pin 表。容量扫描只识别平台生产者的固定目录深度和
 内容寻址文件名，再跨身份目录按 mtime 回收零租约的最旧可回拉媒体。录音源文件、上传 spool、未知文件、子目录和符号链接

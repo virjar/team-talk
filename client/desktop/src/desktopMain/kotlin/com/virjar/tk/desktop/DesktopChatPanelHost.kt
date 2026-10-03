@@ -53,6 +53,7 @@ import com.virjar.tk.app.ui.component.rememberEmbeddedMediaClickHandler
 import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
 import com.virjar.tk.app.navigation.feature.chat.ChatDraftLifecycleBridge
 import com.virjar.tk.app.ui.screen.ChatPanel
+import com.virjar.tk.app.ui.screen.isSystemAccountUid
 import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.app.viewmodel.ChatViewModel
 import com.virjar.tk.app.viewmodel.MessageFocusTarget
@@ -312,12 +313,13 @@ internal fun ChatPanelWrapper(
     ) {
         // 群名称保持纯标题；群设置走齿轮检查器，「···」对所有会话类型打开会话工具窗口。
         val isGroup = ChatType.fromCode(chatType) == ChatType.GROUP
+        val chatPeerUid by viewModel.chatPeerUid.collectAsState()
         ListHeader(
             title = chatName.ifEmpty { chatId.take(16) },
             actions = {
-                if (!isGroup && callCenter != null) {
+                // 系统账号（服务号/文件传输助手，sys_ 前缀）不提供通话入口
+                if (!isGroup && callCenter != null && !isSystemAccountUid(chatPeerUid)) {
                     val callScope = rememberCoroutineScope()
-                    val chatPeerUid by viewModel.chatPeerUid.collectAsState()
                     IconButton(
                         onClick = presentationGate.guard {
                             chatPeerUid?.let { peer ->

@@ -414,16 +414,23 @@ class ClientRegistry(
     /** 实时事件的唯一投递入口；避免“先取连接快照、后写入”穿透激活屏障。 */
     override suspend fun push(uid: String, notify: NotifyPayload) {
         workThread.suspendAwait {
-            userAgents[uid]?.values?.toList().orEmpty().forEach { agent ->
-                if (agent.isActive) {
-                    try {
-                        agent.write(notify)
-                    } catch (e: Exception) {
-                        logger.warn(
-                            "Failed live delivery uid=$uid deviceId=${agent.deviceId}; continuing other devices",
-                            e,
-                        )
-                    }
+            val agents = userAgents[uid]?.values?.toList().orEmpty()
+            val active = agents.filter { it.isActive }
+            if (active.isEmpty()) {
+                // 瞬时事件（如通话信令）不持久化：投递不到时必须留下服务端证据。
+                logger.warn(
+                    "Live delivery dropped: uid={} has no active agent (registered={}) type={}",
+                    uid, agents.size, notify.notifyType,
+                )
+            }
+            active.forEach { agent ->
+                try {
+                    agent.write(notify)
+                } catch (e: Exception) {
+                    logger.warn(
+                        "Failed live delivery uid=$uid deviceId=${agent.deviceId}; continuing other devices",
+                        e,
+                    )
                 }
             }
         }

@@ -33,10 +33,14 @@ import java.util.concurrent.atomic.AtomicInteger
 class TurnServer(
     val config: TurnServerConfig,
     private val group: EventLoopGroup,
+    private val ownsEventLoopGroup: Boolean = false,
 ) : AutoCloseable {
     private val log = LoggerFactory.getLogger(TurnServer::class.java)
     private val credentials = TurnCredentials(config.secret, config.realm)
     private val allocations = ConcurrentHashMap<InetSocketAddress, Allocation>()
+    private val allocationLock = Any()
+    /** 活跃 allocation 与已预留但 relay bind 尚未完成的槽位数。 */
+    private var reservedAllocationSlots = 0
     private val allocationCount = AtomicInteger(0)
     private val nextRelayPort = AtomicInteger(config.relayPortStart)
     private val sweepExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
@@ -45,11 +49,15 @@ class TurnServer(
     @Volatile private var nonce: String = credentials.newNonce()
     private var listenChannel: Channel? = null
     @Volatile private var publicAddress: InetAddress? = null
+    private var closed = false
 
     @Volatile var running: Boolean = false
         private set
 
     fun start() {
+        synchronized(allocationLock) {
+            check(!closed) { "TURN 服务已关闭" }
+        }
         check(!running) { "TURN 服务已启动" }
         publicAddress = InetAddress.getByName(config.publicHost)
         listenChannel = Bootstrap()
@@ -73,13 +81,49 @@ class TurnServer(
     }
 
     override fun close() {
-        if (!running) return
-        running = false
+        val activeAllocations = synchronized(allocationLock) {
+            if (closed) return
+            closed = true
+            running = false
+            val active = allocations.values.toList()
+            allocations.clear()
+            allocationCount.set(0)
+            reservedAllocationSlots -= active.size
+            active
+        }
         sweepExecutor.shutdownNow()
-        allocations.values.forEach { it.relayChannel.close() }
-        allocations.clear()
-        listenChannel?.close()
+        var closeFailure: Throwable? = null
+        fun capture(block: () -> Unit) {
+            try {
+                block()
+            } catch (failure: Throwable) {
+                val previous = closeFailure
+                if (previous == null) closeFailure = failure
+                else if (failure !== previous) previous.addSuppressed(failure)
+            }
+        }
+        capture { listenChannel?.close()?.syncUninterruptibly() }
+        capture {
+            val terminated = try {
+                sweepExecutor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw interrupted
+            }
+            if (!terminated) {
+                error("TURN expiry worker did not terminate within $SHUTDOWN_TIMEOUT_SECONDS seconds")
+            }
+        }
+        activeAllocations.forEach { allocation ->
+            capture { allocation.relayChannel.close().syncUninterruptibly() }
+        }
+        if (ownsEventLoopGroup) {
+            capture {
+                group.shutdownGracefully(0, SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS).syncUninterruptibly()
+            }
+        }
         log.info("TURN 服务已停止")
+        closeFailure?.let { throw IllegalStateException("TURN 服务未能完整关闭", it) }
     }
 
     /**
@@ -99,7 +143,12 @@ class TurnServer(
     fun allocationCount(): Int = allocationCount.get()
 
     /** 一次 TURN allocation：client 5-tuple 绑定一个 relay 通道，含 permission 与 channel 表。 */
-    private inner class Allocation(val client: InetSocketAddress, val relayChannel: Channel) {
+    private inner class Allocation(
+        val client: InetSocketAddress,
+        /** 客户端分配所用的监听通道；客户端方向的 Data/ChannelData 必须从这里发出（RFC 5766 §5 五元组）。 */
+        val clientChannel: Channel,
+        val relayChannel: Channel,
+    ) {
         val relayPort: Int
             get() = (relayChannel.localAddress() as InetSocketAddress).port
 
@@ -147,7 +196,7 @@ class TurnServer(
                     ),
                 )
             }
-            allocation.relayChannel.writeAndFlush(datagram(toClient, allocation.client))
+            allocation.clientChannel.writeAndFlush(datagram(toClient, allocation.client))
         }
     }
 
@@ -188,26 +237,39 @@ class TurnServer(
             return
         }
         val key = authenticate(listen, sender, request, raw) ?: return
-        if (allocationCount.get() >= config.maxAllocations) {
+        if (!reserveAllocationSlot()) {
             respondError(listen, sender, request, Stun.ERROR_ALLOCATION_QUOTA, "allocation quota reached", integrityKey = key)
             return
         }
-        bindRelayChannel().addListener { future ->
-            if (!future.isSuccess || !running) {
+        val bind = try {
+            bindRelayChannel()
+        } catch (failure: Exception) {
+            releaseAllocationSlot()
+            log.warn("relay 端口分配失败: {}", failure.message)
+            respondError(listen, sender, request, Stun.ERROR_INSUFFICIENT_CAPACITY, "no relay port", integrityKey = key)
+            return
+        }
+        bind.addListener { future ->
+            if (!future.isSuccess) {
+                releaseAllocationSlot()
                 log.warn("relay 端口分配失败: {}", future.cause()?.message)
                 respondError(listen, sender, request, Stun.ERROR_INSUFFICIENT_CAPACITY, "no relay port", integrityKey = key)
                 return@addListener
             }
             val relayChannel = future.getNow() as Channel
-            val allocation = Allocation(sender, relayChannel)
-            relayChannel.pipeline().addLast(RelayHandler(allocation))
-            if (allocations.putIfAbsent(sender, allocation) != null) {
-                // 并发 Allocate 的输家：回收刚分配的 relay 通道
+            if (!running) {
+                releaseAllocationSlot()
                 relayChannel.close()
+                return@addListener
+            }
+            val allocation = Allocation(sender, listen, relayChannel)
+            relayChannel.pipeline().addLast(RelayHandler(allocation))
+            if (!registerAllocation(allocation)) {
+                relayChannel.close()
+                if (!running) return@addListener
                 respondError(listen, sender, request, Stun.ERROR_ALLOCATION_MISMATCH, "allocation exists")
                 return@addListener
             }
-            allocationCount.incrementAndGet()
             allocation.expiryNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(requestedLifetime(request).toLong())
             respond(
                 listen, sender, request,
@@ -382,16 +444,47 @@ class TurnServer(
         listen.writeAndFlush(datagram(response, sender))
     }
 
-    /** 从配置范围内轮转分配 relay 端口，全部失败时 promise 以异常完成。 */
+    private fun reserveAllocationSlot(): Boolean = synchronized(allocationLock) {
+        if (!running || reservedAllocationSlots >= config.maxAllocations) {
+            false
+        } else {
+            reservedAllocationSlots += 1
+            true
+        }
+    }
+
+    /** 将已完成的 relay bind 登记为活跃 allocation；预留槽位在移除时释放。 */
+    private fun registerAllocation(allocation: Allocation): Boolean = synchronized(allocationLock) {
+        if (!running || allocations.putIfAbsent(allocation.client, allocation) != null) {
+            reservedAllocationSlots -= 1
+            false
+        } else {
+            allocationCount.incrementAndGet()
+            true
+        }
+    }
+
+    private fun releaseAllocationSlot() {
+        synchronized(allocationLock) {
+            reservedAllocationSlots -= 1
+        }
+    }
+
+    /** 从配置范围内轮转探测 relay 端口；范围耗尽时 promise 失败，不无限重试。 */
     private fun bindRelayChannel(): Promise<Channel> {
         val promise = group.next().newPromise<Channel>()
-        bindWithFallback(promise)
+        val portCount = config.relayPortEnd - config.relayPortStart + 1
+        bindWithFallback(promise, portCount)
         return promise
     }
 
-    private fun bindWithFallback(promise: Promise<Channel>) {
+    private fun bindWithFallback(promise: Promise<Channel>, attemptsRemaining: Int) {
         if (!running) {
             promise.setFailure(IllegalStateException("TURN 服务已停止"))
+            return
+        }
+        if (attemptsRemaining <= 0) {
+            promise.setFailure(IllegalStateException("TURN relay port range is exhausted"))
             return
         }
         val port = nextRelayPort.getAndUpdate { current -> if (current >= config.relayPortEnd) config.relayPortStart else current + 1 }
@@ -408,16 +501,26 @@ class TurnServer(
             io.netty.util.concurrent.GenericFutureListener<io.netty.channel.ChannelFuture> { f ->
                 if (f.isSuccess) {
                     promise.setSuccess(f.channel())
+                } else if (attemptsRemaining == 1) {
+                    promise.setFailure(f.cause() ?: IllegalStateException("TURN relay port range is exhausted"))
                 } else {
-                    bindWithFallback(promise)
+                    bindWithFallback(promise, attemptsRemaining - 1)
                 }
             },
         )
     }
 
     private fun removeAllocation(allocation: Allocation) {
-        if (allocations.remove(allocation.client, allocation)) {
-            allocationCount.decrementAndGet()
+        val removed = synchronized(allocationLock) {
+            if (allocations.remove(allocation.client, allocation)) {
+                allocationCount.decrementAndGet()
+                reservedAllocationSlots -= 1
+                true
+            } else {
+                false
+            }
+        }
+        if (removed) {
             allocation.relayChannel.close()
         }
     }
@@ -484,6 +587,7 @@ class TurnServer(
     companion object {
         private const val TRANSPORT_UDP = 17
         private const val SWEEP_INTERVAL_SEC = 30L
+        private const val SHUTDOWN_TIMEOUT_SECONDS = 5L
     }
 }
 

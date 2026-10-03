@@ -391,8 +391,6 @@ internal fun createServerModule(
             },
         )
     }
-    // 断连观察租约由 Koin 单例持有，防止被替代卸载
-    single { get<PresenceTransitionSource>().installPresenceObserver(get<CallService>()) }
     single<ChatService> {
         ChatService(
             chatStore = get(),
@@ -582,7 +580,7 @@ internal fun createServerModule(
     single<BotMessageSender> { MessageServiceBotSender(get()) }
     single { BotService(get(), get(), get(), get(), get(), get(), get<PgUnitOfWork>()) }
     single { PresenceService(get(), get()) }
-    single { PresenceCoordinator(get(), get()) }
+    single { PresenceCoordinator(get(), get(), get<CallService>()) }
     single {
         AdminOverviewAssembler(
             users = get(),

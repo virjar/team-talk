@@ -33,7 +33,7 @@ val generateShellConfig by tasks.registering {
             package com.virjar.tk.desktop.shell
 
             /** 壳 ABI：负载 payload.properties 的 minShellAbi 高于它时要求换新首装包。 */
-            const val SHELL_ABI = 1
+            const val SHELL_ABI = 2
 
             /** 与最终部署配置一致的安装身份。 */
             const val SHELL_APP_ID = "$appId"

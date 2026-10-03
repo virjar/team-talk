@@ -1,31 +1,28 @@
 package com.virjar.tk.android
 
-import com.virjar.tk.shared.AppError
 import android.content.Context
 import android.os.Looper
 import android.util.Log
 import androidx.compose.runtime.snapshots.SnapshotStateMap
-import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.app.telemetry.ClientActionOutcome
 import com.virjar.tk.app.telemetry.ClientMediaKind
-import com.virjar.tk.app.telemetry.ClientUiAction
 import com.virjar.tk.app.telemetry.ClientUiPage
 import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
-import com.virjar.tk.app.telemetry.FeedbackOrigin
 import com.virjar.tk.app.telemetry.MediaFailureReason
 import com.virjar.tk.app.telemetry.MediaOperation
 import com.virjar.tk.app.telemetry.NoopClientUiTelemetrySink
-import com.virjar.tk.app.telemetry.UserFeedbackCode
-import com.virjar.tk.app.telemetry.UserFeedbackNotice
-import com.virjar.tk.app.telemetry.downloadFeedbackCode
 import com.virjar.tk.app.telemetry.classifyMediaFailure
 import com.virjar.tk.app.ui.component.AutomaticFileDownloadLedger
 import com.virjar.tk.app.ui.component.FileDownloadController
+import com.virjar.tk.app.ui.component.FileDownloadCore
+import com.virjar.tk.app.ui.component.FileDownloadCoreAdapter
+import com.virjar.tk.app.ui.component.FileDownloadPendingAction
 import com.virjar.tk.app.ui.component.FileDownloadState
-import com.virjar.tk.app.ui.component.FileDownloadStatePublisher
 import com.virjar.tk.app.ui.component.FileOpenBehavior
 import com.virjar.tk.app.ui.component.platformFileOpenBehavior
 import com.virjar.tk.app.ui.component.textAttachmentPreviewKind
+import com.virjar.tk.protocol.model.Attachment
+import com.virjar.tk.shared.AppError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineName
@@ -35,7 +32,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
@@ -45,12 +41,10 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Android 文件附件下载控制器：会话隔离缓存 + 气泡进度动画数据源。
- * 编排机制与 app 层 FileDownloadCore 同源（核心自此提取，iOS/Desktop 已迁移）；
- * 本实现由 AndroidMediaSafetyTest 保护，导出流程与会话注册语义深度耦合，暂保留。
+ * Android 附件控制器只拥有 Android 缓存/会话适配和系统文件动作。
+ * 准入、缓存探测、下载去重、代次状态与终态发布统一由 app 的 FileDownloadCore 管理。
  */
 class AndroidFileDownloadController private constructor(
     cacheRootProvider: () -> File,
@@ -70,16 +64,10 @@ class AndroidFileDownloadController private constructor(
     private val beforeOwnerGenerationClaim: () -> Unit,
     ownerThreadPredicate: () -> Boolean,
     private val workerDispatcher: CoroutineDispatcher,
-    /** 应用上下文；仅在真实客户端注入，用于把附件导出到相册/下载（T007）。测试替身保持 null。 */
+    /** 应用上下文；仅在真实客户端注入，用于把附件导出到相册/下载。测试替身保持 null。 */
     private val appContext: Context? = null,
     private val requestExportPermission: suspend () -> Boolean = { false },
 ) : FileDownloadController {
-    private class FileOperationAdmission(val key: String) {
-        val terminalClaimed = AtomicBoolean(false)
-        val retired = AtomicBoolean(false)
-        val ownerGeneration = AtomicLong(0L)
-    }
-
     constructor(
         context: Context,
         mediaSession: AndroidMediaSession,
@@ -147,317 +135,83 @@ class AndroidFileDownloadController private constructor(
         workerDispatcher = workerDispatcher,
     )
 
-    /** 只由 [scope] 求值，绝不在组合构造此控制器期间求值。 */
+    /** 只由工作协程求值，不在控制器构造期间访问平台缓存目录。 */
     private val cacheRoot: File by lazy(LazyThreadSafetyMode.SYNCHRONIZED, cacheRootProvider)
-    private val scope = CoroutineScope(
-        SupervisorJob() + workerDispatcher + CoroutineName("android-file-download-worker"),
-    )
-    private val inFlight = mutableSetOf<String>()
-    private val openAfterDownload = mutableSetOf<String>()
-    private val downloadLock = Any()
-    private val currentFileOperationGenerations = mutableMapOf<String, Long>()
-    private var nextFileOperationGeneration = 0L
-    private val cacheProbeLock = Any()
-    private val cacheProbes = mutableMapOf<String, Any>()
-    /**
-     * 每个键在派发到工作线程之前准入的任务计数。它弥补了这样一个间隙：
-     * 点击已使缓存探针失效，但其工作线程尚未发布下载状态。
-     */
-    private val activeFileOperations = mutableMapOf<String, MutableSet<FileOperationAdmission>>()
+    private val ownerUiScope = uiScope
     private val closed = AtomicBoolean(false)
-    /** 所有者认领与最终 Snapshot 写入的加锁顺序为 publicationLock -> downloadLock。 */
-    private val publicationLock = Any()
+    private val externalOpenLeaseLock = Any()
     private var externalOpenLease: AndroidMediaCacheFileLease? = null
-    private val statePublisher = FileDownloadStatePublisher(
-        ownerScope = uiScope,
-        publicationGate = { publication ->
-            mediaSession.runIfOpen {
-                synchronized(publicationLock) {
-                    if (!closed.get()) publication()
-                }
-            }
-        },
-        ownerThreadPredicate = ownerThreadPredicate,
+
+    private val core = FileDownloadCore(
+        adapter = AndroidAdapter(ownerThreadPredicate),
+        telemetry = telemetry,
+        telemetryPage = telemetryPage,
     )
+
     override val states: SnapshotStateMap<String, FileDownloadState>
-        get() = statePublisher.states
-    override val automaticDownloadLedger = AutomaticFileDownloadLedger()
+        get() = core.states
 
-    override fun ensure(attachment: Attachment) {
-        if (closed.get() || !mediaSession.isCurrentOwner()) return
-        val key = attachment.path
-        // Checking 拥有可靠的终态发布。重新运行它的探针，会让一个在操作完成之后
-        // 才准入的探针替换掉该操作排队中的终态结果。
-        if (states.containsKey(key)) return
-        val probe = synchronized(cacheProbeLock) {
-            if (closed.get() || activeFileOperations.containsKey(key) || cacheProbes.containsKey(key)) return
-            Any().also { cacheProbes[key] = it }
-        }
-        publishState(
-            key = key,
-            state = FileDownloadState.Checking,
-            isStillCurrent = { isCurrentCacheProbe(key, probe) },
-        )
-        scope.launch {
-            val state = try {
-                if (isValidAttachmentCacheFile(cachedFile(cacheRoot, attachment), attachment)) {
-                    FileDownloadState.Done
-                } else {
-                    FileDownloadState.Idle
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                FileDownloadState.Idle
-            }
-            publishState(
-                key = key,
-                state = state,
-                isStillCurrent = { isCurrentCacheProbe(key, probe) },
-                onDiscarded = { retireCacheProbe(key, probe) },
-                onPublished = { retireCacheProbe(key, probe) },
-            )
-        }
-    }
+    override val automaticDownloadLedger: AutomaticFileDownloadLedger
+        get() = core.automaticDownloadLedger
 
-    override fun download(attachment: Attachment) {
-        if (closed.get() || !mediaSession.isCurrentOwner()) return
-        launchFileOperation(attachment.path) { admission ->
-            downloadInternal(attachment, openWhenDone = false, admission = admission)
-        }
-    }
+    override fun ensure(attachment: Attachment) = core.ensure(attachment)
+
+    override fun download(attachment: Attachment) = core.download(attachment)
 
     override fun openOrDownload(attachment: Attachment) {
         if (closed.get()) return
         if (!mediaSession.isCurrentOwner()) {
-            recordMedia(MediaOperation.OPEN, ClientActionOutcome.STARTED)
-            publishFailure(
-                key = attachment.path,
-                reason = MediaFailureReason.SESSION,
-                operation = MediaOperation.OPEN,
-            )
+            core.act(attachment, FileDownloadPendingAction.OPEN)
             return
         }
+
         retireExternalOpenLease()
         if (onTextAttachmentPreview != null && textAttachmentPreviewKind(attachment) != null) {
             openTextPreview(attachment)
             return
         }
-        // apk 的"打开"即拉起安装器；zip/exe 等没有可靠处理器，直接走另存为落位。
+        // apk 的“打开”即拉起安装器；zip/exe 等没有可靠处理器，直接走另存为落位。
         if (platformFileOpenBehavior(attachment) == FileOpenBehavior.SAVE_ONLY) {
             exportToUserLocation(attachment)
             return
         }
-        launchFileOperation(attachment.path) { admission ->
-            val cachedLease = try {
-                val root = cacheRoot
-                AndroidMediaCacheCapacityRegistry.cachedLease(
-                    cacheRoot = root,
-                    file = cachedFile(root, attachment),
-                    expectedBytes = attachment.size,
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                null
-            }
-            cachedLease?.let { lease ->
-                claimFileOperationGeneration(admission)
-                if (openCached(lease, attachment, operationAlreadyStarted = false, admission)) {
-                    publishOperationTerminal(admission, FileDownloadState.Done)
-                }
-                return@launchFileOperation
-            }
-            downloadInternal(attachment, openWhenDone = true, admission = admission)
-        }
+        core.act(attachment, FileDownloadPendingAction.OPEN)
     }
 
     override fun close() {
-        var leaseToClose: AndroidMediaCacheFileLease? = null
-        val claimed = synchronized(publicationLock) {
-            if (!closed.compareAndSet(false, true)) return@synchronized false
-            statePublisher.close()
-            leaseToClose = externalOpenLease
-            externalOpenLease = null
-            true
-        }
-        if (!claimed) return
-        synchronized(cacheProbeLock) {
-            cacheProbes.clear()
-            activeFileOperations.clear()
-        }
-        scope.cancel()
-        leaseToClose?.close()
+        if (!closed.compareAndSet(false, true)) return
+        core.close()
     }
 
     /** 新准入的打开请求会在预留字节之前，替换掉上一个系统交接。 */
     private fun retireExternalOpenLease() {
-        val lease = synchronized(publicationLock) {
+        val lease = synchronized(externalOpenLeaseLock) {
             externalOpenLease.also { externalOpenLease = null }
         }
         lease?.close()
     }
 
-    private suspend fun downloadInternal(
-        attachment: Attachment,
-        openWhenDone: Boolean,
-        admission: FileOperationAdmission,
-    ) {
-        val key = attachment.path
-        var openStarted = false
-        beforeOwnerGenerationClaim()
-        val shouldStart = synchronized(publicationLock) {
-            synchronized(downloadLock) {
-                if (openWhenDone) openStarted = openAfterDownload.add(key)
-                inFlight.add(key).also { admitted ->
-                    if (admitted) claimFileOperationGenerationLocked(admission)
+    private fun retainExternalOpenLease(lease: AndroidMediaCacheFileLease): Boolean {
+        var previousLease: AndroidMediaCacheFileLease? = null
+        var retained = false
+        mediaSession.runIfOpen {
+            synchronized(externalOpenLeaseLock) {
+                if (!closed.get()) {
+                    previousLease = externalOpenLease
+                    externalOpenLease = lease
+                    retained = true
                 }
             }
         }
-        if (openStarted) recordMedia(MediaOperation.OPEN, ClientActionOutcome.STARTED)
-        if (!shouldStart) return
-        var ownerFinished = false
-
-        fun finishOwner(): Boolean {
-            check(!ownerFinished) { "Android file download owner already finished: $key" }
-            return synchronized(downloadLock) {
-                check(inFlight.remove(key)) { "Android file download owner missing: $key" }
-                openAfterDownload.remove(key)
-            }.also { ownerFinished = true }
-        }
-
-        var downloadedLease: AndroidMediaCacheFileLease? = null
-        try {
-            telemetry.recordMedia(
-                telemetryPage,
-                ClientMediaKind.FILE,
-                MediaOperation.DOWNLOAD,
-                ClientActionOutcome.STARTED,
-            )
-            publishOperationState(admission, FileDownloadState.Downloading(0f))
-            downloadedLease = downloadToCache(
-                cacheRoot,
-                mediaSession,
-                attachment,
-            ) { progress ->
-                publishOperationState(admission, FileDownloadState.Downloading(progress))
-            }
-            if (closed.get() || !mediaSession.isCurrentOwner()) {
-                val pendingOpen = finishOwner()
-                if (pendingOpen) recordMedia(MediaOperation.OPEN, ClientActionOutcome.CANCELLED)
-                return
-            }
-            telemetry.recordMedia(
-                telemetryPage,
-                ClientMediaKind.FILE,
-                MediaOperation.DOWNLOAD,
-                ClientActionOutcome.SUCCEEDED,
-            )
-            // 消费待处理的打开请求并退役 inFlight 是同一个线性化点：迟到的打开者要么在这里被消费，
-            // 要么在锁释放之后成为下一个所有者。
-            val shouldOpen = finishOwner()
-            if (shouldOpen) {
-                val lease = checkNotNull(downloadedLease)
-                downloadedLease = null
-                if (openCached(lease, attachment, operationAlreadyStarted = true, admission)) {
-                    publishOperationTerminal(admission, FileDownloadState.Done)
-                }
-            } else {
-                publishOperationTerminal(admission, FileDownloadState.Done)
-            }
-        } catch (cancelled: CancellationException) {
-            val pendingOpen = if (ownerFinished) false else finishOwner()
-            if (pendingOpen) recordMedia(MediaOperation.OPEN, ClientActionOutcome.CANCELLED)
-            throw cancelled
-        } catch (expired: AppError.AuthExpired) {
-            // HTTP/会话边界已经上报了确切的当前凭证。防止控制器把终态认证失败
-            // 降级成可重试的文件错误。
-            val pendingOpen = if (ownerFinished) false else finishOwner()
-            publishOperationTerminal(admission, FileDownloadState.Idle)
-            if (pendingOpen) recordMedia(MediaOperation.OPEN, ClientActionOutcome.CANCELLED)
-        } catch (e: Exception) {
-            val pendingOpen = if (ownerFinished) false else finishOwner()
-            if (closed.get() || !mediaSession.isCurrentOwner()) {
-                if (pendingOpen) recordMedia(MediaOperation.OPEN, ClientActionOutcome.CANCELLED)
-                return
-            }
-            val reason = classifyAndroidMediaFailure(e)
-            warningLogger("FileDownload", "附件下载失败: ${reason.code}")
-            publishFailure(key, reason, MediaOperation.DOWNLOAD, admission = admission)
-            if (pendingOpen) {
-                recordMedia(MediaOperation.OPEN, ClientActionOutcome.FAILED, reason)
-            }
-        } finally {
-            downloadedLease?.close()
-            if (!ownerFinished) {
-                val abandonedOpen = finishOwner()
-                if (abandonedOpen) {
-                    recordMedia(MediaOperation.OPEN, ClientActionOutcome.CANCELLED)
-                }
-            }
-        }
+        previousLease?.close()
+        return retained
     }
 
-    private fun openCached(
-        lease: AndroidMediaCacheFileLease,
-        attachment: Attachment,
-        operationAlreadyStarted: Boolean,
-        admission: FileOperationAdmission,
-    ): Boolean {
-        var pendingLease: AndroidMediaCacheFileLease? = lease
-        try {
-            if (!operationAlreadyStarted) {
-                recordMedia(MediaOperation.OPEN, ClientActionOutcome.STARTED)
-            }
-            if (closed.get() || !mediaSession.isCurrentOwner()) {
-                recordMedia(MediaOperation.OPEN, ClientActionOutcome.CANCELLED)
-                return false
-            }
-            try {
-                externalOpener(lease.file, attachment.contentType)
-            } catch (cancelled: CancellationException) {
-                recordMedia(MediaOperation.OPEN, ClientActionOutcome.CANCELLED)
-                throw cancelled
-            } catch (_: Exception) {
-                if (closed.get() || !mediaSession.isCurrentOwner()) {
-                    recordMedia(MediaOperation.OPEN, ClientActionOutcome.CANCELLED)
-                    return false
-                }
-                warningLogger("FileDownload", "附件打开失败: unsupported")
-                publishFailure(
-                    key = attachment.path,
-                    reason = MediaFailureReason.UNSUPPORTED,
-                    operation = MediaOperation.OPEN,
-                    feedbackCode = UserFeedbackCode.MEDIA_OPEN_FAILED,
-                    admission = admission,
-                )
-                return false
-            }
-            var previousLease: AndroidMediaCacheFileLease? = null
-            var retained = false
-            mediaSession.runIfOpen {
-                synchronized(publicationLock) {
-                    if (!closed.get()) {
-                        previousLease = externalOpenLease
-                        externalOpenLease = lease
-                        retained = true
-                    }
-                }
-            }
-            if (retained) pendingLease = null
-            previousLease?.close()
-            recordMedia(
-                MediaOperation.OPEN,
-                if (closed.get() || !mediaSession.isCurrentOwner()) {
-                    ClientActionOutcome.CANCELLED
-                } else {
-                    ClientActionOutcome.SUCCEEDED
-                },
-            )
-            return retained
-        } finally {
-            pendingLease?.close()
+    private fun releaseExternalOpenLease() {
+        val lease = synchronized(externalOpenLeaseLock) {
+            externalOpenLease.also { externalOpenLease = null }
         }
+        lease?.close()
     }
 
     private fun openTextPreview(attachment: Attachment) {
@@ -473,9 +227,11 @@ class AndroidFileDownloadController private constructor(
             } else {
                 ClientActionOutcome.FAILED
             }
-            recordMedia(MediaOperation.PREVIEW, outcome, MediaFailureReason.UNKNOWN.takeIf {
-                outcome == ClientActionOutcome.FAILED
-            })
+            recordMedia(
+                MediaOperation.PREVIEW,
+                outcome,
+                MediaFailureReason.UNKNOWN.takeIf { outcome == ClientActionOutcome.FAILED },
+            )
             return
         }
         recordMedia(
@@ -489,46 +245,31 @@ class AndroidFileDownloadController private constructor(
     }
 
     /**
-     * 保存到设备：已下载直接导出；未下载先完成既有认证下载再导出（T007）。
+     * 保存到设备：权限先于缓存探测/下载；完整本地文件导出到系统相册或下载目录。
      * 返回 true 表示动作已受理；结果通过系统 Toast 呈现。
      */
     override fun exportToUserLocation(attachment: Attachment): Boolean {
         val context = appContext ?: return false
         if (closed.get() || !mediaSession.isCurrentOwner()) return false
-        launchFileOperation(attachment.path) { admission ->
-            if (!requestExportPermission()) {
-                showExportFeedback(context, "未获得存储权限，无法保存；可在系统应用设置中开启")
-                return@launchFileOperation
-            }
-            mediaSession.ensureOpen()
-            if (closed.get()) return@launchFileOperation
-            // 本地复制也属于账号操作：退役必须等未完成导出回收后才能清理账号缓存。
-            // 权限等待放在注册前，避免会话关闭等待主线程上的系统权限回调。
-            val exportJob = checkNotNull(currentCoroutineContext()[Job])
-            mediaSession.withRegisteredOperation(abort = { exportJob.cancel() }) {
-                suspend fun pinnedCachedLease(): AndroidMediaCacheFileLease? = try {
-                    val root = cacheRoot
-                    AndroidMediaCacheCapacityRegistry.cachedLease(
-                        cacheRoot = root,
-                        file = cachedFile(root, attachment),
-                        expectedBytes = attachment.size,
-                    )
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    null
-                }
 
-                var lease = pinnedCachedLease()
-                try {
-                    if (lease == null) {
-                        downloadInternal(attachment, openWhenDone = false, admission = admission)
-                        lease = pinnedCachedLease()
-                    }
-                    val ok = lease != null && exportAndroidAttachmentToUserLocation(
+        return core.actWithLease(
+            attachment = attachment,
+            prepare = {
+                if (!requestExportPermission()) {
+                    showExportFeedback(context, "未获得存储权限，无法保存；可在系统应用设置中开启")
+                    false
+                } else {
+                    mediaSession.ensureOpen()
+                    !closed.get()
+                }
+            },
+            perform = { lease, selectedAttachment ->
+                val exportJob = checkNotNull(currentCoroutineContext()[Job])
+                mediaSession.withRegisteredOperation(abort = { exportJob.cancel() }) {
+                    val ok = exportAndroidAttachmentToUserLocation(
                         context = context,
-                        file = checkNotNull(lease).file,
-                        attachment = attachment,
+                        file = lease.file,
+                        attachment = selectedAttachment,
                         workerDispatcher = workerDispatcher,
                         ensureOwnerOpen = {
                             mediaSession.ensureOpen()
@@ -537,18 +278,16 @@ class AndroidFileDownloadController private constructor(
                     )
                     val message = when {
                         ok &&
-                            (attachment.contentType.startsWith("image/") ||
-                                attachment.contentType.startsWith("video/")) -> "已保存到相册"
+                            (selectedAttachment.contentType.startsWith("image/") ||
+                                selectedAttachment.contentType.startsWith("video/")) -> "已保存到相册"
                         ok -> "已保存到下载"
                         else -> "保存失败"
                     }
                     showExportFeedback(context, message)
-                } finally {
-                    lease?.close()
                 }
-            }
-        }
-        return true
+                false
+            },
+        )
     }
 
     private fun showExportFeedback(context: Context, message: String) {
@@ -562,8 +301,8 @@ class AndroidFileDownloadController private constructor(
     }
 
     /**
-     * 复制图片：本地优先（缺失即走既有认证下载），以 FileProvider 内容 URI 进系统
-     * 剪贴板，粘贴方按 URI 读取图片本体；结果经 Toast 反馈，[onResult] 供 UI 回落。
+     * 复制图片：本地优先（缺失即走既有认证下载），以 FileProvider 内容 URI 进系统剪贴板。
+     * 动作完成前持有缓存租约和会话操作注册；失败回调由调用方回落复制文本摘要。
      */
     override fun copyAttachmentImage(attachment: Attachment, onResult: (Boolean) -> Unit) {
         val context = appContext
@@ -571,56 +310,30 @@ class AndroidFileDownloadController private constructor(
             onResult(false)
             return
         }
-        var reported = false
+        val reported = AtomicBoolean(false)
         fun report(ok: Boolean) {
-            if (!reported) {
-                reported = true
-                onResult(ok)
-            }
+            if (reported.compareAndSet(false, true)) onResult(ok)
         }
-        launchFileOperation(attachment.path) { admission ->
-            try {
-                mediaSession.ensureOpen()
-                val copyJob = checkNotNull(currentCoroutineContext()[Job])
-                mediaSession.withRegisteredOperation(abort = { copyJob.cancel() }) {
-                    suspend fun pinnedCachedLease(): AndroidMediaCacheFileLease? = try {
-                        val root = cacheRoot
-                        AndroidMediaCacheCapacityRegistry.cachedLease(
-                            cacheRoot = root,
-                            file = cachedFile(root, attachment),
-                            expectedBytes = attachment.size,
-                        )
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        null
-                    }
 
-                    var lease = pinnedCachedLease()
-                    try {
-                        if (lease == null) {
-                            downloadInternal(attachment, openWhenDone = false, admission = admission)
-                            if (closed.get() || !mediaSession.isCurrentOwner()) {
-                                report(false)
-                                return@withRegisteredOperation
-                            }
-                            lease = pinnedCachedLease()
-                        }
-                        val file = lease?.file?.takeIf { it.length() == attachment.size }
-                        val ok = file != null && writeImageClip(context, checkNotNull(file), attachment.name)
-                        showExportFeedback(context, if (ok) "已复制图片" else "复制失败")
-                        report(ok)
-                    } finally {
-                        lease?.close()
-                    }
-                }
-            } catch (cancelled: CancellationException) {
-                report(false)
-                throw cancelled
-            } catch (_: Exception) {
-                report(false)
+        val accepted = core.actWithLease(
+            attachment = attachment,
+            prepare = {
+                mediaSession.ensureOpen()
+                !closed.get()
+            },
+            onAbandoned = { report(false) },
+        ) { lease, selectedAttachment ->
+            val copyJob = checkNotNull(currentCoroutineContext()[Job])
+            mediaSession.withRegisteredOperation(abort = { copyJob.cancel() }) {
+                mediaSession.ensureOpen()
+                val file = lease.file.takeIf { it.length() == selectedAttachment.size }
+                val ok = file != null && writeImageClip(context, checkNotNull(file), selectedAttachment.name)
+                showExportFeedback(context, if (ok) "已复制图片" else "复制失败")
+                report(ok)
             }
+            false
         }
+        if (!accepted) report(false)
     }
 
     private suspend fun writeImageClip(context: Context, file: File, label: String): Boolean = try {
@@ -639,206 +352,101 @@ class AndroidFileDownloadController private constructor(
         false
     }
 
-    private fun cachedFile(cacheRoot: File, attachment: Attachment): File {
-        return attachmentCacheFile(cacheRoot, mediaSession.cacheNamespace, attachment)
-    }
-
-    private fun isCurrentCacheProbe(key: String, probe: Any): Boolean =
-        synchronized(cacheProbeLock) { cacheProbes[key] === probe }
-
-    private fun retireCacheProbe(key: String, probe: Any) {
-        synchronized(cacheProbeLock) {
-            if (cacheProbes[key] === probe) cacheProbes.remove(key)
-        }
-    }
-
-    private fun admitFileOperation(key: String): FileOperationAdmission {
-        val admission = FileOperationAdmission(key)
-        synchronized(cacheProbeLock) {
-            cacheProbes.remove(key)
-            activeFileOperations.getOrPut(key, ::mutableSetOf).add(admission)
-        }
-        return admission
-    }
-
-    private fun retireFileOperation(admission: FileOperationAdmission) {
-        if (!admission.retired.compareAndSet(false, true)) return
-        synchronized(cacheProbeLock) {
-            val admissions = activeFileOperations[admission.key] ?: return
-            admissions.remove(admission)
-            if (admissions.isEmpty()) activeFileOperations.remove(admission.key)
-        }
-    }
-
-    private fun claimFileOperationGeneration(admission: FileOperationAdmission) {
-        beforeOwnerGenerationClaim()
-        synchronized(publicationLock) {
-            synchronized(downloadLock) { claimFileOperationGenerationLocked(admission) }
-        }
-    }
-
-    private fun claimFileOperationGenerationLocked(admission: FileOperationAdmission) {
-        check(admission.ownerGeneration.get() == 0L) {
-            "Android file operation already owns a generation: ${admission.key}"
-        }
-        check(nextFileOperationGeneration < Long.MAX_VALUE) {
-            "Android file operation generation exhausted"
-        }
-        val generation = ++nextFileOperationGeneration
-        currentFileOperationGenerations[admission.key] = generation
-        admission.ownerGeneration.set(generation)
-    }
-
-    private fun isCurrentFileOperation(admission: FileOperationAdmission): Boolean {
-        val generation = admission.ownerGeneration.get()
-        return generation > 0L && synchronized(downloadLock) {
-            currentFileOperationGenerations[admission.key] == generation
-        }
-    }
-
-    private fun clearFileOperationGeneration(admission: FileOperationAdmission) {
-        val generation = admission.ownerGeneration.get()
-        if (generation == 0L) return
-        synchronized(publicationLock) {
-            synchronized(downloadLock) {
-                if (currentFileOperationGenerations[admission.key] == generation) {
-                    currentFileOperationGenerations.remove(admission.key)
-                }
-            }
-        }
-    }
-
-    private fun launchFileOperation(
-        key: String,
-        operation: suspend CoroutineScope.(FileOperationAdmission) -> Unit,
-    ) {
-        val admission = admitFileOperation(key)
-        val job = try {
-            scope.launch { operation(admission) }
-        } catch (failure: Throwable) {
-            clearFileOperationGeneration(admission)
-            retireFileOperation(admission)
-            throw failure
-        }
-        // 每次点击拥有一个独立的准入。没有终态结果的任务在此退役；
-        // 否则可靠的终态发布会把所有权带过 UI 交接环节。
-        job.invokeOnCompletion {
-            if (!admission.terminalClaimed.get()) {
-                clearFileOperationGeneration(admission)
-                retireFileOperation(admission)
-            }
-        }
-    }
-
-    private fun publishOperationTerminal(
-        admission: FileOperationAdmission,
-        state: FileDownloadState,
-        onPublished: (() -> Unit)? = null,
-    ) {
-        check(state !is FileDownloadState.Downloading && state !is FileDownloadState.Checking) {
-            "Only a file operation terminal may claim its admission"
-        }
-        check(admission.terminalClaimed.compareAndSet(false, true)) {
-            "Android file operation published more than one terminal: ${admission.key}"
-        }
-        try {
-            publishState(
-                key = admission.key,
-                state = state,
-                isStillCurrent = { isCurrentFileOperation(admission) },
-                onDiscarded = {
-                    clearFileOperationGeneration(admission)
-                    retireFileOperation(admission)
-                },
-                onPublished = {
-                    clearFileOperationGeneration(admission)
-                    retireFileOperation(admission)
-                    onPublished?.invoke()
-                },
-            )
-        } catch (failure: Throwable) {
-            clearFileOperationGeneration(admission)
-            retireFileOperation(admission)
-            throw failure
-        }
-    }
-
-    private fun publishOperationState(
-        admission: FileOperationAdmission,
-        state: FileDownloadState.Downloading,
-    ) {
-        publishState(
-            key = admission.key,
-            state = state,
-            isStillCurrent = { isCurrentFileOperation(admission) },
-        )
-    }
-
-    private fun publishState(
-        key: String,
-        state: FileDownloadState,
-        isStillCurrent: () -> Boolean = { true },
-        onDiscarded: (() -> Unit)? = null,
-        onPublished: (() -> Unit)? = null,
-    ) {
-        if (closed.get()) {
-            onDiscarded?.invoke()
-            return
-        }
-        statePublisher.publish(
-            key = key,
-            state = state,
-            isStillCurrent = isStillCurrent,
-            onDiscarded = onDiscarded,
-            onPublished = onPublished,
-        )
-    }
-
-    private fun publishFailure(
-        key: String,
-        reason: MediaFailureReason,
-        operation: MediaOperation,
-        feedbackCode: UserFeedbackCode = reason.downloadFeedbackCode,
-        admission: FileOperationAdmission? = null,
-    ) {
-        val notice = UserFeedbackNotice(
-            feedbackCode = feedbackCode,
-            page = telemetryPage,
-            action = when (operation) {
-                MediaOperation.OPEN -> ClientUiAction.OPEN_MEDIA
-                else -> ClientUiAction.DOWNLOAD_MEDIA
-            },
-            origin = FeedbackOrigin.INLINE,
-        )
-        recordMedia(operation, ClientActionOutcome.FAILED, reason)
-        val failed = FileDownloadState.Failed(notice.publicMessage)
-        if (admission == null) {
-            publishState(
-                key = key,
-                state = failed,
-                onPublished = { telemetry.recordUserNotice(notice) },
-            )
-        } else {
-            publishOperationTerminal(
-                admission = admission,
-                state = failed,
-                onPublished = { telemetry.recordUserNotice(notice) },
-            )
-        }
-    }
+    private fun cachedFile(attachment: Attachment): File =
+        attachmentCacheFile(cacheRoot, mediaSession.cacheNamespace, attachment)
 
     private fun recordMedia(
         operation: MediaOperation,
         outcome: ClientActionOutcome,
         reason: MediaFailureReason? = null,
     ) {
-        telemetry.recordMedia(
-            telemetryPage,
-            ClientMediaKind.FILE,
-            operation,
-            outcome,
-            reason,
+        telemetry.recordMedia(telemetryPage, ClientMediaKind.FILE, operation, outcome, reason)
+    }
+
+    private inner class AndroidAdapter(
+        private val ownerThreadPredicate: () -> Boolean,
+    ) : FileDownloadCoreAdapter<AndroidMediaCacheFileLease> {
+        override val uiScope: CoroutineScope
+            get() = ownerUiScope
+
+        override fun createWorkerScope(): CoroutineScope = CoroutineScope(
+            SupervisorJob() + workerDispatcher + CoroutineName("android-file-download-worker"),
         )
+
+        override fun isOwnerThread(): Boolean = ownerThreadPredicate()
+
+        override fun beforeOwnerGenerationClaim() {
+            this@AndroidFileDownloadController.beforeOwnerGenerationClaim()
+        }
+
+        override fun isOwnerCurrent(): Boolean = !closed.get() && mediaSession.isCurrentOwner()
+
+        override fun runIfOpen(action: () -> Unit): Boolean {
+            var published = false
+            val open = mediaSession.runIfOpen {
+                if (!closed.get()) {
+                    action()
+                    published = true
+                }
+            }
+            return open && published
+        }
+
+        override suspend fun probeCached(attachment: Attachment): Boolean =
+            isValidAttachmentCacheFile(cachedFile(attachment), attachment)
+
+        override suspend fun cachedLease(attachment: Attachment): AndroidMediaCacheFileLease? = try {
+            val root = cacheRoot
+            AndroidMediaCacheCapacityRegistry.cachedLease(
+                cacheRoot = root,
+                file = cachedFile(attachment),
+                expectedBytes = attachment.size,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+
+        override suspend fun downloadToCache(
+            attachment: Attachment,
+            onProgress: (Float) -> Unit,
+        ): AndroidMediaCacheFileLease = downloadToCache(
+            cacheRoot,
+            mediaSession,
+            attachment,
+            onProgress,
+        )
+
+        override fun closeLease(lease: AndroidMediaCacheFileLease) = lease.close()
+
+        override suspend fun performPendingAction(
+            action: FileDownloadPendingAction,
+            lease: AndroidMediaCacheFileLease,
+            attachment: Attachment,
+        ): Boolean = when (action) {
+            FileDownloadPendingAction.OPEN -> {
+                externalOpener(lease.file, attachment.contentType)
+                retainExternalOpenLease(lease)
+            }
+            FileDownloadPendingAction.PREVIEW -> {
+                onTextAttachmentPreview?.invoke(attachment)
+                false
+            }
+            // Android invokes exports through actWithLease so permission is requested before downloading.
+            FileDownloadPendingAction.EXPORT -> error("Android export requires its permission preflight")
+        }
+
+        override fun classifyFailure(failure: Throwable): MediaFailureReason =
+            classifyAndroidMediaFailure(failure)
+
+        override fun warn(message: String) {
+            warningLogger("FileDownload", message)
+        }
+
+        override fun onClosed() {
+            releaseExternalOpenLease()
+        }
     }
 }
 

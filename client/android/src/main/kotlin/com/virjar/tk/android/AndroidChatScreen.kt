@@ -46,6 +46,7 @@ import com.virjar.tk.app.ui.bridge.EmbeddedAssetLocalSelection
 import com.virjar.tk.app.ui.component.rememberEmbeddedMediaClickHandler
 import com.virjar.tk.app.ui.component.rememberMediaClickHandler
 import com.virjar.tk.app.ui.screen.ChatPanel
+import com.virjar.tk.app.ui.screen.isSystemAccountUid
 import com.virjar.tk.app.navigation.feature.chat.OutgoingMediaSender
 import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
 import com.virjar.tk.app.navigation.feature.chat.ChatDraftLifecycleBridge
@@ -547,8 +548,13 @@ internal fun AndroidChatScreen(
                         chatType = chatType,
                         onBack = actionAdmission.guard(onBack),
                         onGroupDetail = actionAdmission.guard(onGroupDetail),
-                        onVoiceCall = callCenter?.let { cc -> actionAdmission.guard { placeCall(video = false) } },
-                        onVideoCall = callCenter?.let { cc -> actionAdmission.guard { placeCall(video = true) } },
+                        // 系统账号（服务号/文件传输助手，sys_ 前缀）不提供通话入口
+                        onVoiceCall = if (!isSystemAccountUid(chatPeerUid)) {
+                            callCenter?.let { cc -> actionAdmission.guard { placeCall(video = false) } }
+                        } else null,
+                        onVideoCall = if (!isSystemAccountUid(chatPeerUid)) {
+                            callCenter?.let { cc -> actionAdmission.guard { placeCall(video = true) } }
+                        } else null,
                     )
                     taskBanner?.invoke()
                     if (isUploading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())

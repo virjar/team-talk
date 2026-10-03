@@ -436,6 +436,8 @@ abstract class AssembleDesktopShellTask : DefaultTask() {
           <key>LSArchitecturePriority</key><array><string>${if (target.get() == DesktopTarget.MACOS_AARCH64) "arm64" else "x86_64"}</string></array>
           <key>NSHighResolutionCapable</key><true/>
           <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+          <key>NSCameraUsageDescription</key><string>视频通话时使用摄像头。</string>
+          <key>NSMicrophoneUsageDescription</key><string>语音和视频通话时使用麦克风。</string>
           <key>TeamTalkMainClass</key><string>com.virjar.tk.desktop.shell.BootstrapMain</string>
           <key>TeamTalkDownloadBaseURL</key><string>${xmlText(serverUrl)}</string>
           <key>TeamTalkJVMOptions</key>

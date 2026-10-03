@@ -404,6 +404,19 @@ internal fun WindowScope.MainAppContent(
         // 通话引擎工厂一次性注入（协议 minor 0.5）：引擎按通话创建，平台资源随会话退役
         LaunchedEffect(nav) {
             nav.callCenter.bindEngineFactory { com.virjar.tk.desktop.call.DesktopCallEngine() }
+            // 媒体联调开关：TEAMTALK_DEBUG_AUTOACCEPT=true 时来电自动接听（生产勿设）
+            if (System.getenv("TEAMTALK_DEBUG_AUTOACCEPT") == "true") {
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+                    nav.callCenter.state.collect { state ->
+                        if (state?.phase == com.virjar.tk.shared.call.CallPhase.RINGING &&
+                            state.direction == com.virjar.tk.shared.call.CallDirection.INCOMING
+                        ) {
+                            kotlinx.coroutines.delay(300)
+                            runCatching { nav.callCenter.acceptIncoming() }
+                        }
+                    }
+                }
+            }
         }
         com.virjar.tk.desktop.call.DesktopCallOverlay(nav)
             // 主窗口原生全屏时的画廊覆盖层（内测 T020）：必须最后声明以处于最顶层。

@@ -20,7 +20,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
-import java.util.concurrent.ConcurrentHashMap
 
 /** 用户在线判定端口；实现由连接注册表提供，domain 不感知连接。 */
 fun interface CallOnlineChecker {
@@ -76,10 +75,12 @@ class CallService(
 ) : PresenceTransitionObserver, AutoCloseable {
 
     private val logger = LoggerFactory.getLogger(CallService::class.java)
+    /** 两张索引表与可变呼叫状态统一由 [mutex] 守护。 */
     private val mutex = Mutex()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val callsByCallId = ConcurrentHashMap<String, CallSession>()
-    private val activeCallByUid = ConcurrentHashMap<String, String>()
+    private val lifecycle = SupervisorJob()
+    private val scope = CoroutineScope(lifecycle + Dispatchers.Default)
+    private val callsByCallId = mutableMapOf<String, CallSession>()
+    private val activeCallByUid = mutableMapOf<String, String>()
 
     private class CallSession(
         val callId: String,
@@ -93,6 +94,22 @@ class CallService(
 
     private enum class State { RINGING, ACTIVE }
 
+    /** 从活动呼叫表摘除时捕获的不可变快照。 */
+    private data class FinishedCall(
+        val callId: String,
+        val callerUid: String,
+        val calleeUid: String,
+        val video: Boolean,
+        val durationSec: Int,
+        val reason: CallEndReason,
+    )
+
+    /** 邀请裁决及离线呼叫的结束记录。 */
+    private data class InviteResult(
+        val outcome: CallInviteOutcome,
+        val finishedCall: FinishedCall? = null,
+    )
+
     /**
      * 主叫发起。仅好友可通话（双向拉黑拒绝）；自身忙线与对端忙线都收敛为 busy outcome，
      * 对端离线返回不可达——这些都不打断被叫。可达时向被叫瞬时投递 RING（携带 ICE 凭据）。
@@ -101,16 +118,26 @@ class CallService(
         if (!admission.canCall(callerUid, calleeUid)) {
             throw IllegalArgumentException("仅好友之间可以发起通话")
         }
-        mutex.withLock {
+        val result = mutex.withLock {
             if (activeCallByUid.containsKey(callerUid) || activeCallByUid.containsKey(calleeUid)) {
-                return CallInviteOutcome(deliverable = false, busy = true, iceServers = emptyList())
+                return@withLock InviteResult(
+                    outcome = CallInviteOutcome(deliverable = false, busy = true, iceServers = emptyList()),
+                )
             }
             val online = onlineChecker.isOnline(calleeUid)
             if (!online) {
                 // 从未进入振铃表：直接按无应答终结（落未接记录并通知双方）
-                finish(newRingingSession(callId, callerUid, calleeUid, video), CallEndReason.TIMEOUT)
-                return CallInviteOutcome(deliverable = false, busy = false, iceServers = emptyList())
+                val finished = finishedCall(
+                    newRingingSession(callId, callerUid, calleeUid, video),
+                    CallEndReason.TIMEOUT,
+                )
+                publishEnded(finished)
+                return@withLock InviteResult(
+                    outcome = CallInviteOutcome(deliverable = false, busy = false, iceServers = emptyList()),
+                    finishedCall = finished,
+                )
             }
+            val issuedIceServers = iceServers.issue(ICE_CREDENTIAL_VALID_SEC)
             val session = newRingingSession(callId, callerUid, calleeUid, video)
             callsByCallId[callId] = session
             activeCallByUid[callerUid] = callId
@@ -124,21 +151,26 @@ class CallService(
                     kind = CallEventKind.RING,
                     video = video,
                     endReasonCode = 0,
-                    iceServers = iceServers.issue(ICE_CREDENTIAL_VALID_SEC),
+                    iceServers = issuedIceServers,
                 ),
             )
-            return CallInviteOutcome(deliverable = true, busy = false, iceServers = iceServers.issue(ICE_CREDENTIAL_VALID_SEC))
+            InviteResult(
+                outcome = CallInviteOutcome(deliverable = true, busy = false, iceServers = issuedIceServers),
+            )
         }
+        result.finishedCall?.let { persistCallLog(it) }
+        return result.outcome
     }
 
     /** 被叫应答；接受后向主叫投递 ACCEPTED。呼叫不存在或已终结返回 false。 */
     suspend fun answer(calleeUid: String, callId: String, accept: Boolean): Boolean {
+        var finished: FinishedCall? = null
         mutex.withLock {
             val session = callsByCallId[callId] ?: return false
             if (session.calleeUid != calleeUid || session.state != State.RINGING) return false
             if (!accept) {
-                finishLocked(session, CallEndReason.DECLINED)
-                return true
+                finished = finishLocked(session, CallEndReason.DECLINED) ?: return false
+                return@withLock
             }
             session.state = State.ACTIVE
             session.acceptedAtMillis = nowMillis()
@@ -150,8 +182,9 @@ class CallService(
                     video = session.video, endReasonCode = 0, iceServers = emptyList(),
                 ),
             )
-            return true
         }
+        finished?.let { persistCallLog(it) }
+        return true
     }
 
     /** 媒体协商中继：原样转发给参与对端，不理解内容。 */
@@ -170,40 +203,53 @@ class CallService(
 
     /** 参与方终结呼叫；只接受已定义的原因，未知值按挂断处理。 */
     suspend fun hangup(uid: String, callId: String, reasonCode: Int): Boolean {
-        mutex.withLock {
+        val finished = mutex.withLock {
             val session = callsByCallId[callId] ?: return false
             if (session.peerOf(uid) == null) return false
             val reason = CallEndReason.entries.firstOrNull { it.code == reasonCode } ?: CallEndReason.HANGUP
             finishLocked(session, reason)
-            return true
-        }
+        } ?: return false
+        persistCallLog(finished)
+        return true
     }
 
     /** MaintenanceWorker 驱动：终结超时仍未接听的振铃。 */
     suspend fun sweepTimeouts() {
         val now = nowMillis()
         val expired = mutex.withLock {
-            callsByCallId.values.filter { it.state == State.RINGING && it.ringDeadlineMillis <= now }
-                .onEach { finishLocked(it, CallEndReason.TIMEOUT) }
+            val expiredSessions = callsByCallId.values.filter {
+                it.state == State.RINGING && it.ringDeadlineMillis <= now
+            }
+            val finished = mutableListOf<FinishedCall>()
+            for (session in expiredSessions) {
+                finishLocked(session, CallEndReason.TIMEOUT)?.let(finished::add)
+            }
+            finished
         }
         if (expired.isNotEmpty()) {
             logger.info("通话振铃超时终结: {} 个", expired.size)
+            expired.forEach { persistCallLog(it) }
         }
     }
 
     /** 参与方全部设备离线时按连接中断终结（非阻塞观察者，副作用异步执行）。 */
     override fun onTransition(transition: PresenceTransition) {
         if (transition.online) return
-        val affected = callsByCallId.values.filter {
-            it.callerUid == transition.uid || it.calleeUid == transition.uid
-        }
-        affected.forEach { session ->
-            scope.launch {
-                try {
-                    finish(session, CallEndReason.CONNECTION_LOST)
-                } catch (e: Exception) {
-                    logger.warn("断连终结呼叫失败: callId={}", session.callId)
+        scope.launch {
+            try {
+                val finished = mutex.withLock {
+                    val affected = callsByCallId.values.filter {
+                        it.callerUid == transition.uid || it.calleeUid == transition.uid
+                    }
+                    val calls = mutableListOf<FinishedCall>()
+                    for (session in affected) {
+                        finishLocked(session, CallEndReason.CONNECTION_LOST)?.let(calls::add)
+                    }
+                    calls
                 }
+                finished.forEach { persistCallLog(it) }
+            } catch (e: Exception) {
+                logger.warn("断连终结呼叫失败: uid={}", transition.uid)
             }
         }
     }
@@ -211,6 +257,16 @@ class CallService(
     override fun close() {
         scope.cancel()
     }
+
+    /** 取消断连回调，并等待它们退出后再允许释放消息与数据库依赖。 */
+    suspend fun closeAndJoin() {
+        scope.cancel()
+        lifecycle.join()
+    }
+
+    /** 资源关闭屏障读取实际 Job 状态，而非仅检查 close() 是否已调用。 */
+    val workersTerminated: Boolean
+        get() = lifecycle.isCompleted
 
     private fun newRingingSession(callId: String, callerUid: String, calleeUid: String, video: Boolean) =
         CallSession(
@@ -223,46 +279,66 @@ class CallService(
             ringDeadlineMillis = nowMillis() + RINGING_TIMEOUT_MILLIS,
         )
 
-    /** 锁内终结：先移除表项保证幂等（重入直接返回），再串行投递信令与落库。 */
-    private suspend fun finishLocked(session: CallSession, reason: CallEndReason) {
-        if (callsByCallId.remove(session.callId) == null) return
+    /** 锁内移除并通知：映射只在此处释放，结束后 CALL_LOG 持久化在锁外完成。 */
+    private suspend fun finishLocked(session: CallSession, reason: CallEndReason): FinishedCall? {
+        if (callsByCallId.remove(session.callId) !== session) return null
         activeCallByUid.remove(session.callerUid, session.callId)
         activeCallByUid.remove(session.calleeUid, session.callId)
-        finish(session, reason)
+        val finished = finishedCall(session, reason)
+        publishEnded(finished)
+        return finished
     }
 
-    private suspend fun finish(session: CallSession, reason: CallEndReason) {
+    private fun finishedCall(session: CallSession, reason: CallEndReason): FinishedCall {
         val durationSec = if (session.state == State.ACTIVE && session.acceptedAtMillis > 0) {
             ((nowMillis() - session.acceptedAtMillis) / 1000).toInt().coerceAtLeast(0)
         } else {
             0
         }
+        return FinishedCall(
+            callId = session.callId,
+            callerUid = session.callerUid,
+            calleeUid = session.calleeUid,
+            video = session.video,
+            durationSec = durationSec,
+            reason = reason,
+        )
+    }
+
+    private suspend fun publishEnded(finished: FinishedCall) {
         // 对端与本端都以 ENDED 收敛（超时/断连时两端都需要被告知）
-        listOf(session.callerUid, session.calleeUid).forEach { uid ->
+        listOf(finished.callerUid, finished.calleeUid).forEach { uid ->
             runCatching {
                 publisher.emitTransient(
                     uid,
                     NotifyType.CALL_EVENT,
                     CallEventPayload(
-                        callId = session.callId, fromUid = session.callerUid, kind = CallEventKind.ENDED,
-                        video = session.video, endReasonCode = reason.code, iceServers = emptyList(),
+                        callId = finished.callId,
+                        fromUid = finished.callerUid,
+                        kind = CallEventKind.ENDED,
+                        video = finished.video,
+                        endReasonCode = finished.reason.code,
+                        iceServers = emptyList(),
                     ),
                 )
-            }.onFailure { logger.warn("ENDED 信令投递失败: callId={}", session.callId) }
+            }.onFailure { logger.warn("ENDED 信令投递失败: callId={}", finished.callId) }
         }
+    }
+
+    private suspend fun persistCallLog(finished: FinishedCall) {
         runCatching {
-            val chatId = sessions.ensurePersonalChat(session.callerUid, session.calleeUid)
+            val chatId = sessions.ensurePersonalChat(finished.callerUid, finished.calleeUid)
             callLog.append(
                 chatId = chatId,
-                callId = session.callId,
-                callerUid = session.callerUid,
-                calleeUid = session.calleeUid,
-                video = session.video,
-                durationSec = durationSec,
-                reasonCode = reason.code,
+                callId = finished.callId,
+                callerUid = finished.callerUid,
+                calleeUid = finished.calleeUid,
+                video = finished.video,
+                durationSec = finished.durationSec,
+                reasonCode = finished.reason.code,
             )
         }.onFailure { failure ->
-            logger.warn("CALL_LOG 落库失败: callId={}", session.callId, failure)
+            logger.warn("CALL_LOG 落库失败: callId={}", finished.callId, failure)
         }
     }
 

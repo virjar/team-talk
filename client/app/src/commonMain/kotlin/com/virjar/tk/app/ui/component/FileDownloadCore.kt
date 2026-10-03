@@ -34,9 +34,9 @@ enum class FileDownloadPendingAction { PREVIEW, OPEN, EXPORT }
  * 实现；平台差异（缓存租约、打开/导出动作、会话门禁、线程归属）全部经
  * [FileDownloadCoreAdapter] 注入。
  *
- * AndroidFileDownloadController 暂保留同机制的原始实现（本核心的原型，由
- * AndroidMediaSafetyTest 保护）：其导出流程与会话注册语义深度耦合，强迁移等于
- * 重写已验证并发代码且无功能收益。下次需要演进下载机制时顺带完成迁移。
+ * Android、iOS、Desktop 的准入、缓存探测、下载去重和终态发布共用同一状态机。
+ * 平台动作可以直接由适配器执行，也可以由调用方提供带租约的会话动作；平台缓存、
+ * 账号门禁、导出和原生 UI 仍由各自的适配器/调用方拥有。
  */
 class FileDownloadCore<L>(
     private val adapter: FileDownloadCoreAdapter<L>,
@@ -49,9 +49,38 @@ class FileDownloadCore<L>(
         val ownerGeneration = PlatformAtomicLong(0L)
     }
 
+    private class PendingDownloadAction<L>(
+        val telemetryAction: FileDownloadPendingAction?,
+        val perform: suspend (L, Attachment) -> Boolean,
+        val onAbandoned: () -> Unit,
+    )
+
+    /** Keep the first standard action; preserve independent platform actions sharing one download. */
+    private class PendingDownloadActions<L> {
+        var standard: PendingDownloadAction<L>? = null
+            private set
+        private val sessionActions = mutableListOf<PendingDownloadAction<L>>()
+
+        fun add(action: PendingDownloadAction<L>): Boolean {
+            if (action.telemetryAction == null) {
+                sessionActions += action
+                return true
+            }
+            if (standard != null) return false
+            standard = action
+            return true
+        }
+
+        fun ordered(): List<PendingDownloadAction<L>> {
+            val actions = sessionActions.toMutableList()
+            standard?.let { actions.add(it) }
+            return actions
+        }
+    }
+
     private val scope = adapter.createWorkerScope()
     private val inFlight = mutableSetOf<String>()
-    private val openAfterDownload = mutableMapOf<String, FileDownloadPendingAction>()
+    private val openAfterDownload = mutableMapOf<String, PendingDownloadActions<L>>()
     private val downloadLock = PlatformLock()
     private val currentFileOperationGenerations = mutableMapOf<String, Long>()
     private var nextFileOperationGeneration = 0L
@@ -128,34 +157,91 @@ class FileDownloadCore<L>(
      * （如文本预览窗口）由平台控制器自行预处理后再进入。
      */
     fun act(attachment: Attachment, action: FileDownloadPendingAction) {
-        if (closed.get()) return
+        val pending = PendingDownloadAction<L>(
+            telemetryAction = action,
+            perform = { lease, file -> adapter.performPendingAction(action, lease, file) },
+            onAbandoned = {},
+        )
+        startAction(attachment, pending, reportUnavailable = true) { true }
+    }
+
+    /**
+     * 通过共享下载状态机取得缓存租约并执行一次平台会话动作。用于需要在租约有效期内
+     * 做额外注册或本地文件处理的动作（例如 Android 的系统导出和图片剪贴板）。
+     * [prepare] 在缓存探测/下载前执行，可先请求权限；返回 false 表示动作未开始。
+     * 同一下载上登记的多个平台动作各自取得租约并顺序执行。[perform] 返回 true 表示动作
+     * 接管了租约；否则核心在动作结束后关闭租约。[onAbandoned] 覆盖未执行、取消和失败路径。
+     */
+    fun actWithLease(
+        attachment: Attachment,
+        prepare: suspend (Attachment) -> Boolean = { true },
+        onAbandoned: () -> Unit = {},
+        perform: suspend (L, Attachment) -> Boolean,
+    ): Boolean {
+        val pending = PendingDownloadAction<L>(
+            telemetryAction = null,
+            perform = perform,
+            onAbandoned = onAbandoned,
+        )
+        return startAction(attachment, pending, reportUnavailable = false, prepare = prepare)
+    }
+
+    private fun startAction(
+        attachment: Attachment,
+        pending: PendingDownloadAction<L>,
+        reportUnavailable: Boolean,
+        prepare: suspend (Attachment) -> Boolean,
+    ): Boolean {
+        if (closed.get()) {
+            abandon(pending)
+            return false
+        }
         if (!adapter.isOwnerCurrent()) {
-            recordMedia(MediaOperation.OPEN, ClientActionOutcome.STARTED)
-            publishFailure(
-                key = attachment.path,
-                reason = MediaFailureReason.SESSION,
-                operation = MediaOperation.OPEN,
-            )
-            return
+            if (reportUnavailable) {
+                recordMedia(MediaOperation.OPEN, ClientActionOutcome.STARTED)
+                publishFailure(
+                    key = attachment.path,
+                    reason = MediaFailureReason.SESSION,
+                    operation = MediaOperation.OPEN,
+                )
+            } else {
+                abandon(pending)
+            }
+            return false
         }
         launchFileOperation(attachment.path) { admission ->
+            val prepared = try {
+                prepare(attachment)
+            } catch (cancelled: CancellationException) {
+                abandon(pending)
+                throw cancelled
+            } catch (failure: Exception) {
+                abandon(pending)
+                if (reportUnavailable) throw failure
+                adapter.warn("附件操作准备失败: ${failure.javaClass.simpleName}")
+                return@launchFileOperation
+            }
+            if (!prepared) {
+                abandon(pending)
+                return@launchFileOperation
+            }
             val cachedLease = adapter.cachedLease(attachment)
             cachedLease?.let { lease ->
                 claimFileOperationGeneration(admission)
-                if (dispatchPendingAction(action, lease, attachment, operationAlreadyStarted = false, admission)) {
+                if (dispatchPendingAction(pending, lease, attachment, operationAlreadyStarted = false, admission)) {
                     publishOperationTerminal(admission, FileDownloadState.Done)
                 }
                 return@launchFileOperation
             }
-            downloadInternal(attachment, pendingWhenDone = action, admission = admission)
+            downloadInternal(attachment, pendingWhenDone = pending, admission = admission)
         }
+        return true
     }
 
     override fun close() {
         val claimed = synchronized(publicationLock) {
             if (!closed.compareAndSet(false, true)) return@synchronized false
             statePublisher.close()
-            adapter.onClosed()
             true
         }
         if (!claimed) return
@@ -164,35 +250,41 @@ class FileDownloadCore<L>(
             activeFileOperations.clear()
         }
         scope.cancel()
+        adapter.onClosed()
     }
 
     private suspend fun downloadInternal(
         attachment: Attachment,
-        pendingWhenDone: FileDownloadPendingAction?,
+        pendingWhenDone: PendingDownloadAction<L>?,
         admission: FileOperationAdmission,
     ) {
         val key = attachment.path
-        var actionStarted = false
+        adapter.beforeOwnerGenerationClaim()
+        var actionRegistered = false
         val shouldStart = synchronized(publicationLock) {
             synchronized(downloadLock) {
-                if (pendingWhenDone != null && !openAfterDownload.containsKey(key)) {
-                    openAfterDownload[key] = pendingWhenDone
-                    actionStarted = true
+                if (pendingWhenDone != null) {
+                    actionRegistered = openAfterDownload
+                        .getOrPut(key) { PendingDownloadActions<L>() }
+                        .add(pendingWhenDone)
                 }
                 inFlight.add(key).also { admitted ->
                     if (admitted) claimFileOperationGenerationLocked(admission)
                 }
             }
         }
-        if (actionStarted) recordActionStarted(pendingWhenDone)
-        if (!shouldStart) return
+        if (actionRegistered) recordActionStarted(pendingWhenDone?.telemetryAction)
+        if (!shouldStart) {
+            if (pendingWhenDone != null && !actionRegistered) abandon(pendingWhenDone)
+            return
+        }
         var ownerFinished = false
 
-        fun finishOwner(): FileDownloadPendingAction? {
+        fun finishOwner(): List<PendingDownloadAction<L>>? {
             check(!ownerFinished) { "File download owner already finished: $key" }
             return synchronized(downloadLock) {
                 check(inFlight.remove(key)) { "File download owner missing: $key" }
-                openAfterDownload.remove(key)
+                openAfterDownload.remove(key)?.ordered()
             }.also { ownerFinished = true }
         }
 
@@ -214,7 +306,7 @@ class FileDownloadCore<L>(
                 }
             }
             if (closed.get() || !adapter.isOwnerCurrent()) {
-                finishOwner()?.let { recordActionCancelled(it) }
+                finishOwner()?.let(::cancelPendingActions)
                 return
             }
             telemetry.recordMedia(
@@ -225,11 +317,43 @@ class FileDownloadCore<L>(
             )
             // 消费待处理的动作并退役 inFlight 是同一个线性化点：迟到的打开者要么在这里被消费，
             // 要么在锁释放之后成为下一个所有者。
-            val pendingAction = finishOwner()
-            if (pendingAction != null) {
-                val lease = checkNotNull(downloadedLease)
-                downloadedLease = null
-                if (dispatchPendingAction(pendingAction, lease, attachment, operationAlreadyStarted = true, admission)) {
+            val pendingActions = finishOwner()
+            if (!pendingActions.isNullOrEmpty()) {
+                val remaining = pendingActions.toMutableList()
+                var publishDone = true
+                try {
+                    for (pendingAction in pendingActions) {
+                        val lease = downloadedLease ?: try {
+                            adapter.cachedLease(attachment)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            null
+                        }
+                        if (lease == null) {
+                            cancelPendingActions(remaining)
+                            remaining.clear()
+                            break
+                        }
+                        if (downloadedLease != null) downloadedLease = null
+                        remaining.remove(pendingAction)
+                        val actionCompleted = dispatchPendingAction(
+                            pendingAction,
+                            lease,
+                            attachment,
+                            operationAlreadyStarted = true,
+                            admission,
+                        )
+                        if (!actionCompleted) publishDone = false
+                    }
+                } catch (cancelled: CancellationException) {
+                    cancelPendingActions(remaining)
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    cancelPendingActions(remaining)
+                    throw failure
+                }
+                if (publishDone && !admission.terminalClaimed.get()) {
                     publishOperationTerminal(admission, FileDownloadState.Done)
                 }
             } else {
@@ -239,63 +363,70 @@ class FileDownloadCore<L>(
             if (ownerFinished) {
                 throw cancelled
             }
-            finishOwner()?.let { recordActionCancelled(it) }
+            finishOwner()?.let(::cancelPendingActions)
             throw cancelled
         } catch (expired: AppError.AuthExpired) {
             // HTTP/会话边界已经上报了确切的当前凭证。防止控制器把终态认证失败
             // 降级成可重试的文件错误。
-            if (!ownerFinished) finishOwner()
+            if (!ownerFinished) finishOwner()?.let(::cancelPendingActions)
             publishOperationTerminal(admission, FileDownloadState.Idle)
         } catch (e: Exception) {
-            val pendingAction = if (ownerFinished) null else finishOwner()
+            val pendingActions = if (ownerFinished) null else finishOwner()
             if (closed.get() || !adapter.isOwnerCurrent()) {
-                pendingAction?.let { recordActionCancelled(it) }
+                pendingActions?.let(::cancelPendingActions)
                 return
             }
             val reason = adapter.classifyFailure(e)
             adapter.warn("附件下载失败: ${reason.code}")
             adapter.onDownloadFailedDiagnostic()
             val failedMessage = publishFailure(key, reason, MediaOperation.DOWNLOAD, admission = admission)
-            if (pendingAction != null) {
-                recordAction(pendingAction, ClientActionOutcome.FAILED, reason)
-                adapter.onPendingActionFailed(pendingAction, attachment, failedMessage)
+            pendingActions?.forEach { pendingAction ->
+                pendingAction.telemetryAction?.let { action ->
+                    recordAction(action, ClientActionOutcome.FAILED, reason)
+                    adapter.onPendingActionFailed(action, attachment, failedMessage)
+                } ?: abandon(pendingAction)
             }
         } finally {
             downloadedLease?.let(adapter::closeLease)
             if (!ownerFinished) {
-                finishOwner()?.let { recordActionCancelled(it) }
+                finishOwner()?.let(::cancelPendingActions)
             }
         }
     }
 
     /** 执行下载完成后的平台动作；返回 false 表示动作未受理（终态仍由调用方发布）。 */
     private suspend fun dispatchPendingAction(
-        action: FileDownloadPendingAction,
+        pendingAction: PendingDownloadAction<L>,
         lease: L,
         attachment: Attachment,
         operationAlreadyStarted: Boolean,
         admission: FileOperationAdmission,
     ): Boolean {
         var pendingLease: L? = lease
+        val action = pendingAction.telemetryAction
         try {
             if (!operationAlreadyStarted) recordActionStarted(action)
             if (closed.get() || !adapter.isOwnerCurrent()) {
-                recordActionCancelled(action)
+                cancelPendingAction(pendingAction)
                 return false
             }
             val retained = try {
-                adapter.performPendingAction(action, lease, attachment)
+                pendingAction.perform(lease, attachment)
             } catch (cancelled: CancellationException) {
-                recordActionCancelled(action)
+                cancelPendingAction(pendingAction)
                 throw cancelled
             } catch (expired: AppError.AuthExpired) {
                 // 认证终态由会话 owner 统一退休，不能降级成可重试的"打开失败"。
-                recordActionCancelled(action)
-                return false
+                cancelPendingAction(pendingAction)
+                return action == null
             } catch (_: Exception) {
                 if (closed.get() || !adapter.isOwnerCurrent()) {
-                    recordActionCancelled(action)
-                    return false
+                    cancelPendingAction(pendingAction)
+                    return action == null
+                }
+                if (action == null) {
+                    abandon(pendingAction)
+                    return true
                 }
                 adapter.warn("附件打开失败: unsupported")
                 adapter.onOpenFailedDiagnostic()
@@ -309,17 +440,36 @@ class FileDownloadCore<L>(
                 return false
             }
             if (retained) pendingLease = null
-            recordAction(
-                action,
-                if (closed.get() || !adapter.isOwnerCurrent()) {
-                    ClientActionOutcome.CANCELLED
-                } else {
-                    ClientActionOutcome.SUCCEEDED
-                },
-            )
+            action?.let {
+                recordAction(
+                    it,
+                    if (closed.get() || !adapter.isOwnerCurrent()) {
+                        ClientActionOutcome.CANCELLED
+                    } else {
+                        ClientActionOutcome.SUCCEEDED
+                    },
+                )
+            }
             return true
         } finally {
             pendingLease?.let(adapter::closeLease)
+        }
+    }
+
+    private fun cancelPendingAction(pendingAction: PendingDownloadAction<L>) {
+        pendingAction.telemetryAction?.let(::recordActionCancelled)
+        abandon(pendingAction)
+    }
+
+    private fun cancelPendingActions(pendingActions: List<PendingDownloadAction<L>>) {
+        pendingActions.forEach(::cancelPendingAction)
+    }
+
+    private fun abandon(pendingAction: PendingDownloadAction<L>) {
+        try {
+            pendingAction.onAbandoned()
+        } catch (_: Exception) {
+            // Completion callbacks are best effort and must not strand a cache lease or state admission.
         }
     }
 
@@ -351,6 +501,7 @@ class FileDownloadCore<L>(
     }
 
     private fun claimFileOperationGeneration(admission: FileOperationAdmission) {
+        adapter.beforeOwnerGenerationClaim()
         synchronized(publicationLock) {
             synchronized(downloadLock) { claimFileOperationGenerationLocked(admission) }
         }
@@ -520,11 +671,12 @@ class FileDownloadCore<L>(
         outcome: ClientActionOutcome,
         reason: MediaFailureReason? = null,
     ) {
+        if (action == null) return
         val operation = when (action) {
             // 导出复用下载遥测；导出本身是用户可见文件操作，不占用预览/打开语义。
             FileDownloadPendingAction.EXPORT -> MediaOperation.DOWNLOAD
             FileDownloadPendingAction.PREVIEW -> MediaOperation.PREVIEW
-            FileDownloadPendingAction.OPEN, null -> MediaOperation.OPEN
+            FileDownloadPendingAction.OPEN -> MediaOperation.OPEN
         }
         recordMedia(operation, outcome, reason)
     }
@@ -553,6 +705,9 @@ interface FileDownloadCoreAdapter<L> {
     fun createWorkerScope(): CoroutineScope
 
     fun isOwnerThread(): Boolean
+
+    /** Deterministic seam before an operation claims the per-attachment publication generation. */
+    fun beforeOwnerGenerationClaim() {}
 
     /** 当前会话仍是权威所有者；入口与终态裁决使用。 */
     fun isOwnerCurrent(): Boolean

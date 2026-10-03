@@ -41,6 +41,8 @@ class ClientSession internal constructor(
     private val ownedLocalCache: LocalCache,
     private val ownedRpcClient: RpcClient,
     private val ownedEventProcessor: EventProcessor,
+    private val ownedCheckpointBootstrap: EventSyncCheckpointBootstrap,
+    private val ownedPendingMirrorWake: SessionPendingMirrorWake,
     private val ownedFriendPresenceRepository: FriendPresenceRepository,
     /** 对于显式的无头/禁上传会话，结构化遥测被禁用。 */
     private val ownedTelemetryUploader: ClientTelemetryUploader?,
@@ -278,6 +280,8 @@ class ClientSession internal constructor(
                 // 都还存活时排空每一个已接受的本地命令。
                 "chat asset uploads" to { synchronized(chatAssetLock) { ownedChatAssetUploads }?.close() },
                 "local UI mutations" to ownedLocalMutations::closeAndDrain,
+                // CallCenter 持有平台 WebRTC 引擎；取消共享 worker 只能停协程，不能释放引擎资源。
+                "call center" to ownedCallCenter::close,
                 "local mirror recovery" to { localMirrorRecoveryScope.cancelAndDrainSessionMirrors() },
                 // 该仓库拥有在途 HTTP 工作与一个 LocalCache 支撑的凭据槽，因此要先于其 auth
                 // router 或 cache 依赖关闭之前退役它。
@@ -285,6 +289,9 @@ class ClientSession internal constructor(
                 "send queue" to { ownedSendQueue.close(reason.outgoingDisposition()) },
                 "friend presence" to ownedFriendPresenceRepository::close,
                 "event processor" to ownedEventProcessor::stop,
+                // Checkpoint bootstrap owns a second RpcClient in addition to `ownedRpcClient`.
+                "checkpoint RPC" to ownedCheckpointBootstrap::close,
+                "pending mirror wake" to ownedPendingMirrorWake::close,
                 "HTTP auth expiry router" to ownedHttpAuthExpiredRouter::close,
                 // 退役 RPC 不使用 LocalCache。在此处关闭会隔断正在退役的 UI 捕获的仓库与分页器，
                 // 同时只保留密封的裸 RPC owner。
@@ -768,6 +775,8 @@ fun createSession(
         ownedLocalCache = cache,
         ownedRpcClient = rpcClient,
         ownedEventProcessor = ep,
+        ownedCheckpointBootstrap = checkpointBootstrap,
+        ownedPendingMirrorWake = pendingMirrorWake,
         ownedFriendPresenceRepository = friendPresenceRepository,
         ownedTelemetryUploader = uploader,
         ownedTelemetryRecorder = telemetryRecorder,

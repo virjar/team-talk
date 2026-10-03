@@ -76,7 +76,10 @@ class CallCenterTest {
         }
     }
 
-    private class Harness {
+    private class Harness(
+        private val endedAutoDismissMillis: Long = 4_000,
+        private val connectingTimeoutMillis: Long = 20_000,
+    ) {
         val rpc = FakeRpc()
         val callEvents = MutableSharedFlow<CallEventPayload>(extraBufferCapacity = 16)
         val callSignals = MutableSharedFlow<CallSignalPayload>(extraBufferCapacity = 16)
@@ -91,6 +94,8 @@ class CallCenterTest {
             workerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
             ensureActive = {},
             logger = PlatformOnlyTkLogger("CallCenterTest"),
+            endedAutoDismissMillis = endedAutoDismissMillis,
+            connectingTimeoutMillis = connectingTimeoutMillis,
         )
 
         init {
@@ -251,5 +256,77 @@ class CallCenterTest {
         assertTrue(events.contains("muted:true") && events.contains("speaker:false") && events.contains("switchCamera"))
         assertEquals(true, h.center.state.value!!.muted)
         assertEquals(false, h.center.state.value!!.speakerOn)
+    }
+
+    @Test
+    fun `残留结束态不阻塞再次发起`() = runTest {
+        val h = Harness()
+        h.awaitSubscribed()
+        h.center.startOutgoing("peer", video = false)
+        val firstCallId = h.center.state.value!!.callId
+        h.callEvents.emit(ended(firstCallId, CallEndReason.DECLINED))
+        h.awaitTrue { h.center.state.value?.phase == CallPhase.ENDED }
+
+        val outcome = h.center.startOutgoing("peer", video = true)
+        assertTrue(outcome.deliverable)
+        val second = h.center.state.value!!
+        assertTrue(second.callId != firstCallId)
+        assertEquals(CallPhase.RINGING, second.phase)
+    }
+
+    @Test
+    fun `残留结束态不自动拒接新来电`() = runTest {
+        val h = Harness()
+        h.awaitSubscribed()
+        h.center.startOutgoing("peer", video = false)
+        val firstCallId = h.center.state.value!!.callId
+        h.callEvents.emit(ended(firstCallId, CallEndReason.TIMEOUT))
+        h.awaitTrue { h.center.state.value?.phase == CallPhase.ENDED }
+
+        h.callEvents.emit(ring("incoming-2", video = true))
+        h.awaitTrue { h.center.state.value?.callId == "incoming-2" }
+        val view = h.center.state.value!!
+        assertEquals(CallDirection.INCOMING, view.direction)
+        assertEquals(CallPhase.RINGING, view.phase)
+    }
+
+    @Test
+    fun `结束态超时自动清理`() = runTest {
+        val h = Harness(endedAutoDismissMillis = 150)
+        h.awaitSubscribed()
+        h.center.startOutgoing("peer", video = false)
+        val callId = h.center.state.value!!.callId
+        h.callEvents.emit(ended(callId, CallEndReason.HANGUP))
+        h.awaitTrue { h.center.state.value?.phase == CallPhase.ENDED }
+        h.awaitTrue(timeoutMillis = 5_000) { h.center.state.value == null }
+    }
+
+    @Test
+    fun `连接中超时本地收敛为连接中断`() = runTest {
+        val h = Harness(connectingTimeoutMillis = 200)
+        h.awaitSubscribed()
+        h.center.startOutgoing("peer", video = false)
+        val callId = h.center.state.value!!.callId
+        h.callEvents.emit(CallEventPayload(callId, "peer", CallEventKind.ACCEPTED, false, 0, emptyList()))
+        h.awaitTrue { h.center.state.value?.phase == CallPhase.CONNECTING }
+        h.awaitTrue(timeoutMillis = 5_000) { h.center.state.value?.phase == CallPhase.ENDED }
+        assertEquals(CallEndReason.CONNECTION_LOST, h.center.state.value!!.endReason)
+        h.awaitTrue(timeoutMillis = 5_000) { h.center.state.value == null }
+    }
+
+    @Test
+    fun `媒体接通撤销连接中看门狗`() = runTest {
+        val h = Harness(connectingTimeoutMillis = 200)
+        h.awaitSubscribed()
+        h.center.startOutgoing("peer", video = false)
+        val callId = h.center.state.value!!.callId
+        h.callEvents.emit(CallEventPayload(callId, "peer", CallEventKind.ACCEPTED, false, 0, emptyList()))
+        h.awaitTrue { h.center.state.value?.phase == CallPhase.CONNECTING }
+        h.engines.single().connected()
+        h.awaitTrue { h.center.state.value?.phase == CallPhase.ACTIVE }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            kotlinx.coroutines.delay(400)
+        }
+        assertEquals(CallPhase.ACTIVE, h.center.state.value!!.phase)
     }
 }

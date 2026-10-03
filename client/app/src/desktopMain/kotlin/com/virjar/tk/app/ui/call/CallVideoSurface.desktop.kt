@@ -4,9 +4,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
@@ -26,7 +26,9 @@ class DesktopVideoHandle(val bitmap: Bitmap)
 @Composable
 actual fun CallVideoSurface(handle: Any?, mirror: Boolean, modifier: Modifier) {
     if (handle is DesktopVideoHandle) {
-        val image: ImageBitmap = remember(handle.bitmap) { handle.bitmap.asComposeImageBitmap() }
+        // 官方 AnimatedImage 同款模式：复用 bitmap 每次组合直接转换，不缓存包装
+        // （remember 缓存 ImageBitmap 会命中 Compose 绘制缓存，复用后画面不更新）
+        val image: ImageBitmap = handle.bitmap.asComposeImageBitmap()
         Image(
             bitmap = image,
             contentDescription = null,
@@ -35,7 +37,9 @@ actual fun CallVideoSurface(handle: Any?, mirror: Boolean, modifier: Modifier) {
         )
     } else {
         Box(modifier.background(Color(0xFF101010)), contentAlignment = Alignment.Center) {
-            Text("视频画面", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.bodyMedium)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("视频画面（等待帧）", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.bodyMedium)
+            }
         }
     }
 }

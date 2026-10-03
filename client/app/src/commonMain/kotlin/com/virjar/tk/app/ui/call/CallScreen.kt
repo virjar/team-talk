@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -57,6 +58,7 @@ fun CallScreen(
     val peerName = user?.name?.takeIf { it.isNotBlank() } ?: state.peerUid
     val remoteHandle by callCenter.remoteVideo.collectAsStateWithLifecycle()
     val localHandle by callCenter.localVideo.collectAsStateWithLifecycle()
+    val cameraNotice by callCenter.localCameraNotice.collectAsStateWithLifecycle()
 
     Box(modifier = modifier.fillMaxSize().background(Color(0xFF141414))) {
         // 远端画面（视频通话接通后铺满；语音/未接通为纯色背景）
@@ -66,14 +68,36 @@ fun CallScreen(
 
         // 本地预览小窗
         if (state.video && (state.phase == CallPhase.ACTIVE || state.phase == CallPhase.CONNECTING)) {
-            CallVideoSurface(
-                localHandle,
-                mirror = true,
+            Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(16.dp)
                     .size(width = 96.dp, height = 144.dp)
                     .clip(RoundedCornerShape(12.dp)),
+            ) {
+                CallVideoSurface(localHandle, mirror = true, modifier = Modifier.fillMaxSize())
+                if (cameraNotice != null) {
+                    Text(
+                        "摄像头不可用",
+                        color = Color.White.copy(alpha = 0.8f),
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(4.dp),
+                    )
+                }
+            }
+        }
+
+        // 采集失败原因横幅：本地预览小窗放不下完整句子，通话不被中断但原因必须可见
+        if (state.video && cameraNotice != null) {
+            Text(
+                cameraNotice!!,
+                color = Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 12.dp)
+                    .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
             )
         }
 
@@ -191,6 +215,7 @@ private fun ActiveControls(
     modifier: Modifier,
 ) {
     val scope = rememberCoroutineScope()
+    val cameraSwitchable by callCenter.cameraSwitchable.collectAsStateWithLifecycle()
     Row(
         modifier = modifier.fillMaxWidth().padding(bottom = 40.dp),
         horizontalArrangement = Arrangement.spacedBy(40.dp, Alignment.CenterHorizontally),
@@ -200,10 +225,11 @@ private fun ActiveControls(
             contentDescription = if (state.muted) "取消静音" else "静音",
             container = if (state.muted) Color(0xFF5A5A5A) else Color(0xFF2E2E2E),
         ) { callCenter.setMuted(!state.muted) }
-        if (state.video) {
+        // 前后摄切换只在确有多摄像头时才有意义（单摄桌面隐藏）
+        if (state.video && cameraSwitchable) {
             CallActionCircle(
-                icon = Icons.Filled.PhotoCamera,
-                contentDescription = "翻转摄像头",
+                icon = Icons.Filled.Cameraswitch,
+                contentDescription = "切换摄像头",
                 container = Color(0xFF2E2E2E),
             ) { callCenter.switchCamera() }
         }

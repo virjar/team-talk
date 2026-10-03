@@ -200,6 +200,87 @@ class TurnServerTest {
         }
     }
 
+    /**
+     * REALM/NONCE 的 wire 编号必须是 RFC 5389 §18.2 的 0x0014/0x0015。此前实现误用
+     * 0x8023/0x8024（可选区），与共享 Stun 常量的测试互测无法发现，标准 WebRTC 客户端
+     * 因此无法完成 401 挑战与认证。本测试用字面量编号独立解析与构造，锁住 wire 契约。
+     */
+    @Test
+    fun `REALM 与 NONCE 使用 RFC 5389 标准 wire 编号完成认证`() {
+        DatagramSocket(InetSocketAddress("127.0.0.1", 0)).use { client ->
+            fun rawAttrs(message: ByteArray): Map<Int, List<ByteArray>> {
+                val out = LinkedHashMap<Int, MutableList<ByteArray>>()
+                var pos = 20
+                while (pos + 4 <= message.size) {
+                    val type = ((message[pos].toInt() and 0xFF) shl 8) or (message[pos + 1].toInt() and 0xFF)
+                    val length = ((message[pos + 2].toInt() and 0xFF) shl 8) or (message[pos + 3].toInt() and 0xFF)
+                    out.getOrPut(type) { mutableListOf() }.add(message.copyOfRange(pos + 4, pos + 4 + length))
+                    pos += 4 + length + ((4 - length % 4) % 4)
+                }
+                return out
+            }
+
+            val challenge = roundTrip(client, listenAddress, Stun.encode(
+                Stun.messageType(Stun.METHOD_ALLOCATE, Stun.CLASS_REQUEST), newTxId(),
+                listOf(StunAttribute(Stun.ATTR_REQUESTED_TRANSPORT, byteArrayOf(17, 0, 0, 0))),
+            ))
+            val challengeAttrs = rawAttrs(challenge)
+            assertEquals(0x0113, ((challenge[0].toInt() and 0xFF) shl 8) or (challenge[1].toInt() and 0xFF), "401 应为 allocate 错误响应")
+            assertEquals(realm, challengeAttrs[0x0014]?.single()?.decodeToString(), "REALM 必须使用标准编号 0x0014")
+            val nonce = assertNotNull(challengeAttrs[0x0015]).single().toString(Charsets.UTF_8)
+
+            // 标准客户端按字面量编号回填凭据，服务端必须接受并分配 relay
+            val tx = newTxId()
+            val authenticated = roundTrip(client, listenAddress, Stun.encode(
+                Stun.messageType(Stun.METHOD_ALLOCATE, Stun.CLASS_REQUEST), tx,
+                listOf(
+                    StunAttribute(Stun.ATTR_REQUESTED_TRANSPORT, byteArrayOf(17, 0, 0, 0)),
+                    StunAttribute(0x0014, realm.toByteArray()),
+                    StunAttribute(0x0015, nonce.toByteArray()),
+                    StunAttribute(Stun.ATTR_USERNAME, iceServer.username.toByteArray()),
+                ),
+                integrityKey = md5Key(iceServer.username, iceServer.credential),
+            ))
+            assertEquals(0x0103, ((authenticated[0].toInt() and 0xFF) shl 8) or (authenticated[1].toInt() and 0xFF), "认证后 allocate 应成功")
+            val relayValue = assertNotNull(rawAttrs(authenticated)[0x0016]).single()
+            assertEquals(0x01, relayValue[1].toInt(), "XOR-RELAYED-ADDRESS 应为 IPv4")
+            val relayPort = (relayValue[2].toInt() and 0xFF shl 8 or (relayValue[3].toInt() and 0xFF)) xor (0x2112A442 ushr 16)
+
+            // peer 直发 relay 端口；Data indication 必须从监听端口（客户端五元组）送达，
+            // 从 relay 端口发出会被路径上的 NAT 过滤掉
+            DatagramSocket(InetSocketAddress("127.0.0.1", 0)).use { peer ->
+                val peerLocal = peer.localSocketAddress as InetSocketAddress
+                val permTx = newTxId()
+                val perm = roundTrip(client, listenAddress, Stun.encode(
+                    Stun.messageType(Stun.METHOD_CREATE_PERMISSION, Stun.CLASS_REQUEST), permTx,
+                    listOf(
+                        StunAttribute(0x0012, Stun.encodeXorAddress(peerLocal.address, peerLocal.port, permTx)),
+                        StunAttribute(0x0014, realm.toByteArray()),
+                        StunAttribute(0x0015, nonce.toByteArray()),
+                        StunAttribute(Stun.ATTR_USERNAME, iceServer.username.toByteArray()),
+                    ),
+                    integrityKey = md5Key(iceServer.username, iceServer.credential),
+                ))
+                assertEquals(
+                    0x0108,
+                    ((perm[0].toInt() and 0xFF) shl 8) or (perm[1].toInt() and 0xFF),
+                    "标准编号的 createPermission 应成功",
+                )
+
+                val payload = "std-wire-probe".toByteArray()
+                peer.send(datagram(payload, InetSocketAddress("127.0.0.1", relayPort)))
+                val buffer = ByteArray(4096)
+                val packet = java.net.DatagramPacket(buffer, buffer.size)
+                client.soTimeout = 3000
+                client.receive(packet)
+                assertEquals(listenAddress.port, packet.port, "Data indication 必须从监听端口发出（RFC 5766 五元组）")
+                assertEquals(0x0017, ((buffer[0].toInt() and 0xFF) shl 8) or (buffer[1].toInt() and 0xFF), "应为 Data indication")
+                val dataAttr = rawAttrs(buffer.copyOf(packet.length))[0x0013]
+                assertEquals("std-wire-probe", assertNotNull(dataAttr).single().decodeToString())
+            }
+        }
+    }
+
     // -- 辅助 --
 
     private fun authenticatedRequest(

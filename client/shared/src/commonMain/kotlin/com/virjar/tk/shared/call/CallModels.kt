@@ -31,6 +31,13 @@ interface CallMediaObserver {
     fun onLocalCandidate(candidate: com.virjar.tk.protocol.model.CallSignalBody.IceCandidate)
     fun onMediaConnected()
     fun onMediaFailed()
+
+    /**
+     * 本地视频采集确定无输出（无设备、启动失败、或启动后首帧看门狗超时）。不中断通话：
+     * 远端画面与音频不受影响，UI 在本地预览位提示原因。
+     * 默认空实现保证旧引擎/测试观察者无需跟进。
+     */
+    fun onLocalCameraStalled(reason: String) {}
 }
 
 /**
@@ -55,6 +62,12 @@ interface CallMediaEngine : AutoCloseable {
     fun setMuted(muted: Boolean)
     fun setSpeakerphone(enabled: Boolean)
     fun switchCamera()
+
+    /**
+     * 本机是否存在可切换的多个摄像头（移动端前后摄）。单摄像头平台（如桌面只接
+     * 一个 USB 摄像头）UI 应隐藏切换入口；默认 false，引擎按设备枚举覆写。
+     */
+    val canSwitchCamera: Boolean get() = false
 }
 
 /** 平台引擎工厂：会话激活后由平台壳经 [CallCenter.bindEngineFactory] 注入一次。 */

@@ -51,8 +51,10 @@ object Stun {
     const val ATTR_REQUESTED_TRANSPORT = 0x0019
     const val ATTR_DONT_FRAGMENT = 0x001A
     const val ATTR_SOFTWARE = 0x8022
-    const val ATTR_REALM = 0x8023
-    const val ATTR_NONCE = 0x8024
+    // REALM/NONCE 属 comprehension-required 区间（RFC 5389 §18.2），不是 0x802x 可选区；
+    // 0x8023 是 ALTERNATE-SERVER 槽位。标准客户端只认 0x0014/0x0015。
+    const val ATTR_REALM = 0x0014
+    const val ATTR_NONCE = 0x0015
     const val ATTR_FINGERPRINT = 0x8028
 
     // 错误码(RFC 5766 §15.6 + RFC 5389)

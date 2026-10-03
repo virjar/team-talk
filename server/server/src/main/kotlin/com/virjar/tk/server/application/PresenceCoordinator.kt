@@ -32,6 +32,8 @@ import java.util.concurrent.atomic.AtomicReference
  * 所以邮箱对每个 uid 只保留最新等待状态，对等待中和处理中的工作
  * 设有唯一 uid 数的硬上限，并且唤醒一个独立的串行 worker，
  * 而不在唤醒通道中携带工作。
+ * 需要每次边界转换的生命周期观察者在 source callback 内同步接收原始转换；该回调必须非阻塞，
+ * 因为它直接运行在 ClientRegistry owner 上，不能经过会合并状态的广播邮箱。
  */
 class PresenceCoordinator internal constructor(
     private val transitions: PresenceTransitionSource,
@@ -39,15 +41,19 @@ class PresenceCoordinator internal constructor(
     mailboxCapacity: Int,
     private val broadcastPresence: suspend (PresenceTransition) -> Unit,
     shutdownTimeoutMillis: Long = DEFAULT_SHUTDOWN_TIMEOUT_MILLIS,
+    /** Lossless, non-blocking lifecycle observer; unlike the broadcast mailbox, this callback cannot be coalesced. */
+    private val lifecycleObserver: PresenceTransitionObserver? = null,
 ) : AutoCloseable {
     constructor(
         transitions: PresenceTransitionSource,
         presenceService: PresenceService,
+        lifecycleObserver: PresenceTransitionObserver? = null,
     ) : this(
         transitions = transitions,
         workerDispatcher = Dispatchers.IO,
         mailboxCapacity = DEFAULT_MAILBOX_CAPACITY,
         broadcastPresence = presenceService::broadcast,
+        lifecycleObserver = lifecycleObserver,
     )
 
     private val logger = LoggerFactory.getLogger(PresenceCoordinator::class.java)
@@ -98,7 +104,16 @@ class PresenceCoordinator internal constructor(
                 if (started) return
                 startupAttempted = true
                 observerLease = transitions.installPresenceObserver(
-                    PresenceTransitionObserver(::enqueue),
+                    PresenceTransitionObserver { transition ->
+                        try {
+                            lifecycleObserver?.onTransition(transition)
+                        } catch (failure: Exception) {
+                            logger.warn("Presence lifecycle observer failed for uid={}", transition.uid, failure)
+                        } finally {
+                            // Lifecycle transitions are delivered directly; UI fanout remains bounded/coalesced.
+                            enqueue(transition)
+                        }
+                    },
                 )
                 started = true
                 val worker = scope.launch { runWorker() }

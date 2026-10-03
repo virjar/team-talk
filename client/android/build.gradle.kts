@@ -131,6 +131,9 @@ android {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = false
+            // 只带 arm64-v8a：WebRTC 原生库每个 ABI 6-12MB，全 ABI 会把包撑到 ~54MB；
+            // x86/x86_64 仅供模拟器，验收安装使用同证书的 debug 包。
+            ndk { abiFilters += "arm64-v8a" }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

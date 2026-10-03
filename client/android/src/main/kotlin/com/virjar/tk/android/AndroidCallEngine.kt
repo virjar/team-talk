@@ -63,6 +63,7 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
     private var speakerOn = true
 
     private var pendingLocalSdp: SessionDescription? = null
+    private val gatheredCandidates = mutableListOf<String>()
     private var gatheringDone = false
     private var remoteDescriptionSet = false
     private val bufferedRemoteCandidates = mutableListOf<IceCandidate>()
@@ -76,6 +77,7 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
     override fun start(video: Boolean, iceServers: List<IceServer>, observer: CallMediaObserver) {
         this.observer = observer
         this.videoEnabled = video
+        synchronized(gatheredCandidates) { gatheredCandidates.clear() }
         gatheringDone = false
         remoteDescriptionSet = false
         requestAudioFocus()
@@ -110,18 +112,34 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
     }
 
     override fun onRemoteSessionDescription(isOffer: Boolean, sdp: String) {
+        android.util.Log.e(TAG, "[ice] 远端 SDP offer=$isOffer len=${sdp.length} 完整内容↓")
+        android.util.Log.e(TAG, "[ice] SDP-BEGIN:" + sdp.replace("\r\n", "|") + ":SDP-END")
         val pc = peerConnection ?: return
         val type = if (isOffer) SessionDescription.Type.OFFER else SessionDescription.Type.ANSWER
-        pc.setRemoteDescription(SdpAdapter("set-remote"), SessionDescription(type, sdp))
+        // set-remote 解析失败不能冲垮信令收集器；按媒体失败终结，由看门狗/对端收敛。
+        runCatching {
+            pc.setRemoteDescription(SdpAdapter("set-remote"), SessionDescription(type, sdp))
+        }.onFailure {
+            android.util.Log.e(TAG, "[ice] set-remote 失败: ${it.message}")
+            observer?.onMediaFailed()
+        }
     }
 
     override fun onRemoteCandidate(candidate: CallSignalBody.IceCandidate) {
-        val ice = IceCandidate(candidate.sdpMid, candidate.sdpMLineIndex, candidate.candidate)
+        android.util.Log.e(TAG, "[ice] 远端候选 mid=${candidate.sdpMid} idx=${candidate.sdpMLineIndex}: ${candidate.candidate.take(100)}")
+        val ice = IceCandidate(candidate.sdpMid, candidate.sdpMLineIndex, sanitizeCandidate(candidate.candidate))
         if (remoteDescriptionSet) {
-            peerConnection?.addIceCandidate(ice)
+            applyRemoteCandidate(ice)
         } else {
             synchronized(bufferedRemoteCandidates) { bufferedRemoteCandidates += ice }
         }
+    }
+
+    private fun applyRemoteCandidate(ice: IceCandidate) {
+        peerConnection?.addIceCandidate(ice)
+        val remote = peerConnection?.remoteDescription
+        val count = remote?.description?.lines()?.count { it.contains("a=candidate", ignoreCase = true) } ?: -1
+        android.util.Log.e(TAG, "[ice] 已应用远端候选 mid=${ice.sdpMid}，当前远端描述候选总数=$count")
     }
 
     override fun setMuted(muted: Boolean) {
@@ -137,6 +155,11 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
     override fun switchCamera() {
         val capturer = videoCapturer as? CameraVideoCapturer ?: return
         runCatching { capturer.switchCamera(null) }
+    }
+
+    /** 前后摄才有切换意义；单摄设备（或外接单摄的平板）UI 隐藏切换入口。 */
+    override val canSwitchCamera: Boolean by lazy {
+        runCatching { Camera2Enumerator(context).deviceNames.size > 1 }.getOrDefault(false)
     }
 
     override fun close() {
@@ -224,12 +247,22 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
         if (!gatheringDone) return
         pendingLocalSdp?.let { sdp ->
             pendingLocalSdp = null
+            // 候选只经候选信号通道补传，不 munging 进 SDP（跨引擎解析不可靠）。
+            android.util.Log.e(TAG, "[ice] 上送本地 SDP offer=${sdp.type == SessionDescription.Type.OFFER}")
             observer?.onLocalDescription(
                 isOffer = sdp.type == SessionDescription.Type.OFFER,
                 sdp = sdp.description,
             )
         }
     }
+
+    /** 剥离候选行里的 ufrag/network-id/network-cost 可选扩展：旧版 libwebrtc 解析含
+     *  ufrag 的候选行会失败（对端 webrtc-java 会带），与桌面引擎的剥离规则一致。 */
+    private fun sanitizeCandidate(sdp: String): String =
+        sdp.replace(Regex(" ufrag \\S+"), "")
+            .replace(Regex(" network-id \\S+"), "")
+            .replace(Regex(" network-cost \\S+"), "")
+            .trim()
 
     private open inner class SdpAdapter(private val tag: String) : SdpObserver {
         override fun onCreateSuccess(description: SessionDescription) {
@@ -245,7 +278,8 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
                     val buffered = synchronized(bufferedRemoteCandidates) {
                         bufferedRemoteCandidates.also { it.clear() }
                     }
-                    buffered.forEach { pc.addIceCandidate(it) }
+                    runCatching { buffered.forEach { pc.addIceCandidate(it) } }
+                        .onFailure { android.util.Log.e(TAG, "[ice] 候选批量应用失败: ${it.message}") }
                     if (tag == "set-remote" && pc.remoteDescription?.type == SessionDescription.Type.OFFER) {
                         pc.createAnswer(object : SdpAdapter("answer") {
                             override fun onCreateSuccess(description: SessionDescription) {
@@ -268,6 +302,9 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
 
     private inner class PeerObserver : PeerConnection.Observer {
         override fun onIceCandidate(candidate: IceCandidate) {
+            val sanitized = sanitizeCandidate(candidate.sdp)
+            android.util.Log.e(TAG, "[ice] 本地候选: ${sanitized.take(110)}")
+            synchronized(gatheredCandidates) { gatheredCandidates.add(sanitized) }
             observer?.onLocalCandidate(
                 CallSignalBody.IceCandidate(
                     candidate = candidate.sdp,
@@ -278,16 +315,19 @@ class AndroidCallEngine(private val context: Context) : CallMediaEngine {
         }
 
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
+            android.util.Log.e(TAG, "[ice] gather 状态: $state")
             if (state == PeerConnection.IceGatheringState.COMPLETE) {
                 gatheringDone = true
                 pendingLocalSdp?.let { sdp ->
                     pendingLocalSdp = null
+                    // 候选只经信号通道补传，不 munging 进 SDP（同上）。
                     observer?.onLocalDescription(sdp.type == SessionDescription.Type.OFFER, sdp.description)
                 }
             }
         }
 
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
+            android.util.Log.e(TAG, "[ice] ICE 连接状态: $state")
             when (state) {
                 PeerConnection.IceConnectionState.CONNECTED,
                 PeerConnection.IceConnectionState.COMPLETED,

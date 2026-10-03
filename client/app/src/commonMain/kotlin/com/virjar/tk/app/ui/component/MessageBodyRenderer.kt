@@ -222,7 +222,9 @@ fun MessageBodyRenderer(
         is EditBody -> Text(body.newContent, style = MaterialTheme.typography.bodyMedium)
         is ReactionBody -> SystemHintText("表情回应 ${body.emoji}")
         is CallLogBody -> CallLogBubble(
-            outgoing = message.senderUid == body.callerUid,
+            // 服务端把 CALL_LOG 以主叫身份写进双方会话：作者是我 ⇔ 我是主叫。
+            // 不能比较 senderUid==callerUid（两边恒等），那会让所有记录都渲染成"呼出"。
+            outgoing = isMe,
             video = body.video,
             durationSec = body.durationSec,
             reason = body.reason,

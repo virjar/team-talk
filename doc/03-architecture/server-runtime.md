@@ -75,6 +75,10 @@ stopped”。唯一例外是显式 dependency-quiescence barrier：普通 closer
 中的普通错误作为 suppressed failure 附着在原始启动异常上；清理阶段的取消或 VM fatal error 仍以
 原对象优先，启动错误成为它的 suppressed cause。
 
+内嵌 TURN 的 `TurnRuntime` 同时取得 UDP `TurnServer` 与专属 Netty EventLoopGroup。成功启动后由
+`TurnServer` 统一关闭过期清扫线程、监听/relay channel 和 event loop；启动失败也会回收已取得的 group。
+关闭对清扫线程和 event loop 都设置 5 秒上限，避免后台网络资源逃逸 Application 的资源 owner。
+
 服务号的 `SystemCommandRouter` 属于 Application 运行时，领域 `MessageService` 只经不可变端口派发
 已提交的文本消息。Router 拥有回复协程，保留取消语义；关闭先撤销后续派发，再沿有界关闭规则等待全部
 回复退出。它在 TCP 之后、同步分发与消息存储之前释放，并以实际 worker 终止状态保护底层资源。
@@ -248,10 +252,16 @@ IOExecutor 在入队与出队两端检查活性，并由独立桥接子任务只
 
 Presence 通过领域层的单观察者端口安装 compare-and-uninstall lease；observer 接收 Registry 在连接索引
 同一 owner 命令中已经冻结的 `PresenceTransition(uid, online, occurredAt, serverEpoch, revision)`，异步层
-不得重新生成时间或版本。online/offline 不再占用两个可独立变化的 callback 槽。旧 lease 重复卸载不会
-清除后来安装的观察者，协调器关闭时先关闭邮箱并卸载 lease，因此已经取得的迟到 observer 也不能重新
-提交 fan-out。并发或重复关闭只等待第一次关闭的固定 deadline；成功保持幂等，超时或 worker/lease
-失败会向所有调用方重放同一个异常对象。
+不得重新生成时间或版本。`PresenceCoordinator` 的 source callback 先把原始转换交给非阻塞的 `CallService`
+生命周期观察者，再写入 latest-per-uid 有界广播邮箱；呼叫结束不能经过会合并/丢弃状态的 UI 广播队列。
+广播和连接生命周期因此共享同一个单观察者 lease，而不竞争注册表的独占槽。online/offline 不再占用两个
+可独立变化的 callback 槽。旧 lease 重复卸载不会清除后来安装的观察者，协调器关闭时先关闭邮箱并卸载
+lease，因此已经取得的迟到 observer 也不能重新提交 fan-out。并发或重复关闭只等待第一次关闭的固定
+deadline；成功保持幂等，超时或 worker/lease 失败会向所有调用方重放同一个异常对象。
+
+`CallService` 的断连观察会异步结束呼叫并写入 CALL_LOG。资源 owner 先关闭 presence lease，再取消并等待
+这些回调，等待上限为 5 秒；它只在服务实际终止后才释放消息、存储与数据库依赖。若回调忽略取消并超时，
+关闭屏障会保留这些依赖并把关闭报告为失败，避免后台写入使用已关闭资源。
 
 关闭时先关闭准入，再排空已接纳的命令；注册表最终清理仍在 Looper 线程上执行，
 owner 等待该线程完成终结后 `stop` 才返回。
