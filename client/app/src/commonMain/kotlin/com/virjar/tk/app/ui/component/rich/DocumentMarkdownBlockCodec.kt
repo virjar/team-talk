@@ -202,7 +202,10 @@ internal object DocumentMarkdownBlockCodec {
         MarkdownElementTypes.BLOCK_QUOTE -> BlockKind.QUOTE
         MarkdownElementTypes.CODE_FENCE, MarkdownElementTypes.CODE_BLOCK -> BlockKind.CODE_FENCE
         GFMElementTypes.TABLE -> BlockKind.TABLE
-        in richTopLevelTypes -> if (RichEditorMarkdownCapability.inspect(body).requiresSourceMode) {
+        in richTopLevelTypes -> if (RichEditorMarkdownCapability.inspect(body, allowCanonicalAssetImages = true).requiresSourceMode) {
+            // 内测 T068：canonical 内嵌图片（内部 URI+纯文本 label，含列表项内的行内
+            // 形态）与聊天编辑器同标准放行——RichRun 渲染器原生支持 MdSpan.EmbeddedAsset，
+            // 外链图片/复杂 alt 仍触发 IMAGE 留在源码块。
             BlockKind.OPAQUE
         } else {
             BlockKind.RICH
