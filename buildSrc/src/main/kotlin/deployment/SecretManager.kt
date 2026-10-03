@@ -60,10 +60,27 @@ fun loadRequiredUpgradeSecretsFromRemote(
     deployPath: String,
 ): Properties {
     val secrets = readRequiredUpgradeSecretsFromRemote(host, user, port, deployPath)
+    // 必需键远端唯一权威；可选键允许本地引种——远端没有时保留本地已有值，这是在
+    // 既有部署上启用可选能力（如 TURN）的唯一通道。远端存在则以远端为准。
+    val existing = Properties()
+    if (Files.exists(secretsFile.toPath(), NOFOLLOW_LINKS)) {
+        loadSecretsNoFollow(secretsFile.toPath(), existing)
+    }
+    mergeOptionalSecrets(remote = secrets, local = existing).forEach { (key, value) ->
+        secrets.setProperty(key, value)
+        println("  Retained local optional secret $key (absent on remote)")
+    }
     saveSecrets(secretsFile, secrets)
     println("  Verified required upgrade secrets and saved them to ${secretsFile.name}")
     return secrets
 }
+
+/** 远端缺失的可选键回填本地值；返回应回填的键值对（远端已有或本地也缺失的不在内）。 */
+internal fun mergeOptionalSecrets(remote: Properties, local: Properties): Map<String, String> =
+    optionalDeploymentSecretKeys.mapNotNull { key ->
+        val localValue = local.getProperty(key)?.takeIf { it.isNotBlank() && it != "null" }
+        if (remote.getProperty(key) == null && localValue != null) key to localValue else null
+    }.toMap()
 
 /** 读取并校验远程权威数据，而不在本地持久化第二份副本。 */
 internal fun readRequiredUpgradeSecretsFromRemote(

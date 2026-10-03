@@ -195,6 +195,22 @@ class DeploymentFailClosedTest {
         }
 
     @Test
+    fun `upgrade merge retains locally seeded optional secrets absent on remote`() {
+        val remote = completeSecrets() // 远端 env 无 TURN_SECRET
+        val local = completeSecrets().apply { setProperty("TURN_SECRET", "locally-seeded-0123456789") }
+
+        val retained = mergeOptionalSecrets(remote, local)
+        assertEquals(mapOf("TURN_SECRET" to "locally-seeded-0123456789"), retained)
+
+        // 远端存在则以远端为准，本地值不回填
+        val remoteWithTurn = completeSecrets().apply { setProperty("TURN_SECRET", "remote-authoritative") }
+        assertTrue(mergeOptionalSecrets(remoteWithTurn, local).isEmpty())
+
+        // 两边都没有：不生成（可选键永不自动生成）
+        assertTrue(mergeOptionalSecrets(remote, completeSecrets()).isEmpty())
+    }
+
+    @Test
     fun `upgrade secrets require every key exactly once`() {
         val complete = canonicalUpgradeEnv()
         val parsed = parseRequiredUpgradeSecrets(complete)
