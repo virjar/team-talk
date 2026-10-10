@@ -419,6 +419,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                 }
                 val windowReadActive = isDesktopWindowActive(windowVisible, windowFocused)
                 DesktopTaskNotifications(desktopNav, presentationGate, windowReadActive, connectionState)
+                DesktopMessageNotifications(desktopNav.messageReminderCache, windowReadActive, connectionState)
                 LaunchedEffect(conversations, windowReadActive) {
                     DesktopNotificationManager.onConversationsChanged(
                         conversations = conversations,

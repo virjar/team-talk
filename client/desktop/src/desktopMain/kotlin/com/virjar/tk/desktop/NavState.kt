@@ -139,6 +139,7 @@ class DesktopNav(
 ) {
 
     internal val taskRepository = session.taskRepo
+    internal val messageReminderCache: com.virjar.tk.shared.client.LocalCache get() = localCache
 
     var selectedTab by mutableIntStateOf(0)
 

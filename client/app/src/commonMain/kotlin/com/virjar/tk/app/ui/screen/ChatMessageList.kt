@@ -66,6 +66,8 @@ internal fun ChatMessageList(
     threadReplyCounts: Map<Long, Int> = emptyMap(),
     /** 点击"查看 N 条回复"打开线程面板；null 时不渲染入口。 */
     onOpenThread: ((Message) -> Unit)? = null,
+    /** 稍后提醒（MSG-01/F4）：菜单快捷项写入本地提醒表；null 隐藏菜单项。 */
+    onRemindLater: ((Message, remindAt: Long) -> Unit)? = null,
     onToggleReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
     onPickReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
     /** 非 null 且消息已确认时，长按/右键菜单提供"收藏"（CLIENT-08）。 */
@@ -287,6 +289,7 @@ internal fun ChatMessageList(
                                 },
                                 onSaveMessage = onSaveMessage?.takeIf { !isSavedChat },
                                 isSavedChat = isSavedChat,
+                                onRemindLater = onRemindLater,
                             ),
                         )
 
@@ -430,6 +433,8 @@ private fun messageMenuItems(
     onOpenReactionPicker: () -> Unit,
     onSaveMessage: ((Message) -> Unit)?,
     isSavedChat: Boolean,
+    /** 稍后提醒（MSG-01/F4，纯本地）：null 隐藏入口（语音/编辑态不提供）。 */
+    onRemindLater: ((Message, remindAt: Long) -> Unit)? = null,
 ): @Composable ColumnScope.() -> Unit = {
     val copyText = rememberClipboardTextWriter()
     val fileDownloads = LocalFileDownloads.current
@@ -441,6 +446,29 @@ private fun messageMenuItems(
                 onMenuMessageChange(null)
             },
             onMore = onOpenReactionPicker,
+        )
+    }
+    if (onRemindLater != null && msg.serverSeq > 0L) {
+        DropdownMenuItem(
+            text = { Text("1小时后提醒我") },
+            onClick = {
+                onMenuMessageChange(null)
+                onRemindLater(msg, com.virjar.tk.shared.platform.platformCurrentTimeMillis() + 3_600_000L)
+            },
+            modifier = Modifier.testTag("chat.remind.1h"),
+        )
+        DropdownMenuItem(
+            text = { Text("明天 9:00 提醒我") },
+            onClick = {
+                val zone = kotlinx.datetime.TimeZone.currentSystemDefault()
+                val tomorrow = java.time.Instant.ofEpochMilli(
+                    com.virjar.tk.shared.platform.platformCurrentTimeMillis(),
+                ).atZone(java.time.ZoneId.systemDefault()).toLocalDate().plusDays(1)
+                val at = tomorrow.atTime(9, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                onMenuMessageChange(null)
+                onRemindLater(msg, at)
+            },
+            modifier = Modifier.testTag("chat.remind.tomorrow"),
         )
     }
     DropdownMenuItem(

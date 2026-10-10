@@ -410,6 +410,21 @@ interface LocalCache : LocalDocumentProjection {
      * 纯本地显示事实，不进协议；线程全量以服务端查询为准。默认扫描量 [DEFAULT_THREAD_SCAN_LIMIT]。
      */
     fun threadReplyCounts(chatId: String, scanLimit: Int = DEFAULT_THREAD_SCAN_LIMIT): Map<Long, Int>
+
+    /** 消息稍后提醒（MSG-01/F4，纯本地事实）：登记或更新一条提醒（notified 归零）。 */
+    fun upsertMessageReminder(chatId: String, clientMsgId: String, serverSeq: Long, snippet: String, remindAt: Long)
+
+    /** 到点未通知的提醒，remindAt 升序。 */
+    fun dueMessageReminders(now: Long): List<MessageReminder>
+
+    /** 全部未通知提醒（轮询源与调试）。 */
+    fun activeMessageReminders(): List<MessageReminder>
+
+    /** 已弹通知收据：重启不重复弹出。 */
+    fun markMessageReminderNotified(chatId: String, clientMsgId: String)
+
+    /** 用户取消提醒；行删除。 */
+    fun cancelMessageReminder(chatId: String, clientMsgId: String)
     fun insertMessage(message: Message)
 
     /**

@@ -42,6 +42,14 @@ data class PendingTaskCommand(
 }
 
 /** 已读与系统展示分开持久化；失效提示本身不能让过期任务弹出通知。 */
+data class MessageReminder(
+    val chatId: String,
+    val clientMsgId: String,
+    val serverSeq: Long,
+    val snippet: String,
+    val remindAt: Long,
+)
+
 data class TaskReminder(
     val taskId: String,
     val revision: Long,

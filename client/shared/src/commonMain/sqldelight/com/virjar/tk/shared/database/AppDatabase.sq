@@ -453,6 +453,20 @@ CREATE TABLE IF NOT EXISTS conversation_local_flag (
     cleared_before_seq INTEGER NOT NULL DEFAULT 0
 );
 
+-- 消息稍后提醒（MSG-01/F4，纯本地辅助事实，不进协议）：remind_at 是本地触发时点，
+-- notified 是已弹通知收据（重启不重复弹出）。行由用户取消或提醒完成后删除。
+CREATE TABLE IF NOT EXISTS message_reminders (
+    chat_id TEXT NOT NULL,
+    client_msg_id TEXT NOT NULL,
+    server_seq INTEGER NOT NULL DEFAULT 0,
+    snippet TEXT NOT NULL,
+    remind_at INTEGER NOT NULL,
+    notified INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, client_msg_id)
+);
+CREATE INDEX IF NOT EXISTS idx_message_reminders_due
+ON message_reminders(notified, remind_at);
+
 -- 当前账号的服务端投影检查点。dataset identity 与 cursor 必须同一行、同一事务提交；
 -- 旧连接只能在 dataset_id 仍匹配时推进 cursor。
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -1485,6 +1499,22 @@ SELECT cleared_before_seq FROM conversation_local_flag WHERE chat_id = ?;
 
 deleteConversationLocalFlag:
 DELETE FROM conversation_local_flag WHERE chat_id = ?;
+
+upsertMessageReminder:
+INSERT OR REPLACE INTO message_reminders(chat_id, client_msg_id, server_seq, snippet, remind_at, notified)
+VALUES (?, ?, ?, ?, ?, 0);
+
+selectDueMessageReminders:
+SELECT * FROM message_reminders WHERE notified = 0 AND remind_at <= ? ORDER BY remind_at LIMIT 20;
+
+selectAllActiveMessageReminders:
+SELECT * FROM message_reminders WHERE notified = 0 ORDER BY remind_at;
+
+markMessageReminderNotified:
+UPDATE message_reminders SET notified = 1 WHERE chat_id = ? AND client_msg_id = ?;
+
+deleteMessageReminder:
+DELETE FROM message_reminders WHERE chat_id = ? AND client_msg_id = ?;
 
 selectSyncState:
 SELECT dataset_id, cursor FROM sync_state WHERE singleton_id = 1;

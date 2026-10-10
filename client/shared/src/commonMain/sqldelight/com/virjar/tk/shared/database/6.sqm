@@ -1,0 +1,13 @@
+-- MSG-01/F4 消息稍后提醒：纯本地辅助表，零协议影响。
+-- 与 5.sqm 同原则：纯新增对象，全程 IF NOT EXISTS，旧库认领重放与新库直建互不冲突。
+CREATE TABLE IF NOT EXISTS message_reminders (
+    chat_id TEXT NOT NULL,
+    client_msg_id TEXT NOT NULL,
+    server_seq INTEGER NOT NULL DEFAULT 0,
+    snippet TEXT NOT NULL,
+    remind_at INTEGER NOT NULL,
+    notified INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, client_msg_id)
+);
+CREATE INDEX IF NOT EXISTS idx_message_reminders_due
+ON message_reminders(notified, remind_at);

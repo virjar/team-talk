@@ -113,6 +113,41 @@ internal class LocalMessageStore(
             }
         }
 
+    fun upsertMessageReminder(chatId: String, clientMsgId: String, serverSeq: Long, snippet: String, remindAt: Long) =
+        cacheUseGate.use {
+            require(chatId.isNotBlank() && clientMsgId.isNotBlank()) { "reminder identity must not be blank" }
+            require(remindAt > 0L) { "remindAt must be positive" }
+            synchronized(stateLock) {
+                queries.transaction {
+                    queries.upsertMessageReminder(chatId, clientMsgId, serverSeq, snippet, remindAt)
+                }
+            }
+        }
+
+    fun dueMessageReminders(now: Long): List<MessageReminder> = cacheUseGate.use {
+        synchronized(stateLock) {
+            queries.selectDueMessageReminders(now).executeAsList().map { row ->
+                MessageReminder(row.chat_id, row.client_msg_id, row.server_seq, row.snippet, row.remind_at)
+            }
+        }
+    }
+
+    fun activeMessageReminders(): List<MessageReminder> = cacheUseGate.use {
+        synchronized(stateLock) {
+            queries.selectAllActiveMessageReminders().executeAsList().map { row ->
+                MessageReminder(row.chat_id, row.client_msg_id, row.server_seq, row.snippet, row.remind_at)
+            }
+        }
+    }
+
+    fun markMessageReminderNotified(chatId: String, clientMsgId: String) {
+        cacheUseGate.use { synchronized(stateLock) { queries.markMessageReminderNotified(chatId, clientMsgId) } }
+    }
+
+    fun cancelMessageReminder(chatId: String, clientMsgId: String) {
+        cacheUseGate.use { synchronized(stateLock) { queries.deleteMessageReminder(chatId, clientMsgId) } }
+    }
+
     /** 窗内 reply 链上溯：首个非回复消息即根；链离开本地窗口返回 null（不计入聚合）。 */
     private fun resolveLocalThreadRoot(reply: Message, bySeq: Map<Long, Message>): Long? {
         var current = reply

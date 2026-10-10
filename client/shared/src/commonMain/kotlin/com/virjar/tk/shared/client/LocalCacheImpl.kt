@@ -526,6 +526,21 @@ class LocalCacheImpl internal constructor(
     override fun threadReplyCounts(chatId: String, scanLimit: Int): Map<Long, Int> =
         messages.threadReplyCounts(chatId, scanLimit)
 
+    override fun upsertMessageReminder(chatId: String, clientMsgId: String, serverSeq: Long, snippet: String, remindAt: Long) =
+        messages.upsertMessageReminder(chatId, clientMsgId, serverSeq, snippet, remindAt)
+
+    override fun dueMessageReminders(now: Long): List<MessageReminder> =
+        messages.dueMessageReminders(now)
+
+    override fun activeMessageReminders(): List<MessageReminder> =
+        messages.activeMessageReminders()
+
+    override fun markMessageReminderNotified(chatId: String, clientMsgId: String) =
+        messages.markMessageReminderNotified(chatId, clientMsgId)
+
+    override fun cancelMessageReminder(chatId: String, clientMsgId: String) =
+        messages.cancelMessageReminder(chatId, clientMsgId)
+
     override fun insertMessage(message: Message) {
         messages.insertMessage(message)
         if (message.serverSeq > 0L && message.flags and Message.FLAG_REVOKED != 0) {

@@ -977,6 +977,12 @@ fun ChatPanel(
                 reactions = viewModel.reactions.collectAsState().value,
                 threadReplyCounts = threadReplyCounts,
                 onOpenThread = { message: Message -> threadRootSeq = message.serverSeq },
+                onRemindLater = actionAdmission.guard { message: Message, remindAt: Long ->
+                    viewModel.remindLater(message, remindAt)
+                    uiResultScope.launch {
+                        snackbarHostState.showSnackbar("将在 " + formatChatTime(remindAt) + " 提醒你")
+                    }
+                },
                 onToggleReaction = actionAdmission.guard(viewModel::toggleReaction),
                 onPickReaction = actionAdmission.guard(viewModel::pickReaction),
                 onSaveMessage = onSaveMessage?.let { actionAdmission.guard(it) },

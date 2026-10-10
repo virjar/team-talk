@@ -229,6 +229,32 @@ class FakeLocalCache(
     }
     override fun findMessage(chatId: String, clientMsgId: String): Message? = synchronized(messagesLock) { messagesMap[chatId]?.firstOrNull { it.clientMsgId == clientMsgId } }
 
+    private val messageReminders = linkedMapOf<String, MessageReminder>()
+    private val messageRemindersLock = PlatformLock()
+
+    override fun upsertMessageReminder(chatId: String, clientMsgId: String, serverSeq: Long, snippet: String, remindAt: Long) {
+        synchronized(messageRemindersLock) {
+            messageReminders["$chatId\u0000$clientMsgId"] =
+                MessageReminder(chatId, clientMsgId, serverSeq, snippet, remindAt)
+        }
+    }
+
+    override fun dueMessageReminders(now: Long): List<MessageReminder> = synchronized(messageRemindersLock) {
+        messageReminders.values.filter { it.remindAt <= now }.sortedBy(MessageReminder::remindAt)
+    }
+
+    override fun activeMessageReminders(): List<MessageReminder> = synchronized(messageRemindersLock) {
+        messageReminders.values.sortedBy(MessageReminder::remindAt)
+    }
+
+    override fun markMessageReminderNotified(chatId: String, clientMsgId: String) {
+        // Fake 收集器不消费收据语义；测试用 cancel 清理。
+    }
+
+    override fun cancelMessageReminder(chatId: String, clientMsgId: String) {
+        synchronized(messageRemindersLock) { messageReminders.remove("$chatId\u0000$clientMsgId") }
+    }
+
     override fun threadReplyCounts(chatId: String, scanLimit: Int): Map<Long, Int> {
         val window = synchronized(messagesLock) {
             (messagesMap[chatId] ?: emptyList())

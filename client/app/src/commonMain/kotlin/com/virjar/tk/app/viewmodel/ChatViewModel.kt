@@ -116,6 +116,21 @@ class ChatViewModel(
             }
         }
 
+    /** 稍后提醒（MSG-01/F4，纯本地事实）：登记到本地提醒表，重启不丢失。 */
+    fun remindLater(message: Message, remindAt: Long) {
+        localCache.upsertMessageReminder(
+            chatId = chatId,
+            clientMsgId = message.clientMsgId,
+            serverSeq = message.serverSeq,
+            snippet = com.virjar.tk.app.ui.component.MessagePreview.preview(message, flagsAware = false),
+            remindAt = remindAt,
+        )
+    }
+
+    fun cancelMessageReminder(message: Message) {
+        localCache.cancelMessageReminder(chatId, message.clientMsgId)
+    }
+
     suspend fun loadScheduledMessages(): List<com.virjar.tk.protocol.model.ScheduledMessage> =
         when (val result = messageRepo.listScheduledMessages(chatId)) {
             is com.virjar.tk.shared.Outcome.Success -> result.value
