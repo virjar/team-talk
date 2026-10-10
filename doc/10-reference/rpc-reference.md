@@ -156,11 +156,24 @@ payload。服务端在同一事务写邀请链接和回执，同 ID 精确重放
 | 8 | `removeReaction` | `chatId`, `serverSeq`, `emoji` | `Unit` |
 | 9 | `listReactions` | `chatId`, `fromSeq`, `toSeq` | `List<MessageReactionSummary>` |
 | 10 | `saveMessage` | `srcChatId`, `srcSeq`, `operationId` | `Message`（同 operationId 重试返回原保存副本） |
+| 11 | `getThreadMessages` | `chatId`, `rootSeq`, `fromSeq`, `limit` | `List<Message>`（0.6） |
+| 12 | `scheduleMessage` | `draft: ScheduledMessageDraft` | `ScheduledMessage`（0.6） |
+| 13 | `cancelScheduledMessage` | `scheduledId`, `operationId` | `Boolean`（0.6） |
+| 14 | `listScheduledMessages` | `chatId` | `List<ScheduledMessage>`（0.6） |
 
 回应增删是 row-keyed `(chatId, serverSeq, emoji, uid)` 幂等命令：重复 add/remove 第二次成功且不产生
 事件；操作者必须是当前聊天成员，目标消息必须存在且未撤回，每用户每消息至多 12 个不同 emoji。聚合
 计数永远由服务端 `message_reactions` 表派生；`listReactions` 返回闭区间快照，客户端只做行级投影。
 消息撤回在同一 PostgreSQL 事务删除其全部回应；成员离群后历史回应保留为事实但不再接受新回应。
+
+`getThreadMessages`（0.6）拉取以 `rootSeq` 为根的线程回复：归属由服务端沿 reply 链查询期上溯推导
+（权威存储的 `replyToMsgId` 即目标 serverSeq，父先于子无环），扫描上限 100k 条、链深 100，超限整次失败。
+倒序窗口语义与 `getHistory` 对齐，返回不含根消息。
+
+`scheduleMessage`（0.6）登记定时发送：`operationId` 幂等重放返回原记录；`deliverAt` 必须晚于当前时间
+（容忍 60 秒时钟偏差）且不超过 30 天。到点由服务端 worker 沿与 MESSAGE 帧完全相同的发送管道投递，
+`clientMsgId = "scdl-" + scheduledId` 确定性派生——投递与结算之间的进程死亡在重启重扫中被消息幂等索引
+吸收，精确一次；失败置 FAILED 保留在发起者列表。`cancelScheduledMessage` 仅发起者可取消，终态幂等。
 
 `getHistory(fromSeq = 0)` 从最新位置取倒序窗口。历史与搜索的 `limit` 必须在 1..10；该上限同时约束存储/索引扫描，并为最坏消息正文保留 16 MiB 响应帧余量。搜索、历史、编辑、撤回和转发都必须校验调用者当前仍属于相关会话。发送新消息和 `MESSAGE_ACK` 使用 `chatId + clientMsgId` 复合身份，成功 ACK 返回服务器分配的 seq。
 
@@ -173,11 +186,16 @@ payload。服务端在同一事务写邀请链接和回执，同 ID 精确重放
 | 3 | `setPin` | `chatId`, `pinned` | `Unit` |
 | 4 | `setMute` | `chatId`, `muted` | `Unit` |
 | 5 | `delete` | `chatId` | `Unit` |
+| 6 | `listChatReadStates` | `chatId`, `seq` | `List<ChatReadState>`（0.6） |
 
 客户端重放使用持久 `sync_events` 流，权威会话快照使用 `listPage`。首页的
 `request.cursor = null`；后续页原样回传上一页的 opaque `nextCursor`，直到其为 null。
 服务端在权限过滤后按不可变 `chatId DESC` 做 keyset `limit + 1`；客户端收齐全部页后才原子替换
 本地投影，不得逐页发布或静默截断。
+
+`listChatReadStates`（0.6）返回活跃成员中已读水位 ≥ `seq` 的（uid、权威显示名、readSeq）投影。
+可见性默认仅群主/管理员与该消息发送者（2026-10-09 保守默认，可经内测反馈放开）；水位语义是
+"阅读进度已到该消息"的近似，不是逐条回执。硬上限 2,000 条，超限整次失败不截断。
 
 会话是“用户对聊天的视图”，因此草稿、置顶、静音和 readSeq 属于用户维度，而不是 Chat 的全局属性。
 PERSONAL `Conversation` 必须携带 `peerUid` 与正数 `peerRevision`，`chatAvatar` 是该版本对端的完整用户头像描述符快照；GROUP 和

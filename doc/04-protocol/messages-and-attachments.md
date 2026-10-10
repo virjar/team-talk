@@ -31,7 +31,8 @@ body fields（当 hasBody=1）
 
 当前协议分配 RICH_TEXT、IMAGE、VOICE、VIDEO、FILE、LOCATION、CARD、REPLY、FORWARD、
 MERGE_FORWARD、REVOKE、EDIT、STICKER、REACTION、TYPING、
-INTERACTIVE_CARD、OFFICE_REF，以及 protocol 0.2 新增的 TASK_REF。是否有完整产品入口以[功能状态](../10-reference/feature-status.md)为准，
+INTERACTIVE_CARD、OFFICE_REF、protocol 0.2 新增的 TASK_REF、protocol 0.5 新增的 CALL_LOG，
+以及 protocol 0.6 新增的 MERGE_FORWARD_SNAPSHOT。是否有完整产品入口以[功能状态](../10-reference/feature-status.md)为准，
 枚举存在不等于所有客户端已经完成体验。
 
 MessageBodyRegistry 是 `MessageType → reader` 的唯一解码入口。发送前与服务端落库前都调用
@@ -57,6 +58,16 @@ MessageBodyPolicy，确保 messageType 与 body 实际类型一致。
 有权读取的任务重建预览，点击仍调用任务 RPC。它不扩展已经发行的 `OFFICE_REF(17)` 子类型。
 向旧协议连接返回历史和搜索消息时，服务端保留原消息定位并投影为升级提示；持久消息保持原类型。
 旧端的实时事件沿协议能力门禁推进游标，不尝试解码未知任务 body。
+
+`MERGE_FORWARD_SNAPSHOT(20)`（0.6，MSG-01/F6）是快照式合并转发：`MergeForwardSnapshotBody` 携带
+发送时冻结的展示快照（title + ≤200 条 senderName/snippet/timestamp），不携带可定位消息引用——
+合并转发的接收者可能无权读取源会话，快照式使展开零拉取也无权限边界。服务端发送时 canonical
+校验数量与字段容量。历史冻结的 `MERGE_FORWARD(10)`（仅摘要形态）保留编号但未实际启用；
+新的合并转发实现必须使用 0.6 快照类型。
+
+回复（`REPLY(8)`）的线程归属不依赖独立字段：权威存储的 `ReplyBody.replyToMsgId` 是服务端发送时
+重写的目标 `serverSeq`（`rebuildReply`，目标必须已落库，父先于子、链天然无环），线程查询按
+reply 链在线上溯推导，详见 RPC 参考的 `getThreadMessages`。
 
 ## 4. 富文本
 
