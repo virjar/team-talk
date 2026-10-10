@@ -132,6 +132,27 @@ class ChatViewModel(
         localCache.cancelMessageReminder(chatId, message.clientMsgId)
     }
 
+    /**
+     * 合并转发（MSG-01/F6）：快照式发送到目标会话。entries 由发送方冻结；
+     * 走与普通消息完全相同的持久发送队列（MESSAGE 帧）。
+     */
+    fun sendMergeForward(
+        targetChatId: String,
+        title: String?,
+        entries: List<com.virjar.tk.protocol.body.MergeForwardEntry>,
+    ) {
+        val body = com.virjar.tk.protocol.body.MergeForwardSnapshotBody(title = title, entries = entries)
+        val message = Message(
+            chatId = targetChatId,
+            clientMsgId = com.virjar.tk.shared.platform.platformRandomUuid(),
+            senderUid = myUid,
+            messageType = com.virjar.tk.protocol.MessageType.MERGE_FORWARD_SNAPSHOT.code,
+            timestamp = com.virjar.tk.shared.platform.platformCurrentTimeMillis(),
+            body = body,
+        )
+        sendMessage(message)
+    }
+
     /** 群已读列表（MSG-01/F5）：失败经错误通道反馈返回空；未注入会话仓储时不可用。 */
     suspend fun loadChatReadStates(seq: Long): List<com.virjar.tk.protocol.model.ChatReadState> {
         val repo = checkNotNull(conversationRepo) { "已读查询不可用" }

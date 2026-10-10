@@ -28,7 +28,10 @@ enum class MessageType(val code: Int) {
     TASK_REF(18),
     /** 通话记录（服务端在呼叫终结时落库），旧客户端按未知类型跳过。 */
     @SinceProtocol(5)
-    CALL_LOG(19);
+    CALL_LOG(19),
+    /** 快照式合并转发（MSG-01/F6）：body 内嵌条目展示快照，不携带可定位引用。 */
+    @SinceProtocol(6)
+    MERGE_FORWARD_SNAPSHOT(20);
 
     companion object {
         private val codeMap = entries.associateBy { it.code }

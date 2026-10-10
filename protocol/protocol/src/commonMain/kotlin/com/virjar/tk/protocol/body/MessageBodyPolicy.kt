@@ -88,6 +88,7 @@ object MessageBodyPolicy {
             is CardBody -> validateContactCard(body)
             is ForwardBody -> validateForward(body)
             is MergeForwardBody -> validateMergeForward(body)
+            is MergeForwardSnapshotBody -> validateMergeForwardSnapshot(body)
             is RevokeBody -> body.also { requireIdentifier(it.revokedMsgId, "revokedMsgId") }
             is EditBody -> body.copy(
                 editedMsgId = requireIdentifier(body.editedMsgId, "editedMsgId"),
@@ -527,6 +528,23 @@ object MessageBodyPolicy {
         return body
     }
 
+    /** 快照式合并转发（MSG-01/F6）：数量一致、条目容量、快照字段非空与长度上限。 */
+    fun validateMergeForwardSnapshot(body: MergeForwardSnapshotBody): MergeForwardSnapshotBody {
+        require(body.entries.isNotEmpty()) { "合并转发至少包含一条消息快照" }
+        require(body.entries.size <= MergeForwardSnapshotBody.MAX_ENTRIES) {
+            "合并转发不能超过 ${MergeForwardSnapshotBody.MAX_ENTRIES} 条"
+        }
+        body.entries.forEachIndexed { index, entry ->
+            requireIdentifier(entry.senderName, "合并转发条目 #$index 发送者")
+            require(entry.snippet.isNotBlank() && entry.snippet.length <= MAX_SHORT_TEXT_LENGTH) {
+                "合并转发条目 #$index 摘要非法"
+            }
+            require(entry.timestamp > 0L) { "合并转发条目 #$index 时间非法" }
+        }
+        require(body.title == null || body.title.length <= MAX_DISPLAY_NAME_LENGTH) { "合并转发标题非法" }
+        return body
+    }
+
     fun typeOf(body: MessageBody): MessageType = when (body) {
         is RichTextBody -> MessageType.RICH_TEXT
         is InteractiveCardBody -> MessageType.INTERACTIVE_CARD
@@ -539,6 +557,7 @@ object MessageBodyPolicy {
         is ReplyBody -> MessageType.REPLY
         is ForwardBody -> MessageType.FORWARD
         is MergeForwardBody -> MessageType.MERGE_FORWARD
+        is MergeForwardSnapshotBody -> MessageType.MERGE_FORWARD_SNAPSHOT
         is RevokeBody -> MessageType.REVOKE
         is EditBody -> MessageType.EDIT
         is StickerBody -> MessageType.STICKER

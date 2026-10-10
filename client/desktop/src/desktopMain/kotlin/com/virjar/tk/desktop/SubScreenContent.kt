@@ -529,11 +529,18 @@ internal fun SubScreenContent(
             peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) },
             onForward = { targetChatId ->
                 admittedSuspend(onClosed = { false }) {
-                    data.discovery.forwardMessage(
-                        screen.message.chatId,
-                        screen.message.serverSeq,
-                        targetChatId,
-                    )
+                    val mergeEntries = screen.mergeEntries
+                    if (mergeEntries != null) {
+                        // 合并转发（MSG-01/F6）：快照式新消息走持久发送队列。
+                        data.sendMergeForward(targetChatId, title = null, entries = mergeEntries)
+                        true
+                    } else {
+                        data.discovery.forwardMessage(
+                            screen.message.chatId,
+                            screen.message.serverSeq,
+                            targetChatId,
+                        )
+                    }
                 }
             },
             onBack = onBack,

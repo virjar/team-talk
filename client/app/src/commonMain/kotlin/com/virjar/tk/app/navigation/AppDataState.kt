@@ -174,6 +174,24 @@ open class AppDataState(
     val account = AccountFeature(session, contactViewModel, actionScope, ::handleError, localData)
     val groups = GroupFeature(session, actionScope, ::handleError, localData, telemetry)
     val discovery = DiscoveryFeature(session, ::handleError, localData)
+
+    /** 合并转发（MSG-01/F6）：快照式新消息经持久发送队列发往目标会话。 */
+    fun sendMergeForward(
+        targetChatId: String,
+        title: String?,
+        entries: List<com.virjar.tk.protocol.body.MergeForwardEntry>,
+    ) {
+        session.enqueueOutgoing(
+            com.virjar.tk.protocol.model.Message(
+                chatId = targetChatId,
+                clientMsgId = com.virjar.tk.shared.platform.platformRandomUuid(),
+                senderUid = session.userSession.uid,
+                messageType = com.virjar.tk.protocol.MessageType.MERGE_FORWARD_SNAPSHOT.code,
+                timestamp = com.virjar.tk.shared.platform.platformCurrentTimeMillis(),
+                body = com.virjar.tk.protocol.body.MergeForwardSnapshotBody(title = title, entries = entries),
+            ),
+        )
+    }
     val messageActions = MessageActionsFeature(session, localData) { action ->
         launchAdmittedUiAction(action = action)
     }

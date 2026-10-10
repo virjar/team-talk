@@ -49,6 +49,10 @@ object MessageTextExtractor {
             }
             MessageType.FORWARD -> (body as? ForwardBody)?.forwardNote
             MessageType.MERGE_FORWARD -> (body as? MergeForwardBody)?.title
+            MessageType.MERGE_FORWARD_SNAPSHOT ->
+                (body as? com.virjar.tk.protocol.body.MergeForwardSnapshotBody)?.let { snapshot ->
+                    snapshot.title ?: snapshot.entries.joinToString("；") { entry -> "${entry.senderName}:${entry.snippet}" }
+                }
             MessageType.REVOKE -> null
             MessageType.EDIT -> (body as? EditBody)?.newContent
             MessageType.STICKER -> null

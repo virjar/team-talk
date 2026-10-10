@@ -8,6 +8,12 @@ import androidx.compose.material.icons.filled.PhoneMissed
 import androidx.compose.material.icons.filled.VideoCall
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.clickable
@@ -27,6 +33,7 @@ import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.app.ui.component.rich.EmbeddedAssetRenderScope
 import com.virjar.tk.app.ui.theme.Tk
+import kotlinx.datetime.toLocalDateTime
 import kotlin.math.abs
 
 /**
@@ -217,6 +224,7 @@ fun MessageBodyRenderer(
         )
         is ForwardBody -> ForwardView(body)
         is MergeForwardBody -> MediaIconCard(title = "合并转发", subtitle = "${body.messageCount} 条消息")
+        is com.virjar.tk.protocol.body.MergeForwardSnapshotBody -> MergeForwardSnapshotView(body)
         is RevokeBody -> SystemHintText("撤回了一条消息")
         // 编辑消息直接渲染新内容；「（已编辑）」角标由 FLAG_EDITED 统一显示
         is EditBody -> Text(body.newContent, style = MaterialTheme.typography.bodyMedium)
@@ -539,4 +547,69 @@ internal fun CallLogBubble(
             style = MaterialTheme.typography.bodyMedium,
         )
     }
+}
+
+/**
+ * 快照式合并转发卡片（MSG-01/F6）：默认收起为摘要卡，点击展开发送时冻结的条目快照列表。
+ * 展开是纯本地交互——快照自包含，无需（也无需有权）读取源会话。
+ */
+@Composable
+internal fun MergeForwardSnapshotView(body: com.virjar.tk.protocol.body.MergeForwardSnapshotBody) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .widthIn(max = 320.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), MaterialTheme.shapes.medium)
+            .clickable { expanded = !expanded }
+            .testTag("chat.merge.forward")
+            .padding(Tk.spacing.sm),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                body.title?.takeIf { it.isNotBlank() } ?: "合并转发",
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "${body.entries.size} 条" + if (expanded) " · 收起" else "",
+                style = MaterialTheme.typography.labelSmall,
+                color = Tk.colors.secondaryText,
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(Tk.spacing.xs))
+            HorizontalDivider()
+            body.entries.forEach { entry ->
+                Column(modifier = Modifier.padding(vertical = Tk.spacing.xs)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            entry.senderName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Tk.colors.secondaryText,
+                        )
+                        Text(
+                            formatEntryTime(entry.timestamp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Tk.colors.secondaryText,
+                        )
+                    }
+                    Text(
+                        entry.snippet,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatEntryTime(timestamp: Long): String {
+    val zone = kotlinx.datetime.TimeZone.currentSystemDefault()
+    val local = kotlin.time.Instant.fromEpochMilliseconds(timestamp).toLocalDateTime(zone)
+    return "%02d-%02d %02d:%02d".format(local.monthNumber, local.dayOfMonth, local.hour, local.minute)
 }

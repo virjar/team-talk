@@ -704,6 +704,7 @@ class MessageService(
             MessageType.CARD,
             MessageType.REPLY,
             MessageType.MERGE_FORWARD,
+            MessageType.MERGE_FORWARD_SNAPSHOT,
             MessageType.STICKER,
             MessageType.OFFICE_REF,
             MessageType.TASK_REF,

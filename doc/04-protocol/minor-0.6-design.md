@@ -70,9 +70,12 @@ Nextcloud Talk / Huly / Startalk(QTalk) 源码对照，收录依据与结论见�
 
 ### F6 合并转发
 
-`MergeForwardBody` 已注册（条目上限 10,000）。实现时核实：客户端多选组装的 body 经
-MESSAGE 提交时，服务端是否对全部被引用消息执行发送者可读校验（对照 OFFICE_REF 的
-发送时校验原则）；缺口补齐不新开编号。
+**实现修正（2026-10-09）**：原拟复用已注册的 `MergeForwardBody` 并校验被引用消息——落码时
+KSP 正确拦截：该 body 已随协议 0.5 冻结不可改字段，且引用式设计有权限边界（合并转发接收者
+可能无权读取源会话，点击展开会被拒）。最终采用**快照式新契约**：`MERGE_FORWARD_SNAPSHOT(20)`
++ `MergeForwardSnapshotBody`（title + ≤200 条 senderName/snippet/timestamp 展示快照），
+发送时服务端 canonical 校验数量与容量；"点击展开定位原消息"按边界记录不进入本期，
+展开即看发送时冻结的快照列表。
 
 ### 编号预留说明
 
@@ -90,7 +93,7 @@ MESSAGE 提交时，服务端是否对全部被引用消息执行发送者可读
 | F3 定时发送 | ✔ 424c85d03（message/12-14 + wire 模型） | ✔ 424c85d03（scheduled_messages + worker + 集成测试 5 场景全绿） | ✔ 3f5a9590f（三方法+校验，jvmTest 回归） | ✔ 3b7cc2eac + 真实 E2E：调度→到点自动投递→取消防投递，全链路通过（部署 3b7cc2eac 后验证） | ✔（共享 UI） | 桌面✔ | ☐ 批次末统一折入 |
 | F4 稍后提醒 | —（零契约） | — | ✔（message_reminders 本地表 + 6.sqm 迁移 + 收据/取消 API，存储测试） | ✔ 菜单快捷项（1小时/明天9点）+ 桌面托盘到点通知循环（30s 轮询，收据防重复）；登记路径 E2E 验证；到点弹窗与 Android 系统通知接线为边界 | ✔（共享 UI） | ✔ 存储测试 | ☐ 批次末统一折入 |
 | F5 群已读列表 | ✔（conversation/6 + ChatReadState 模型） | ✔（水位 join 查询 + 保守可见性裁决 + 2,000 上限；集成测试：水位/可见性/越权拒绝） | ✔（listChatReadStates + 身份校验） | ✔ 菜单'已读情况'（发送者/管理员可见）+ 空态/列表对话框；登记 E2E 验证 | ✔（共享 UI） | ✔ 服务端集成测试 | ☐ 批次末统一折入 |
-| F6 合并转发 | ☐（核实） | ☐（核实） | ☐ | ☐ | ☐ | ☐ | ☐ |
+| F6 合并转发 | ✔ 5a035a775（MERGE_FORWARD_SNAPSHOT(20) 快照式） | ✔ 5a035a775（canonical 校验+白名单+预览提取） | ✔（AppDataState.sendMergeForward + ViewModel 包装） | ✔ 多选态（菜单'多选'→行勾选→操作栏→Forward 子屏合并模式，桌面；Android 子屏接线待补） | ✔ 真实 E2E：多选 2 条→合并转发→目标会话渲染→展开快照 | 桌面✔ | ☐ 批次末统一折入 |
 
 ## 批次验收（对齐 roadmap MSG-01 最小验证）
 

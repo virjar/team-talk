@@ -22,6 +22,7 @@ object MessageBodyRegistry {
         MessageType.REPLY to ReplyBody,
         MessageType.FORWARD to ForwardBody,
         MessageType.MERGE_FORWARD to MergeForwardBody,
+        MessageType.MERGE_FORWARD_SNAPSHOT to MergeForwardSnapshotBody,
         MessageType.REVOKE to RevokeBody,
         MessageType.EDIT to EditBody,
         MessageType.STICKER to StickerBody,

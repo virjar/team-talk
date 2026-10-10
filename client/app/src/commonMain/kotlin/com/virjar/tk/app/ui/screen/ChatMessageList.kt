@@ -70,6 +70,12 @@ internal fun ChatMessageList(
     onRemindLater: ((Message, remindAt: Long) -> Unit)? = null,
     /** 已读情况（MSG-01/F5）：仅发送者与群管理员/群主可见。 */
     onShowReadStates: ((Message) -> Unit)? = null,
+    /** 多选模式（MSG-01/F6）：true 时消息行点击切换选中、菜单与手势让位。 */
+    selectionMode: Boolean = false,
+    selectedClientMsgIds: Set<String> = emptySet(),
+    onToggleSelect: ((Message) -> Unit)? = null,
+    /** 菜单"多选"入口：从该消息进入多选并预选它。 */
+    onStartSelection: ((Message) -> Unit)? = null,
     /** 当前用户在群内的角色（0/1/2）；私聊恒 0。 */
     myRole: Int = 0,
     onToggleReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
@@ -187,6 +193,22 @@ internal fun ChatMessageList(
                 val isMe = msg.senderUid == myUid
                 // 跳转高亮优先于搜索/定位高亮（T065：点击胶囊后短暂标出目标行）。
                 val effectiveHighlightSeq = jumpHighlightSeq ?: highlightedServerSeq
+                // 多选模式（MSG-01/F6）：行点击切换选中并显示勾选视觉；气泡内部
+                // 的可点击子元素（头像等）体积小，误触边界可接受。
+                val selectModifier = if (selectionMode && onToggleSelect != null) {
+                    Modifier
+                        .clickable { onToggleSelect(msg) }
+                        .background(
+                            if (msg.clientMsgId in selectedClientMsgIds) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            },
+                        )
+                        .padding(horizontal = 4.dp)
+                } else {
+                    Modifier
+                }
                 val focusModifier = if (msg.serverSeq == effectiveHighlightSeq) {
                     Modifier
                         .testTag("chat.message.focused.${msg.serverSeq}")
@@ -220,7 +242,7 @@ internal fun ChatMessageList(
                 // 撤回消息走系统提示（居中裸文字），不走气泡
                 if (msg.flags and Message.FLAG_REVOKED != 0) {
                     androidx.compose.foundation.layout.Row(
-                        modifier = focusModifier.fillMaxWidth().padding(vertical = Tk.spacing.xs),
+                        modifier = focusModifier.then(selectModifier).fillMaxWidth().padding(vertical = Tk.spacing.xs),
                         horizontalArrangement = Arrangement.Center,
                     ) {
                         Text(
@@ -268,7 +290,7 @@ internal fun ChatMessageList(
                             onLongClick = { onMenuMessageChange(msg) },
                             onAvatarClick = onAvatarClick,
                             onAvatarMention = onAvatarMention,
-                            modifier = focusModifier,
+                            modifier = focusModifier.then(selectModifier),
                             menuExpanded = menuMessage?.clientMsgId == msg.clientMsgId,
                             onMenuDismiss = { onMenuMessageChange(null) },
                             outgoingFailureCode = outgoingFailureCodes[msg.clientMsgId],
@@ -296,6 +318,7 @@ internal fun ChatMessageList(
                                 onRemindLater = onRemindLater,
                                 onShowReadStates = onShowReadStates,
                                 myRole = myRole,
+                                onStartSelection = if (selectionMode) null else onStartSelection,
                             ),
                         )
 
@@ -444,6 +467,8 @@ private fun messageMenuItems(
     /** 已读情况（MSG-01/F5）：仅发送者与群管理员/群主可见；null 隐藏。 */
     onShowReadStates: ((Message) -> Unit)? = null,
     myRole: Int = 0,
+    /** 多选入口（MSG-01/F6）：仅已确认消息。 */
+    onStartSelection: ((Message) -> Unit)? = null,
 ): @Composable ColumnScope.() -> Unit = {
     val copyText = rememberClipboardTextWriter()
     val fileDownloads = LocalFileDownloads.current
@@ -455,6 +480,16 @@ private fun messageMenuItems(
                 onMenuMessageChange(null)
             },
             onMore = onOpenReactionPicker,
+        )
+    }
+    if (onStartSelection != null && msg.serverSeq > 0L) {
+        DropdownMenuItem(
+            text = { Text("多选") },
+            onClick = {
+                onMenuMessageChange(null)
+                onStartSelection(msg)
+            },
+            modifier = Modifier.testTag("chat.multiselect.entry"),
         )
     }
     if (onShowReadStates != null && msg.serverSeq > 0L && (isMe || myRole >= 1)) {

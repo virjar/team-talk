@@ -78,6 +78,7 @@ internal fun ChatPanelWrapper(
     cachedDraft: String?,
     composerContextStore: ChatComposerContextStore,
     onForward: (Message) -> Unit,
+    onMergeForward: ((entries: List<com.virjar.tk.protocol.body.MergeForwardEntry>, anchor: Message) -> Unit)? = null,
     onSaveMessage: ((Message) -> Unit)? = null,
     /** 类型化引用打开：MainAppContent 负责权限重校验与导航；onDenied 走聊天页错误提示。 */
     onOpenOfficeRef: ((Message, com.virjar.tk.protocol.body.OfficeRefBody, onDenied: (String) -> Unit) -> Unit)? = null,
@@ -382,6 +383,7 @@ internal fun ChatPanelWrapper(
             chatType = chatType,
             resolveSender = resolveSender,
             onForward = onForward,
+            onMergeForward = onMergeForward,
             onOpenFullMessage = { focusManager.clearFocus(); messageDetails.open(it) },
             onSaveMessage = onSaveMessage,
             cachedDraft = cachedDraft,

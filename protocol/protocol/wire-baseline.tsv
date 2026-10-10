@@ -13,6 +13,7 @@ enum	com.virjar.tk.protocol.MessageType/17	0	-	active	OFFICE_REF
 enum	com.virjar.tk.protocol.MessageType/18	2	-	active	TASK_REF
 enum	com.virjar.tk.protocol.MessageType/19	5	-	active	CALL_LOG
 enum	com.virjar.tk.protocol.MessageType/2	0	-	active	IMAGE
+enum	com.virjar.tk.protocol.MessageType/20	6	-	active	MERGE_FORWARD_SNAPSHOT
 enum	com.virjar.tk.protocol.MessageType/3	0	-	active	VOICE
 enum	com.virjar.tk.protocol.MessageType/4	0	-	active	VIDEO
 enum	com.virjar.tk.protocol.MessageType/5	0	-	active	FILE
@@ -237,6 +238,8 @@ type	com.virjar.tk.protocol.body.ImageBody	0	-	active	CLASS(attachment:com.virja
 type	com.virjar.tk.protocol.body.InteractiveCardBody	0	-	active	CLASS(payloadJson:kotlin.String)
 type	com.virjar.tk.protocol.body.LocationBody	0	-	active	CLASS(latitude:kotlin.Double,longitude:kotlin.Double,title:kotlin.String?,address:kotlin.String?)
 type	com.virjar.tk.protocol.body.MergeForwardBody	0	-	active	CLASS(title:kotlin.String?,messageCount:kotlin.Int)
+type	com.virjar.tk.protocol.body.MergeForwardEntry	6	-	active	CLASS(senderName:kotlin.String,snippet:kotlin.String,timestamp:kotlin.Long)
+type	com.virjar.tk.protocol.body.MergeForwardSnapshotBody	6	-	active	CLASS(title:kotlin.String?,entries:kotlin.collections.List<com.virjar.tk.protocol.body.MergeForwardEntry>)
 type	com.virjar.tk.protocol.body.MessageBody	0	-	active	INTERFACE()
 type	com.virjar.tk.protocol.body.OfficeRefBody	0	-	active	CLASS(refType:kotlin.Int,spaceId:kotlin.String,targetId:kotlin.String,title:kotlin.String,subtitle:kotlin.String)
 type	com.virjar.tk.protocol.body.ReactionBody	0	-	active	CLASS(targetMsgId:kotlin.String,emoji:kotlin.String,action:kotlin.Int)

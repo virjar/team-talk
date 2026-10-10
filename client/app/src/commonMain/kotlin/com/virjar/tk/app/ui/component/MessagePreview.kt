@@ -60,6 +60,8 @@ object MessagePreview {
             ?: "[回复]"
         is ForwardBody -> body.forwardNote?.let { "[转发] $it" } ?: "[转发消息]"
         is MergeForwardBody -> body.title ?: "[合并转发]"
+        is com.virjar.tk.protocol.body.MergeForwardSnapshotBody ->
+            body.title ?: "合并转发（${body.entries.size} 条）"
         is RevokeBody -> "撤回了一条消息"
         is EditBody -> "已编辑：${body.newContent}"
         is ReactionBody -> "[表情回应]"

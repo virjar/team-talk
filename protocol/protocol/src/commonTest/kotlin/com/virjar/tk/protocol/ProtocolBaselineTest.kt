@@ -122,7 +122,8 @@ class ProtocolBaselineTest {
     fun `markdown is the only text message wire type`() {
         assertEquals(1, MessageType.RICH_TEXT.code)
         assertEquals(16, MessageType.INTERACTIVE_CARD.code)
-        assertEquals((1..19).toList(), MessageType.entries.map(MessageType::code))
+        // MERGE_FORWARD_SNAPSHOT(20) 是 minor 0.6 增量（MSG-01/F6）；1..19 为历史冻结段。
+        assertEquals((1..19).toList() + listOf(20), MessageType.entries.map(MessageType::code))
         assertEquals(MessageType.entries.size, MessageType.entries.map(MessageType::code).toSet().size)
     }
 

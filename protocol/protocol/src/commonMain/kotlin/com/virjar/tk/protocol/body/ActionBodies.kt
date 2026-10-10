@@ -103,7 +103,7 @@ data class ForwardBody(
 }
 
 /**
- * 合并转发消息 Body。
+ * 合并转发消息 Body（历史 0.5 冻结形态：仅摘要，未实际启用）。
  */
 data class MergeForwardBody(
     val title: String? = null,
@@ -120,6 +120,57 @@ data class MergeForwardBody(
             title = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_DISPLAY_NAME_LENGTH)),
             messageCount = buf.readVarInt(),
         )
+    }
+}
+
+/**
+ * 合并转发的条目展示快照（MSG-01/F6）：不携带可定位引用——接收者无需读取源会话。
+ */
+@com.virjar.tk.protocol.SinceProtocol(6)
+data class MergeForwardEntry(
+    val senderName: String,
+    val snippet: String,
+    val timestamp: Long,
+) : com.virjar.tk.protocol.IProto {
+    override fun writeTo(buf: PacketBuffer) {
+        buf.writeString(senderName)
+        buf.writeString(snippet)
+        buf.writeVarLong(timestamp)
+    }
+
+    companion object : com.virjar.tk.protocol.IProtoReader<MergeForwardEntry> {
+        override fun readFrom(buf: PacketBuffer) = MergeForwardEntry(
+            senderName = buf.readRequiredString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_DISPLAY_NAME_LENGTH)),
+            snippet = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_SHORT_TEXT_LENGTH)) ?: "",
+            timestamp = buf.readVarLong(),
+        )
+    }
+}
+
+/**
+ * 快照式合并转发 Body（MSG-01/F6）：[entries] 是发送时冻结的展示快照；
+ * 服务端发送时按 [MergeForwardSnapshotBody.Companion.MAX_ENTRIES] 做权威 rebuild 校验。
+ */
+@com.virjar.tk.protocol.SinceProtocol(6)
+data class MergeForwardSnapshotBody(
+    val title: String? = null,
+    val entries: List<MergeForwardEntry> = emptyList(),
+) : MessageBody {
+    override fun writeTo(buf: PacketBuffer) {
+        buf.writeString(title)
+        buf.writeVarInt(entries.size)
+        entries.forEach { it.writeTo(buf) }
+    }
+
+    companion object : IProtoReader<MergeForwardSnapshotBody> {
+        const val MAX_ENTRIES = 200
+
+        override fun readFrom(buf: PacketBuffer): MergeForwardSnapshotBody {
+            val title = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_DISPLAY_NAME_LENGTH))
+            val count = buf.readCollectionSize(MAX_ENTRIES, fieldName = "mergeForwardSnapshot entries")
+            val entries = List(count) { MergeForwardEntry.readFrom(buf) }
+            return MergeForwardSnapshotBody(title, entries)
+        }
     }
 }
 

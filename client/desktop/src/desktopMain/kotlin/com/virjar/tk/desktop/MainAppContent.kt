@@ -38,6 +38,7 @@ import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.FriendPresence
 import com.virjar.tk.desktop.media.DesktopSessionResources
 import com.virjar.tk.protocol.model.ChatType
+import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.Contact
 import com.virjar.tk.protocol.model.Conversation
 import com.virjar.tk.protocol.model.User
@@ -656,6 +657,10 @@ private fun RowScope.MainContentPane(
                             messageFocusRequestId = nav.messageFocusRequestId,
                             onForward = presentationGate.guard { msg ->
                                 nav.openScreen(SubScreen.Forward(msg))
+                            },
+                            onMergeForward = presentationGate.guard { entries: List<com.virjar.tk.protocol.body.MergeForwardEntry>, anchor: Message ->
+                                // 锚点消息仅承载子屏标题语义；合并模式下不读取其内容。
+                                nav.openScreen(SubScreen.Forward(anchor, mergeEntries = entries))
                             },
                             onSaveMessage = presentationGate.guard { msg ->
                                 nav.messageActions.save(msg.chatId, msg.serverSeq)

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Surface
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import com.virjar.tk.app.ui.theme.Tk
@@ -133,6 +134,8 @@ fun ChatPanel(
     telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
     /** 当前群的固定待办区域，不随消息列表滚动。 */
     pendingTasksContent: (@Composable () -> Unit)? = null,
+    /** 合并转发（MSG-01/F6）：携带快照条目与锚点消息（仅供子屏标题语义），宿主打开目标选择。 */
+    onMergeForward: ((entries: List<com.virjar.tk.protocol.body.MergeForwardEntry>, anchor: Message) -> Unit)? = null,
 ): Unit = key(chatId, viewModel) {
     // Desktop 切会话时复用面板位置。整个组合归当前聊天所有，否则 collectAsState
     // 会短暂保留上一聊天的值，已读 effect 就可能把 A 的消息序号写进 B。
@@ -183,6 +186,16 @@ fun ChatPanel(
     var showScheduleDialog by remember(chatId) { mutableStateOf(false) }
     var readStatesForSeq by remember(chatId) { mutableStateOf<Long?>(null) }
     var readStatesList by remember(chatId) { mutableStateOf<List<com.virjar.tk.protocol.model.ChatReadState>>(emptyList()) }
+    // 多选模式（MSG-01/F6）：LinkedHashMap 保序（entries 按选择顺序，提交时按时间重排）。
+    var selectionMode by remember(chatId) { mutableStateOf(false) }
+    val selectedMessages = remember(chatId) { androidx.compose.runtime.mutableStateMapOf<String, Message>() }
+    fun exitSelectionMode() {
+        selectionMode = false
+        selectedMessages.clear()
+    }
+    var mergeForwardRequest by remember(chatId) {
+        mutableStateOf<List<com.virjar.tk.protocol.body.MergeForwardEntry>?>(null)
+    }
     val showNoticeBar = chatType == ChatType.GROUP.code && !noticeBarDismissed && chatNotice != null
     val loading by viewModel.loading.collectAsState()
     val loadingOlder by viewModel.loadingOlder.collectAsState()
@@ -989,6 +1002,21 @@ fun ChatPanel(
                 onShowReadStates = if (isPersonal) null else actionAdmission.guard { message: Message ->
                     readStatesForSeq = message.serverSeq
                 },
+                selectionMode = selectionMode,
+                selectedClientMsgIds = selectedMessages.keys.toSet(),
+                onToggleSelect = if (selectionMode) {
+                    actionAdmission.guard { message: Message ->
+                        if (message.clientMsgId in selectedMessages.keys) {
+                            selectedMessages.remove(message.clientMsgId)
+                        } else {
+                            selectedMessages[message.clientMsgId] = message
+                        }
+                    }
+                } else null,
+                onStartSelection = if (voiceMode || editingSessionActive) null else actionAdmission.guard { message: Message ->
+                    selectionMode = true
+                    selectedMessages[message.clientMsgId] = message
+                },
                 myRole = viewModel.chatRole.collectAsState().value,
                 onToggleReaction = actionAdmission.guard(viewModel::toggleReaction),
                 onPickReaction = actionAdmission.guard(viewModel::pickReaction),
@@ -1075,7 +1103,46 @@ fun ChatPanel(
                     modifier = Modifier.testTag("chat.draft.reply.retry")) { Text("回复目标暂不可用，点击重试") }
             }
 
-            if (!composerReady) {
+            if (selectionMode) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
+                        .testTag("chat.multiselect.bar"),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("已选 ${selectedMessages.size} 条", style = MaterialTheme.typography.bodyMedium)
+                    Row {
+                        TextButton(
+                            onClick = {
+                                val entries = selectedMessages.values
+                                    .sortedBy { it.serverSeq }
+                                    .map { msg ->
+                                        com.virjar.tk.protocol.body.MergeForwardEntry(
+                                            senderName = resolveDisplayName(msg.senderUid, resolveSender),
+                                            snippet = com.virjar.tk.app.ui.component.MessagePreview.preview(
+                                                msg, flagsAware = false,
+                                            ),
+                                            timestamp = msg.timestamp,
+                                        )
+                                    }
+                                val anchor = selectedMessages.values.first()
+                                mergeForwardRequest = entries
+                                exitSelectionMode()
+                                onMergeForward?.invoke(entries, anchor)
+                            },
+                            enabled = selectedMessages.isNotEmpty(),
+                            modifier = Modifier.testTag("chat.multiselect.forward"),
+                        ) { Text("合并转发") }
+                        TextButton(
+                            onClick = ::exitSelectionMode,
+                            modifier = Modifier.testTag("chat.multiselect.cancel"),
+                        ) { Text("取消") }
+                    }
+                }
+            } else if (!composerReady) {
                 if (composerRecoveryFailed) {
                     TextButton(onClick = actionAdmission.guard { composerRecoveryAttempt++ },
                         modifier = Modifier.testTag("chat.draft.retry")) { Text("重试恢复草稿") }

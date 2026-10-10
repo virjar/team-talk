@@ -31,7 +31,11 @@ sealed class SubScreen {
     data class JoinByInvite(val input: String) : SubScreen()
     data class CreateGroup(val preselectedUids: Set<String> = emptySet()) : SubScreen()
     data object SearchMessages : SubScreen()
-    data class Forward(val message: Message) : SubScreen()
+    data class Forward(
+        val message: Message,
+        /** 非 null = 合并转发模式（MSG-01/F6）：entries 为发送方冻结快照，onForward 走合并发送。 */
+        val mergeEntries: List<com.virjar.tk.protocol.body.MergeForwardEntry>? = null,
+    ) : SubScreen()
 
     /**
      * 会话工具窗口：聊天头部「···」进入，承载发起群聊、清空聊天记录等会话级操作。
