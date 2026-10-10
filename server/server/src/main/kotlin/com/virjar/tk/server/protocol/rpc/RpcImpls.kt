@@ -162,6 +162,9 @@ class MessageRpcImpl(
         reactionService.listReactions(uid, chatId, fromSeq, toSeq)
     override suspend fun saveMessage(srcChatId: String, srcSeq: Long, operationId: String) =
         messageService.saveMessage(uid, srcChatId, srcSeq, operationId).forProtocol(protocolVersion)
+    override suspend fun getThreadMessages(chatId: String, rootSeq: Long, fromSeq: Long, limit: Int) =
+        messageService.getThreadMessages(uid, chatId, rootSeq, fromSeq, limit)
+            .map { it.forProtocol(protocolVersion) }
 }
 
 class ConversationRpcImpl(uid: String, private val service: ConversationService) : ConversationRpcStub(uid) {

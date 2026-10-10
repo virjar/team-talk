@@ -29,6 +29,13 @@ interface MessageRepository {
      */
     fun findIdempotentMessage(candidate: Message): Message?
     fun getHistory(chatId: String, fromSeq: Long, limit: Int, forward: Boolean = false): List<Message>
+
+    /**
+     * 拉取以 [rootSeq] 为根的线程内回复，倒序窗口（fromSeq=0 表示从最新回复开始），
+     * 返回不含根消息本身。归属按 reply 链在线推导：父消息是回复则沿链上溯，
+     * 首个非回复消息或链断点即为根；实现必须限定扫描与上溯深度，超限整次失败不截断。
+     */
+    fun getThreadMessages(chatId: String, rootSeq: Long, fromSeq: Long, limit: Int): List<Message>
     fun updateMessage(
         chatId: String,
         seq: Long,

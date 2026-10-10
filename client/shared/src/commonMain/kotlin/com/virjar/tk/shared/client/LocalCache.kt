@@ -404,6 +404,12 @@ interface LocalCache : LocalDocumentProjection {
     fun getMessages(chatId: String, limit: Int = 50): List<Message>
     /** 精确持久投影查找；调用方仍必须校验预期的服务器身份。 */
     fun findMessage(chatId: String, clientMsgId: String): Message?
+
+    /**
+     * 本地扫描窗内按线程根（serverSeq）聚合的回复数；根不在窗内的线程不计入。
+     * 纯本地显示事实，不进协议；线程全量以服务端查询为准。默认扫描量 [DEFAULT_THREAD_SCAN_LIMIT]。
+     */
+    fun threadReplyCounts(chatId: String, scanLimit: Int = DEFAULT_THREAD_SCAN_LIMIT): Map<Long, Int>
     fun insertMessage(message: Message)
 
     /**
@@ -753,6 +759,9 @@ interface LocalCache : LocalDocumentProjection {
 
         /** 单个同步消息短读的硬上限；短读不创建 resident window。 */
         const val MAX_MESSAGE_READ_LIMIT = 1_000
+
+        /** 线程回复数本地聚合的默认扫描窗：与本地消息保留上限（每 chat 2,048 条）对齐。 */
+        const val DEFAULT_THREAD_SCAN_LIMIT = 2_048
     }
 }
 

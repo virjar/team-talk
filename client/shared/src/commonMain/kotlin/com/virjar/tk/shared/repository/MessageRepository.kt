@@ -94,6 +94,37 @@ class MessageRepository internal constructor(
         }
     }
 
+    /**
+     * 独立查询以 [rootSeq] 为根的线程回复（倒序窗口，[fromSeq] 包含起点，0 表示最新页）。
+     *
+     * 不写本地缓存、常驻窗口或已读证明；线程内计数徽标用 [LocalCache.threadReplyCounts]
+     * 本地推导，点开线程以本查询的权威结果为准。
+     */
+    suspend fun queryThreadMessages(
+        chatId: String,
+        rootSeq: Long,
+        fromSeq: Long = 0,
+        limit: Int = 10,
+    ): Outcome<List<Message>> = outcome {
+        require(chatId.isNotBlank()) { "线程查询 chatId 不能为空" }
+        require(rootSeq > 0L) { "线程根必须是已分配的服务端序号" }
+        require(fromSeq >= 0L) { "线程查询起始序号不能为负数" }
+        requireMessageQueryPageLimit(limit)
+        val page = rpc.getThreadMessages(chatId, rootSeq, fromSeq, limit)
+        currentCoroutineContext().ensureActive()
+        check(page.size <= limit) { "线程查询响应超过请求上限 $limit" }
+        check(page.all {
+            it.chatId == chatId && it.serverSeq > 0 && it.serverSeq != rootSeq &&
+                it.messageType == com.virjar.tk.protocol.MessageType.REPLY.code &&
+                (fromSeq == 0L || it.serverSeq <= fromSeq)
+        }) { "线程查询响应包含窗口外、根自身或非回复消息" }
+        check(page.zipWithNext().all { (newer, older) -> newer.serverSeq > older.serverSeq } &&
+            page.map { it.clientMsgId }.distinct().size == page.size) {
+            "线程查询响应顺序或身份无效"
+        }
+        page
+    }
+
     suspend fun revokeMessage(chatId: String, serverSeq: Long): Outcome<Unit> = outcome { rpc.revoke(chatId, serverSeq) }
 
     /**

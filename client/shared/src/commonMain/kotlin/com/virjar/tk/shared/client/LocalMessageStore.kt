@@ -2,6 +2,8 @@ package com.virjar.tk.shared.client
 
 import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
+import com.virjar.tk.protocol.MessageType
+import com.virjar.tk.protocol.body.ReplyBody
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.payload.MessageAckPayload
 
@@ -84,6 +86,44 @@ internal class LocalMessageStore(
         synchronized(stateLock) {
             loadBoundedInitialMessages(queries, chatId, limit) { row -> row.toLocalModel() }
         }
+    }
+
+    /**
+     * 本地扫描窗内按线程根聚合的回复数（纯客户端显示事实，不进协议）。
+     * 只统计根也落在窗内的线程：链上溯离开窗口（根被回收）的回复不计入，
+     * 点开线程由服务端 [com.virjar.tk.protocol.rpc.def.MessageRpc.getThreadMessages] 给出权威全量。
+     */
+    fun threadReplyCounts(chatId: String, scanLimit: Int = LocalCache.DEFAULT_THREAD_SCAN_LIMIT): Map<Long, Int> =
+        cacheUseGate.use {
+            require(chatId.isNotBlank()) { "chatId must not be blank" }
+            require(scanLimit in 1..LocalCache.DEFAULT_THREAD_SCAN_LIMIT) {
+                "scanLimit must be between 1 and ${LocalCache.DEFAULT_THREAD_SCAN_LIMIT}"
+            }
+            synchronized(stateLock) {
+                val window = loadBoundedInitialMessages(queries, chatId, scanLimit) { row -> row.toLocalModel() }
+                val bySeq = HashMap<Long, Message>(window.size)
+                window.forEach { row -> if (row.serverSeq > 0L) bySeq[row.serverSeq] = row }
+                val counts = HashMap<Long, Int>()
+                for (row in window) {
+                    if (row.messageType != MessageType.REPLY.code) continue
+                    val root = resolveLocalThreadRoot(row, bySeq) ?: continue
+                    counts[root] = (counts[root] ?: 0) + 1
+                }
+                counts
+            }
+        }
+
+    /** 窗内 reply 链上溯：首个非回复消息即根；链离开本地窗口返回 null（不计入聚合）。 */
+    private fun resolveLocalThreadRoot(reply: Message, bySeq: Map<Long, Message>): Long? {
+        var current = reply
+        var depth = 0
+        while (depth < LOCAL_THREAD_CHAIN_DEPTH_LIMIT) {
+            val body = current.body as? ReplyBody ?: return current.serverSeq
+            val parentSeq = body.replyToMsgId.toLongOrNull()?.takeIf { it > 0L } ?: return null
+            current = bySeq[parentSeq] ?: return null
+            depth++
+        }
+        return null
     }
 
     fun findMessage(chatId: String, clientMsgId: String): Message? = cacheUseGate.use {
@@ -823,3 +863,5 @@ internal class LocalMessageStore(
     }
 
 }
+
+private const val LOCAL_THREAD_CHAIN_DEPTH_LIMIT = 100

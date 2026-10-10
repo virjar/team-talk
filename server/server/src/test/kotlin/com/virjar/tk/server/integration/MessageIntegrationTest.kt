@@ -62,6 +62,24 @@ class MessageIntegrationTest {
         return ctx.messageService.sendMessage(senderUid, msg)
     }
 
+    private suspend fun sendReply(
+        senderUid: String,
+        chatId: String,
+        targetSeq: Long,
+        targetSenderUid: String,
+        text: String,
+    ): Long {
+        val msg = Message(
+            chatId = chatId,
+            clientMsgId = UUID.randomUUID().toString(),
+            senderUid = senderUid,
+            messageType = MessageType.REPLY.code,
+            timestamp = System.currentTimeMillis(),
+            body = ReplyBody(replyToMsgId = targetSeq.toString(), replyToSenderUid = targetSenderUid, content = text),
+        )
+        return ctx.messageService.sendMessage(senderUid, msg)
+    }
+
     @Test
     fun `send message returns seq`() = runTest {
         val uid1 = ctx.registerUser()
@@ -148,6 +166,34 @@ class MessageIntegrationTest {
         val lastSeq = page1.last().serverSeq - 1
         val page2 = ctx.messageService.getHistory(uid1, chat.chatId, lastSeq, 2)
         assertEquals(1, page2.size)
+    }
+
+    @Test
+    fun `thread messages follow reply chains and require chat membership`() = runTest {
+        val uid1 = ctx.registerUser()
+        val uid2 = ctx.registerUser()
+        val outsider = ctx.registerUser()
+        val chat = ctx.chatService.createPersonalChat(uid1, uid2)
+        val rootSeq = sendText(uid1, chat.chatId, "thread root")
+        val directSeq = sendReply(uid2, chat.chatId, rootSeq, uid1, "direct reply")
+        sendText(uid1, chat.chatId, "unrelated")
+        val nestedSeq = sendReply(uid1, chat.chatId, directSeq, uid2, "nested reply")
+
+        assertEquals(
+            listOf(nestedSeq, directSeq),
+            ctx.messageService.getThreadMessages(uid2, chat.chatId, rootSeq, 0, 10).map(Message::serverSeq),
+        )
+        assertEquals(
+            listOf(directSeq),
+            ctx.messageService.getThreadMessages(uid1, chat.chatId, rootSeq, directSeq, 10).map(Message::serverSeq),
+        )
+        // 非成员与非法根序号都被拒绝
+        assertFailsWith<IllegalArgumentException> {
+            ctx.messageService.getThreadMessages(outsider, chat.chatId, rootSeq, 0, 10)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.messageService.getThreadMessages(uid1, chat.chatId, 0, 0, 10)
+        }
     }
 
     @Test

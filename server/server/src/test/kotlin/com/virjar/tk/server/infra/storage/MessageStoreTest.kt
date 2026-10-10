@@ -1,6 +1,7 @@
 package com.virjar.tk.server.infra.storage
 
 import com.virjar.tk.protocol.body.FileBody
+import com.virjar.tk.protocol.body.ReplyBody
 import com.virjar.tk.protocol.body.buildRichTextBody
 import com.virjar.tk.server.domain.message.MessageOperationType
 import com.virjar.tk.server.domain.message.MessageArchiveCursor
@@ -593,6 +594,68 @@ class MessageStoreTest {
             assertTrue(store.getHistory("chat", 4, 10, forward = true).isEmpty())
             assertEquals(listOf(longer), store.getHistory("chat-long", 0, 10))
             assertEquals(listOf(longer), store.getHistory("chat-long", 0, 10, forward = true))
+        } finally {
+            store.close()
+            root.deleteRecursively()
+        }
+    }
+
+      fun `thread query resolves reply chains with bounded windows and broken links`() {
+        val root = Files.createTempDirectory("tk-message-thread-").toFile()
+        val store = MessageStore(root.absolutePath)
+        try {
+            store.init()
+            val chatId = "chat"
+            // storeMessage 不分配序号；线程引用需要显式稠密 seq。
+            val rootSeq = store.storeTestMessage(message(seq = 1, chatId = chatId).copy(clientMsgId = "root"))
+            val directSeq = store.storeTestMessage(
+                message(seq = 2, chatId = chatId).copy(
+                    clientMsgId = "reply-direct",
+                    messageType = MessageType.REPLY.code,
+                    body = ReplyBody(replyToMsgId = rootSeq.toString(), replyToSenderUid = "user-1", content = "direct"),
+                ),
+            )
+            // 无关富文本不进入任何线程
+            store.storeTestMessage(message(seq = 3, chatId = chatId).copy(clientMsgId = "unrelated"))
+            // 对回复的回复：归属同一根
+            val nestedSeq = store.storeTestMessage(
+                message(seq = 4, chatId = chatId, senderUid = "user-2").copy(
+                    clientMsgId = "reply-nested",
+                    messageType = MessageType.REPLY.code,
+                    body = ReplyBody(replyToMsgId = directSeq.toString(), replyToSenderUid = "user-1", content = "nested"),
+                ),
+            )
+            // 断链回复：目标不存在，自成根
+            val orphanSeq = store.storeTestMessage(
+                message(seq = 5, chatId = chatId).copy(
+                    clientMsgId = "reply-orphan",
+                    messageType = MessageType.REPLY.code,
+                    body = ReplyBody(replyToMsgId = "999", replyToSenderUid = "user-1", content = "orphan"),
+                ),
+            )
+
+            // 倒序窗口；根与无关消息不出现
+            assertEquals(
+                listOf(nestedSeq, directSeq),
+                store.getThreadMessages(chatId, rootSeq, 0, 10).map(Message::serverSeq),
+            )
+            // fromSeq 窗口语义与 getHistory 对齐：起点包含该 seq 本身
+            assertEquals(
+                listOf(directSeq),
+                store.getThreadMessages(chatId, rootSeq, directSeq, 10).map(Message::serverSeq),
+            )
+            assertEquals(listOf(nestedSeq), store.getThreadMessages(chatId, rootSeq, 0, 1).map(Message::serverSeq))
+            // 无回复的根返回空；断链回复自成根后按自身根可查到
+            val emptyRootSeq = store.storeTestMessage(
+                message(seq = 6, chatId = chatId).copy(clientMsgId = "empty-root"),
+            )
+            assertTrue(store.getThreadMessages(chatId, emptyRootSeq, 0, 10).isEmpty())
+            assertEquals(listOf(orphanSeq), store.getThreadMessages(chatId, orphanSeq, 0, 10).map(Message::serverSeq))
+            // 不越出会话前缀
+            assertTrue(store.getThreadMessages("chat-long", rootSeq, 0, 10).isEmpty())
+            // 参数边界
+            assertFailsWith<IllegalArgumentException> { store.getThreadMessages(chatId, rootSeq, -1, 10) }
+            assertFailsWith<IllegalArgumentException> { store.getThreadMessages(chatId, rootSeq, 0, 0) }
         } finally {
             store.close()
             root.deleteRecursively()

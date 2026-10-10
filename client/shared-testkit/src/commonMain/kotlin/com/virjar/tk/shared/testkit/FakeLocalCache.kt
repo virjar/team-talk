@@ -25,6 +25,8 @@ import com.virjar.tk.shared.client.ServerProjectionCheckpoint
 import com.virjar.tk.protocol.model.*
 import com.virjar.tk.shared.client.ChatDraftSnapshot
 import com.virjar.tk.protocol.model.ChatDraftSnapshot as SharedChatDraftSnapshot
+import com.virjar.tk.protocol.MessageType
+import com.virjar.tk.protocol.body.ReplyBody
 import com.virjar.tk.protocol.payload.MessageAckPayload
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
@@ -226,6 +228,35 @@ class FakeLocalCache(
         synchronized(messagesLock) { fakeInitialMessages(messagesMap[chatId] ?: emptyList(), limit) }
     }
     override fun findMessage(chatId: String, clientMsgId: String): Message? = synchronized(messagesLock) { messagesMap[chatId]?.firstOrNull { it.clientMsgId == clientMsgId } }
+
+    override fun threadReplyCounts(chatId: String, scanLimit: Int): Map<Long, Int> {
+        val window = synchronized(messagesLock) {
+            (messagesMap[chatId] ?: emptyList())
+                .filter { it.serverSeq > 0L }
+                .sortedByDescending(Message::serverSeq)
+                .take(scanLimit)
+        }
+        val bySeq = window.associateBy(Message::serverSeq)
+        val counts = HashMap<Long, Int>()
+        for (row in window) {
+            if (row.messageType != MessageType.REPLY.code) continue
+            var current = row
+            var root: Long? = null
+            var depth = 0
+            while (depth < 100) {
+                val body = current.body as? ReplyBody
+                if (body == null) {
+                    root = current.serverSeq
+                    break
+                }
+                val parentSeq = body.replyToMsgId.toLongOrNull()?.takeIf { it > 0L }
+                current = parentSeq?.let(bySeq::get) ?: break
+                depth++
+            }
+            root?.let { counts[it] = (counts[it] ?: 0) + 1 }
+        }
+        return counts
+    }
 
     internal fun messageFlowForPager(chatId: String): Flow<List<Message>> = messagesFlow(chatId)
 

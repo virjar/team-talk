@@ -44,4 +44,14 @@ interface MessageRpc {
      */
     @RpcMethod(10)
     suspend fun saveMessage(srcChatId: String, srcSeq: Long, operationId: String): Message
+
+    /**
+     * 拉取以 [rootSeq] 为根的线程内回复，倒序窗口；[fromSeq]=0 表示从最新回复开始，
+     * 语义与 [getHistory] 对齐。归属由服务端按 reply 链在线推导（有界深度）：
+     * 回复指向的父消息若本身是回复则沿链上溯，到首个非回复消息或链断点为止。
+     * 返回不含根消息本身；被撤回的回复按既有撤回形态返回。
+     */
+    @RpcMethod(11)
+    @com.virjar.tk.protocol.SinceProtocol(6)
+    suspend fun getThreadMessages(chatId: String, rootSeq: Long, fromSeq: Long, limit: Int): List<Message>
 }

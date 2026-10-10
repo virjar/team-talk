@@ -283,6 +283,20 @@ class MessageService(
         }
     }
 
+    suspend fun getThreadMessages(
+        uid: String,
+        chatId: String,
+        rootSeq: Long,
+        fromSeq: Long,
+        limit: Int,
+    ): List<Message> {
+        requireQueryPageLimit(limit)
+        require(rootSeq > 0L) { "线程根必须是已分配的服务端序号" }
+        return access.readAsMember(uid, chatId) { _, _ ->
+            messages.getThreadMessages(chatId, rootSeq, fromSeq, limit)
+        }
+    }
+
     suspend fun revokeMessage(uid: String, chatId: String, serverSeq: Long) {
         projector.withProjectionReadyChats(chatId) { revokeMessageLocked(uid, chatId, serverSeq) }
     }

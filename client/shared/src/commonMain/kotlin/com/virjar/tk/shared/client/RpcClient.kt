@@ -143,6 +143,17 @@ class RpcClient internal constructor(
 
     @Volatile
     private var logger: TkLogger = PlatformOnlyTkLogger("RpcClient")
+    /** 诊断用实例身份：checkpoint 与业务两个收集器共存于同一连接，丢弃日志必须能区分谁在说话。 */
+    internal val debugInstanceId: Int = nextDebugInstanceId()
+
+    private companion object {
+        const val RPC_TIMEOUT_MS = 10_000L
+        const val DEFAULT_MAX_PENDING_REQUESTS = 1_024
+
+        private val debugInstanceIdCounter = PlatformAtomicLong(0L)
+
+        fun nextDebugInstanceId(): Int = debugInstanceIdCounter.incrementAndGet().toInt()
+    }
     private val pendingLock = PlatformLock()
     private val pendingRequests = mutableMapOf<Int, PendingRequest>()
     private var nextRequestId = 1
@@ -206,7 +217,8 @@ class RpcClient internal constructor(
                 if (pending == null) {
                     logger.trace(
                         "Ignoring unknown/stale RPC response requestId=${response.requestId}, " +
-                            "generation=${packet.connectionGeneration}",
+                            "generation=${packet.connectionGeneration} instance=$debugInstanceId " +
+                            "pending=${pendingRequests.size} known=${pendingRequests.keys.sorted().joinToString(prefix="[", postfix="]")}",
                     )
                 } else {
                     pending.deferred.complete(response)
@@ -319,7 +331,9 @@ class RpcClient internal constructor(
             val requestId = allocateRequestIdLocked()
             PendingRequest(requestLease, CompletableDeferred()).also {
                 pendingRequests[requestId] = it
-            } to requestId
+            } to requestId.also {
+                logger.trace("RPC registered id=$requestId gen=$connectionGeneration instance=$debugInstanceId size=${pendingRequests.size}")
+            }
         }
         return try {
             withTimeoutOrNull(RPC_TIMEOUT_MS) {
@@ -389,10 +403,7 @@ class RpcClient internal constructor(
             transport.state.value == ConnectionState.AUTHENTICATED
         }
 
-    private companion object {
-        const val RPC_TIMEOUT_MS = 10_000L
-        const val DEFAULT_MAX_PENDING_REQUESTS = 1_024
-    }
+
 }
 
 internal class RpcClientCapacityExceededException(capacity: Int) : IllegalStateException(

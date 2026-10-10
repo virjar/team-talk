@@ -1,5 +1,11 @@
 package com.virjar.tk.app.ui.screen
 
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Surface
+import androidx.compose.ui.unit.dp
 import com.virjar.tk.shared.platform.platformCurrentTimeMillis
 import com.virjar.tk.shared.platform.platformRandomUuid
 
@@ -162,6 +168,10 @@ fun ChatPanel(
         onOpenFullMessage = actionAdmission.guard(onOpenFullMessage),
     )
     val messages by viewModel.messages.collectAsState()
+    // 线程面板状态（MSG-01/F1）：saveable 的根 seq；根消息对象按当前窗口解析，
+    // 滚出窗口后面板保持已载内容，进程重建后面板自然关闭。
+    val threadReplyCounts by viewModel.threadReplyCounts.collectAsState()
+    var threadRootSeq by rememberSaveable { mutableStateOf<Long?>(null) }
     val loading by viewModel.loading.collectAsState()
     val loadingOlder by viewModel.loadingOlder.collectAsState()
     val hasMore by viewModel.hasMore.collectAsState()
@@ -949,6 +959,8 @@ fun ChatPanel(
                 mentionAnchorServerSeq = mentionAnchorServerSeq,
                 outgoingFailureCodes = outgoingFailureCodes,
                 reactions = viewModel.reactions.collectAsState().value,
+                threadReplyCounts = threadReplyCounts,
+                onOpenThread = { message: Message -> threadRootSeq = message.serverSeq },
                 onToggleReaction = actionAdmission.guard(viewModel::toggleReaction),
                 onPickReaction = actionAdmission.guard(viewModel::pickReaction),
                 onSaveMessage = onSaveMessage?.let { actionAdmission.guard(it) },
@@ -1094,6 +1106,41 @@ fun ChatPanel(
             )
         }
 
+        // 线程面板（MSG-01/F1）：宽窗右缘抽屉，窄屏全屏页；返回键关闭。
+        threadRootSeq?.let { rootSeq ->
+            val threadRoot = messages.firstOrNull { it.serverSeq == rootSeq }
+            if (threadRoot != null) {
+                com.virjar.tk.app.ui.platform.TkBackHandler { threadRootSeq = null }
+                androidx.compose.foundation.layout.BoxWithConstraints(
+                    Modifier.matchParentSize(),
+                ) {
+                    val wideThreadPanel = maxWidth >= 820.dp
+                    androidx.compose.material3.Surface(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .then(
+                                if (wideThreadPanel) {
+                                    Modifier.width(340.dp).fillMaxHeight()
+                                } else {
+                                    Modifier.fillMaxSize()
+                                },
+                            ),
+                        shadowElevation = 8.dp,
+                        tonalElevation = 2.dp,
+                    ) {
+                        ChatThreadPanel(
+                            viewModel = viewModel,
+                            root = threadRoot,
+                            myUid = myUid,
+                            isPersonal = isPersonal,
+                            content = messageContent,
+                            selectableText = selectableText,
+                            onDismiss = { threadRootSeq = null },
+                        )
+                    }
+                }
+            }
+        }
         ChatPanelOverlays(snackbarHostState, failedMessageDiscard)
     }
     } // CompositionLocalProvider(LocalFileDownloads)

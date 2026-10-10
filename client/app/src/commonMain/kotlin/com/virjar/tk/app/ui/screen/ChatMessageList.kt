@@ -62,6 +62,10 @@ internal fun ChatMessageList(
     mentionAnchorServerSeq: Long? = null,
     outgoingFailureCodes: Map<String, OutgoingFailureCode> = emptyMap(),
     reactions: Map<Long, List<MessageReactionGroup>> = emptyMap(),
+    /** 本地窗口内按根聚合的线程回复数（MSG-01/F1）；空表不渲染任何线程入口。 */
+    threadReplyCounts: Map<Long, Int> = emptyMap(),
+    /** 点击"查看 N 条回复"打开线程面板；null 时不渲染入口。 */
+    onOpenThread: ((Message) -> Unit)? = null,
     onToggleReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
     onPickReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
     /** 非 null 且消息已确认时，长按/右键菜单提供"收藏"（CLIENT-08）。 */
@@ -285,6 +289,27 @@ internal fun ChatMessageList(
                                 isSavedChat = isSavedChat,
                             ),
                         )
+
+                        // 线程入口（MSG-01/F1）：根消息气泡下方聚合"查看 N 条回复"，
+                        // 计数来自本地窗口推导，点开面板后以服务端线程查询为权威。
+                        val threadCount = if (msg.serverSeq > 0L) threadReplyCounts[msg.serverSeq] else null
+                        if (threadCount != null && threadCount > 0 && onOpenThread != null) {
+                            androidx.compose.foundation.layout.Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 2.dp)
+                                    .testTag("chat.thread.entry.${msg.serverSeq}")
+                                    .clickable { onOpenThread(msg) },
+                                horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start,
+                            ) {
+                                Text(
+                                    "查看 $threadCount 条回复",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
                     }
                 }
             }

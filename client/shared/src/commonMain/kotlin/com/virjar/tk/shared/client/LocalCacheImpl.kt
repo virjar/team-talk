@@ -523,6 +523,9 @@ class LocalCacheImpl internal constructor(
     override fun findMessage(chatId: String, clientMsgId: String): Message? =
         messages.findMessage(chatId, clientMsgId)
 
+    override fun threadReplyCounts(chatId: String, scanLimit: Int): Map<Long, Int> =
+        messages.threadReplyCounts(chatId, scanLimit)
+
     override fun insertMessage(message: Message) {
         messages.insertMessage(message)
         if (message.serverSeq > 0L && message.flags and Message.FLAG_REVOKED != 0) {

@@ -1,6 +1,8 @@
 package com.virjar.tk.server.infra.storage
 
+import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.body.AttachmentPolicy
+import com.virjar.tk.protocol.body.ReplyBody
 import com.virjar.tk.server.domain.message.MessageArchiveCursor
 import com.virjar.tk.server.domain.message.MessageArchiveEntry
 import com.virjar.tk.server.domain.message.MessageArchivePage
@@ -292,6 +294,65 @@ class MessageStore(
 
             messages
         }.orEmpty()
+
+    override fun getThreadMessages(chatId: String, rootSeq: Long, fromSeq: Long, limit: Int): List<Message> =
+        withDatabaseOrNull { database ->
+            require(fromSeq >= 0L) { "线程查询起始序号不能为负数" }
+            require(limit in 1..MAX_HISTORY_PAGE_SIZE) {
+                "线程查询分页大小必须在 1..$MAX_HISTORY_PAGE_SIZE 之间"
+            }
+            val replies = mutableListOf<Message>()
+            val messagePrefix = records.buildChatSeqPrefix(chatId)
+            val startSeq = if (fromSeq == 0L) Long.MAX_VALUE else fromSeq
+            val startKey = records.buildChatSeqKey(chatId, startSeq)
+            var scanned = 0
+            database.newIterator().use { iterator ->
+                iterator.seekForPrev(startKey)
+                while (iterator.isValid && replies.size < limit) {
+                    val key = iterator.key()
+                    if (!key.startsWith(messagePrefix)) break
+                    require(key.size == messagePrefix.size + records.SEQ_BYTES) {
+                        "消息序号索引格式损坏"
+                    }
+                    if (++scanned > MAX_THREAD_SCAN_MESSAGES) {
+                        // 与 listReactions 同原则：绝不返回截断的成功快照。
+                        throw IllegalStateException("线程查询扫描条目超过上限 $MAX_THREAD_SCAN_MESSAGES")
+                    }
+                    val value = iterator.value()
+                    if (Message.readMessageType(value) == MessageType.REPLY.code) {
+                        val seq = records.decodeSeq(key.copyOfRange(messagePrefix.size, key.size))
+                        val reply = records.decodeStoredMessage(value, chatId, seq)
+                        if (resolveThreadRoot(database, chatId, reply) == rootSeq) {
+                            replies.add(reply)
+                        }
+                    }
+                    iterator.prev()
+                }
+                iterator.status()
+            }
+            replies
+        }.orEmpty()
+
+    /**
+     * 沿 reply 链上溯线程根：父消息仍是回复则继续上溯，首个非回复消息即根；
+     * 链断点（引用缺失或非回复链）以当前消息自身为根。权威存储的 replyToMsgId
+     * 是服务端在发送时重写的目标 serverSeq 字符串（见 MessageService.rebuildReply），
+     * 父消息必然先于子消息落库，深度上限只是损坏数据的防御，超限直接失败。
+     */
+    private fun resolveThreadRoot(database: RocksDB, chatId: String, reply: Message): Long {
+        var current = reply
+        var depth = 0
+        while (true) {
+            val body = current.body as? ReplyBody ?: return current.serverSeq
+            val parentSeq = body.replyToMsgId.toLongOrNull()?.takeIf { it > 0L }
+                ?: return current.serverSeq
+            val parent = getMessageFrom(database, chatId, parentSeq) ?: return current.serverSeq
+            current = parent
+            if (++depth > MAX_THREAD_CHAIN_DEPTH) {
+                throw IllegalStateException("线程归属上溯超过最大深度 $MAX_THREAD_CHAIN_DEPTH")
+            }
+        }
+    }
 
     /**
      * 按服务器启动期间使用的不可变 Rocks 键顺序扫描当前消息值。
@@ -604,5 +665,11 @@ class MessageStore(
 
     companion object {
         private const val MAX_HISTORY_PAGE_SIZE = 1_000
+
+        /** 线程查询单次扫描的最大消息条目；超限整次失败，不返回截断结果。 */
+        private const val MAX_THREAD_SCAN_MESSAGES = 100_000
+
+        /** 线程归属 reply 链上溯的最大深度；父消息先于子消息提交，超限视为数据损坏。 */
+        private const val MAX_THREAD_CHAIN_DEPTH = 100
     }
 }

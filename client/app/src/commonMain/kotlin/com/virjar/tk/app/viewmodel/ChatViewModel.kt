@@ -67,6 +67,29 @@ class ChatViewModel(
     private val _messages = MutableStateFlow<List<Message>>(emptyList())
     val messages: StateFlow<List<Message>> = _messages.asStateFlow()
 
+    /**
+     * 本地窗口内按线程根聚合的回复数（MSG-01/F1，纯显示事实）：窗口变更时重算，
+     * 根被回收出窗的线程不计入；线程权威全量以 [loadThreadMessages] 的服务端查询为准。
+     */
+    val threadReplyCounts: StateFlow<Map<Long, Int>> = _messages
+        .map { localCache.threadReplyCounts(chatId) }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+    /**
+     * 线程面板分页查询（MSG-01/F1）：返回倒序页（新→旧），[fromSeq] 语义与历史查询一致
+     * （0=最新页；续页传最旧已载回复的 seq-1）。失败经错误通道反馈并返回空页，面板保持现状。
+     */
+    suspend fun loadThreadMessages(rootSeq: Long, fromSeq: Long, limit: Int = 20): List<Message> {
+        return when (val result = messageRepo.queryThreadMessages(chatId, rootSeq, fromSeq, limit)) {
+            is com.virjar.tk.shared.Outcome.Success -> result.value
+            is com.virjar.tk.shared.Outcome.Failure -> {
+                onError(result.error.message ?: "线程查询失败")
+                emptyList()
+            }
+        }
+    }
+
     /** 全文页只订阅一个身份；窗口裁剪不等于消息删除，持久事件也覆盖窗口外的编辑/撤回。 */
     internal fun observeMessageDetails(clientMsgId: String): Flow<Message?> = messageDetailsProjection(
         chatId, clientMsgId, messages, eventProcessor.lastEventId, localData,

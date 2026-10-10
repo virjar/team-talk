@@ -20,7 +20,7 @@ TLS 位于 Packet 外层，不通过 PacketType 协商。远程 TCP 使用 TLS�
 见[传输配置](../07-operations/configuration.md#传输配置边界)。TLS 就绪后先协商，再发 AUTH；
 协议协商不携带密码，也不通过降级明文绕过传输失败。
 
-当前发行 `0.0.6` 使用协议 `0.5`（1:1 通话契约），最低支持协议为 `0.0`；源码暂无待发布 minor。
+当前发行 `0.0.6` 使用协议 `0.5`（1:1 通话契约），最低支持协议为 `0.0`；源码处于待发布 minor `0.6`（MSG-01 批次，见[设计稿](minor-0.6-design.md)）。
 协议 0.0 至 0.5 都受正式快照保护；下一发行周期的新增契约共用新的 minor，
 纯实现修复不增加协议号。版本、兼容窗口和数据迁移规则见[版本机制](versioning.md)。
 `ProtocolLimits.AUTH_PREAMBLE_MARKER` 只保留 AUTH 的固定 bootstrap 字节标识；业务版本使用
@@ -48,3 +48,5 @@ TLS 位于 Packet 外层，不通过 PacketType 协商。远程 TCP 使用 TLS�
 4. [消息与附件](messages-and-attachments.md)：消息体、文件与引用。
 5. [认证与错误](authentication-and-errors.md)：身份、终态和离线入口。
 6. [RPC 参考](../10-reference/rpc-reference.md) / [事件参考](../10-reference/event-reference.md)：查找当前编号。
+7. [minor 0.6 设计稿](minor-0.6-design.md)：下一批契约（消息轴心深化）的草案与实现追踪；
+   实现完成后折入上述各页并移除，长期规范不在该页维护。
