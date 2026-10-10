@@ -39,6 +39,17 @@ interface ConversationRepository {
     fun setPin(transaction: PgWriteTransactionContext, uid: String, chatId: String, pinned: Boolean): Conversation
     fun setMute(transaction: PgWriteTransactionContext, uid: String, chatId: String, muted: Boolean): Conversation
     fun setDraft(transaction: PgWriteTransactionContext, uid: String, chatId: String, draft: String?): Conversation
+    /**
+     * 群已读列表（MSG-01/F5）：活跃成员中 readSeq >= seq 的（uid、权威显示名、readSeq）。
+     * 实现必须设硬上限，超限整次失败不截断（与 listReactions 同原则）。
+     */
+    fun listChatReadStates(
+        transaction: PgWriteTransactionContext,
+        chatId: String,
+        seq: Long,
+        limit: Int,
+    ): List<com.virjar.tk.protocol.model.ChatReadState>
+
     fun markRead(
         transaction: PgWriteTransactionContext,
         uid: String,

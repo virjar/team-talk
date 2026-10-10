@@ -56,6 +56,7 @@ class ChatViewModel(
     private val telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
     private val prepareFailedMessageReplacement: suspend (String, Message) -> Message = { _, message -> message },
     private val chatDraftRepository: ChatDraftRepository? = null,
+    private val conversationRepo: com.virjar.tk.shared.repository.ConversationRepository? = null,
     dispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Default,
     onAuthExpired: () -> Unit = {},
 ) : BaseViewModel(dispatcher, onAuthExpired) {
@@ -131,6 +132,18 @@ class ChatViewModel(
         localCache.cancelMessageReminder(chatId, message.clientMsgId)
     }
 
+    /** 群已读列表（MSG-01/F5）：失败经错误通道反馈返回空；未注入会话仓储时不可用。 */
+    suspend fun loadChatReadStates(seq: Long): List<com.virjar.tk.protocol.model.ChatReadState> {
+        val repo = checkNotNull(conversationRepo) { "已读查询不可用" }
+        return when (val result = repo.listChatReadStates(chatId, seq)) {
+            is com.virjar.tk.shared.Outcome.Success -> result.value
+            is com.virjar.tk.shared.Outcome.Failure -> {
+                onError(result.error.message ?: "已读查询失败")
+                emptyList()
+            }
+        }
+    }
+
     suspend fun loadScheduledMessages(): List<com.virjar.tk.protocol.model.ScheduledMessage> =
         when (val result = messageRepo.listScheduledMessages(chatId)) {
             is com.virjar.tk.shared.Outcome.Success -> result.value
@@ -154,6 +167,12 @@ class ChatViewModel(
     val chatNotice: StateFlow<String?> = localCache.observeChat(chatId)
         .map { chat -> chat?.notice?.takeIf(String::isNotBlank) }
         .stateIn(scope, SharingStarted.Eagerly, null)
+
+    /** 当前用户在群内的角色（0=成员/1=管理员/2=群主；私聊与未知为 0）——已读入口可见性数据源。 */
+    val chatRole: StateFlow<Int> = localCache.observeMembers(chatId)
+        .map { members -> members.firstOrNull { it.uid == myUid }?.role ?: 0 }
+        .stateIn(scope, SharingStarted.Eagerly, 0)
+
 
     /** 私聊对端 uid（仅 chatType=1 非空）；@ 可见性按会话范围过滤候选（内测 T047）。 */
     val chatPeerUid: StateFlow<String?> = localCache.observeConversation(chatId)

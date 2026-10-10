@@ -19,4 +19,13 @@ interface ConversationRpc {
     suspend fun setMute(chatId: String, muted: Boolean)
     @RpcMethod(5)
     suspend fun delete(chatId: String)
+
+    /**
+     * 群已读列表（MSG-01/F5）：当前活跃成员中已读水位 ≥ [seq] 的投影（姓名 + 水位）。
+     * 可见性由服务端裁决：默认仅群主/群管理员与该消息的发送者可调用。水位语义是
+     * "阅读进度已到该消息"的近似，不是逐条回执。超过服务端容量时整次请求失败，绝不截断。
+     */
+    @RpcMethod(6)
+    @com.virjar.tk.protocol.SinceProtocol(6)
+    suspend fun listChatReadStates(chatId: String, seq: Long): List<com.virjar.tk.protocol.model.ChatReadState>
 }

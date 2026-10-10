@@ -93,6 +93,7 @@ class ChatFeature(
             onAuthExpired = onAuthExpired,
             prepareFailedMessageReplacement = session::prepareChatAssetReplacement,
             chatDraftRepository = session.chatDraftRepo,
+            conversationRepo = session.conversationRepo,
         )
         activeChat.markPrepared(chatId)
     }

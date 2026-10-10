@@ -136,6 +136,7 @@ rpc	conversation/2	0	-	active	setDraft(chatId:kotlin.String,draft:kotlin.String?
 rpc	conversation/3	0	-	active	setPin(chatId:kotlin.String,pinned:kotlin.Boolean):kotlin.Unit
 rpc	conversation/4	0	-	active	setMute(chatId:kotlin.String,muted:kotlin.Boolean):kotlin.Unit
 rpc	conversation/5	0	-	active	delete(chatId:kotlin.String):kotlin.Unit
+rpc	conversation/6	6	-	active	listChatReadStates(chatId:kotlin.String,seq:kotlin.Long):List<com.virjar.tk.protocol.model.ChatReadState>
 rpc	device/1	0	-	active	listDevices():List<com.virjar.tk.protocol.model.Device>
 rpc	device/2	0	-	active	kickDevice(deviceId:kotlin.String):kotlin.Unit
 rpc	device/3	2	-	active	setOemPushRegistration(vendor:kotlin.String,registrationId:kotlin.String,packageName:kotlin.String,deploymentFingerprint:kotlin.String):kotlin.Boolean
@@ -257,6 +258,7 @@ type	com.virjar.tk.protocol.model.ChatDraftCommand	2	-	active	CLASS(chatId:kotli
 type	com.virjar.tk.protocol.model.ChatDraftContent	2	-	active	CLASS(markdown:kotlin.String,assets:kotlin.collections.List<com.virjar.tk.protocol.model.EmbeddedAsset>,mode:kotlin.Int,replyToClientMsgId:kotlin.String?,replyToServerSeq:kotlin.Long)
 type	com.virjar.tk.protocol.model.ChatDraftMutationResult	2	-	active	CLASS(applied:kotlin.Boolean,operationRevision:kotlin.Long,current:com.virjar.tk.protocol.model.ChatDraftSnapshot)
 type	com.virjar.tk.protocol.model.ChatDraftSnapshot	2	-	active	CLASS(chatId:kotlin.String,revision:kotlin.Long,updatedAt:kotlin.Long,content:com.virjar.tk.protocol.model.ChatDraftContent?,assetsAvailable:kotlin.Boolean)
+type	com.virjar.tk.protocol.model.ChatReadState	6	-	active	CLASS(uid:kotlin.String,displayName:kotlin.String,readSeq:kotlin.Long)
 type	com.virjar.tk.protocol.model.Contact	0	-	active	CLASS(uid:kotlin.String,friendUid:kotlin.String,remark:kotlin.String?,status:kotlin.Int,user:com.virjar.tk.protocol.model.User?)
 type	com.virjar.tk.protocol.model.ContactApply	0	-	active	CLASS(id:kotlin.Long,fromUid:kotlin.String,toUid:kotlin.String,token:kotlin.String?,remark:kotlin.String?,status:kotlin.Int,createdAt:kotlin.Long,fromUser:com.virjar.tk.protocol.model.User?)
 type	com.virjar.tk.protocol.model.ContactApplyLookup	0	-	active	CLASS(record:com.virjar.tk.protocol.model.ContactApplyRecord?)

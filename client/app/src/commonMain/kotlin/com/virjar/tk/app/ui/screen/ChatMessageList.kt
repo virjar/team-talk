@@ -68,6 +68,10 @@ internal fun ChatMessageList(
     onOpenThread: ((Message) -> Unit)? = null,
     /** 稍后提醒（MSG-01/F4）：菜单快捷项写入本地提醒表；null 隐藏菜单项。 */
     onRemindLater: ((Message, remindAt: Long) -> Unit)? = null,
+    /** 已读情况（MSG-01/F5）：仅发送者与群管理员/群主可见。 */
+    onShowReadStates: ((Message) -> Unit)? = null,
+    /** 当前用户在群内的角色（0/1/2）；私聊恒 0。 */
+    myRole: Int = 0,
     onToggleReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
     onPickReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
     /** 非 null 且消息已确认时，长按/右键菜单提供"收藏"（CLIENT-08）。 */
@@ -290,6 +294,8 @@ internal fun ChatMessageList(
                                 onSaveMessage = onSaveMessage?.takeIf { !isSavedChat },
                                 isSavedChat = isSavedChat,
                                 onRemindLater = onRemindLater,
+                                onShowReadStates = onShowReadStates,
+                                myRole = myRole,
                             ),
                         )
 
@@ -435,6 +441,9 @@ private fun messageMenuItems(
     isSavedChat: Boolean,
     /** 稍后提醒（MSG-01/F4，纯本地）：null 隐藏入口（语音/编辑态不提供）。 */
     onRemindLater: ((Message, remindAt: Long) -> Unit)? = null,
+    /** 已读情况（MSG-01/F5）：仅发送者与群管理员/群主可见；null 隐藏。 */
+    onShowReadStates: ((Message) -> Unit)? = null,
+    myRole: Int = 0,
 ): @Composable ColumnScope.() -> Unit = {
     val copyText = rememberClipboardTextWriter()
     val fileDownloads = LocalFileDownloads.current
@@ -446,6 +455,16 @@ private fun messageMenuItems(
                 onMenuMessageChange(null)
             },
             onMore = onOpenReactionPicker,
+        )
+    }
+    if (onShowReadStates != null && msg.serverSeq > 0L && (isMe || myRole >= 1)) {
+        DropdownMenuItem(
+            text = { Text("已读情况") },
+            onClick = {
+                onMenuMessageChange(null)
+                onShowReadStates(msg)
+            },
+            modifier = Modifier.testTag("chat.readstates.entry"),
         )
     }
     if (onRemindLater != null && msg.serverSeq > 0L) {

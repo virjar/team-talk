@@ -24,7 +24,33 @@ class ConversationService(
     private val unitOfWork: PgUnitOfWork,
     private val managedChats: ManagedChatPolicy = UnmanagedChatPolicy,
     private val drafts: ChatDraftRepository? = null,
+    private val access: com.virjar.tk.server.domain.chat.ChatAccess? = null,
+    private val messages: com.virjar.tk.server.domain.message.MessageRepository? = null,
 ) {
+
+    /**
+     * 群已读列表（MSG-01/F5）：可见性默认为群主/群管理员与目标消息的发送者
+     * （2026-10-09 保守默认，内测反馈可放开）；水位语义，非逐条回执。
+     */
+    suspend fun listChatReadStates(uid: String, chatId: String, seq: Long): List<com.virjar.tk.protocol.model.ChatReadState> {
+        val access = checkNotNull(access) { "已读查询需要聊天访问门禁" }
+        val messages = checkNotNull(messages) { "已读查询需要消息仓储" }
+        require(seq > 0L) { "已读查询的序号必须是一条已落库消息" }
+        // 授权与目标消息裁决在成员快照内完成；水位查询走独立只读事务。
+        access.readMembersFor(uid, chatId) { _, members ->
+            val actor = members.first { it.uid == uid }
+            val target = messages.getMessage(chatId, seq)
+                ?: throw IllegalArgumentException("目标消息不存在")
+            if (target.senderUid != uid && actor.role < 1) {
+                throw com.virjar.tk.server.domain.chat.ChatAccessDeniedException(
+                    "只有群主、管理员或消息发送者可以查看已读情况",
+                )
+            }
+        }
+        return unitOfWork.write {
+            conversationRepo.listChatReadStates(transaction, chatId, seq, MAX_READ_STATES)
+        }
+    }
 
     suspend fun listConversationPage(
         uid: String,
@@ -173,3 +199,5 @@ private object ConversationPageCursorCodec {
         ) { INVALID_CURSOR }
     }
 }
+
+private const val MAX_READ_STATES = 2_000

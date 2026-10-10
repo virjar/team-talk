@@ -130,6 +130,19 @@ class ConversationRepository internal constructor(
     }
     suspend fun setPin(chatId: String, pinned: Boolean): Outcome<Unit> = outcome { rpc.setPin(chatId, pinned) }
     suspend fun setMute(chatId: String, muted: Boolean): Outcome<Unit> = outcome { rpc.setMute(chatId, muted) }
+
+    /**
+     * 群已读列表（MSG-01/F5）：已读水位 ≥ [seq] 的成员投影。可见性由服务端裁决
+     * （群主/管理员/消息发送者）；水位语义是阅读进度近似，不是逐条回执。
+     */
+    suspend fun listChatReadStates(chatId: String, seq: Long): Outcome<List<com.virjar.tk.protocol.model.ChatReadState>> = outcome {
+        require(chatId.isNotBlank()) { "已读查询 chatId 不能为空" }
+        require(seq > 0L) { "已读查询的序号必须是一条已落库消息" }
+        val states = rpc.listChatReadStates(chatId, seq)
+        currentCoroutineContext().ensureActive()
+        check(states.all { it.uid.isNotBlank() && it.readSeq >= seq }) { "已读列表响应包含窗口外条目" }
+        states
+    }
     suspend fun deleteConversation(chatId: String): Outcome<Unit> = outcome {
         rpc.delete(chatId)
         localCache.deleteConversation(chatId)

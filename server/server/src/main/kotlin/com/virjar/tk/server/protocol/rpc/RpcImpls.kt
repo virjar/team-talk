@@ -182,6 +182,7 @@ class ConversationRpcImpl(uid: String, private val service: ConversationService)
     override suspend fun setPin(chatId: String, pinned: Boolean) = service.setPin(uid, chatId, pinned)
     override suspend fun setMute(chatId: String, muted: Boolean) = service.setMute(uid, chatId, muted)
     override suspend fun delete(chatId: String) = service.deleteConversation(uid, chatId)
+    override suspend fun listChatReadStates(chatId: String, seq: Long) = service.listChatReadStates(uid, chatId, seq)
 }
 
 class SyncRpcImpl(

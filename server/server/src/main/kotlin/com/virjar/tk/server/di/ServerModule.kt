@@ -444,7 +444,7 @@ internal fun createServerModule(
             unitOfWork = get<PgUnitOfWork>(),
         )
     }
-    single { ConversationService(get(), get(), get(), get(), get()) }
+    single { ConversationService(get(), get(), get(), get(), get(), get(), get()) }
     single<com.virjar.tk.server.domain.conversation.ChatDraftRepository> {
         com.virjar.tk.server.infra.db.repository.ExposedChatDraftRepository()
     }

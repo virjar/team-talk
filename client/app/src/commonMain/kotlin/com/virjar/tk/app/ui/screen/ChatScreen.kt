@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.shared.platform.platformCurrentTimeMillis
 import com.virjar.tk.shared.platform.platformRandomUuid
 
@@ -180,6 +181,8 @@ fun ChatPanel(
     var noticeBarDismissed by remember(chatId) { mutableStateOf(false) }
     var showNoticeDetail by remember(chatId) { mutableStateOf(false) }
     var showScheduleDialog by remember(chatId) { mutableStateOf(false) }
+    var readStatesForSeq by remember(chatId) { mutableStateOf<Long?>(null) }
+    var readStatesList by remember(chatId) { mutableStateOf<List<com.virjar.tk.protocol.model.ChatReadState>>(emptyList()) }
     val showNoticeBar = chatType == ChatType.GROUP.code && !noticeBarDismissed && chatNotice != null
     val loading by viewModel.loading.collectAsState()
     val loadingOlder by viewModel.loadingOlder.collectAsState()
@@ -983,6 +986,10 @@ fun ChatPanel(
                         snackbarHostState.showSnackbar("将在 " + formatChatTime(remindAt) + " 提醒你")
                     }
                 },
+                onShowReadStates = if (isPersonal) null else actionAdmission.guard { message: Message ->
+                    readStatesForSeq = message.serverSeq
+                },
+                myRole = viewModel.chatRole.collectAsState().value,
                 onToggleReaction = actionAdmission.guard(viewModel::toggleReaction),
                 onPickReaction = actionAdmission.guard(viewModel::pickReaction),
                 onSaveMessage = onSaveMessage?.let { actionAdmission.guard(it) },
@@ -1133,6 +1140,46 @@ fun ChatPanel(
             )
         }
 
+        readStatesForSeq?.let { seq ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { readStatesForSeq = null },
+                title = { Text("已读情况") },
+                text = {
+                    Column(modifier = Modifier.testTag("chat.readstates.dialog")) {
+                        if (readStatesList.isEmpty()) {
+                            Text("还没有成员读到这条消息", style = MaterialTheme.typography.bodyMedium)
+                        } else {
+                            Text(
+                                "以下成员的阅读进度已到这条消息（共 ${readStatesList.size} 人）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Tk.colors.secondaryText,
+                            )
+                            Spacer(Modifier.height(Tk.spacing.xs))
+                            readStatesList.forEach { state ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = Tk.spacing.xs),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(state.displayName, style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "已读",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Tk.colors.secondaryText,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { readStatesForSeq = null }) { Text("知道了") }
+                },
+                modifier = Modifier.testTag("chat.readstates.dialog.box"),
+            )
+            LaunchedEffect(seq) {
+                readStatesList = viewModel.loadChatReadStates(seq)
+            }
+        }
         if (showScheduleDialog) {
             ChatScheduleSendDialog(
                 viewModel = viewModel,

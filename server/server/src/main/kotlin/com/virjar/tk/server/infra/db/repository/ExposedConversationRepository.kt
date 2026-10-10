@@ -19,6 +19,8 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.neq
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.JoinType
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.greaterEq
 
 internal enum class ConversationReadQueryStage {
     PAGE,
@@ -39,6 +41,33 @@ internal class ExposedConversationRepository(
     private val database: Database,
     private val readQueryObserver: ConversationReadQueryObserver = ConversationReadQueryObserver.None,
 ) : ConversationRepository {
+
+    override fun listChatReadStates(
+        transaction: PgWriteTransactionContext,
+        chatId: String,
+        seq: Long,
+        limit: Int,
+    ): List<com.virjar.tk.protocol.model.ChatReadState> {
+        transaction.requireExposedTransaction()
+        // 活跃成员（is_hidden=false 的成员投影槽仍保留；活跃成员资格以 member 行存在为准，
+        // conversations 行是每成员的已读水位载体）。join users 取权威显示名。
+        val rows = Conversations
+            .join(Users, JoinType.INNER, Conversations.uid, Users.uid)
+            .select(Conversations.uid, Conversations.readSeq, Users.name, Users.username)
+            .where { (Conversations.chatId eq chatId) and (Conversations.readSeq greaterEq seq) }
+            .orderBy(Conversations.readSeq, SortOrder.DESC)
+            .limit(limit + 1)
+            .toList()
+        check(rows.size <= limit) { "已读列表条目超过上限 $limit" }
+        return rows.map { row ->
+            val name = row[Users.name].takeIf { it.isNotBlank() } ?: row[Users.username]
+            com.virjar.tk.protocol.model.ChatReadState(
+                uid = row[Conversations.uid],
+                displayName = name,
+                readSeq = row[Conversations.readSeq],
+            )
+        }
+    }
 
     override fun listConversationPage(
         uid: String,
