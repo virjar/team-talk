@@ -128,6 +128,54 @@ class MessageRepository internal constructor(
     suspend fun revokeMessage(chatId: String, serverSeq: Long): Outcome<Unit> = outcome { rpc.revoke(chatId, serverSeq) }
 
     /**
+     * 定时发送（MSG-01/F3）：登记一条到点投递的消息。[deliverAt] 必须晚于当前时间且不超
+     * 30 天；[operationId] 是稳定幂等身份，重试复用同值返回原调度记录。调度时只做成员与
+     * 基础校验；到点投递走完整发送管道，附件失效等失败置 FAILED 保留在待发列表。
+     */
+    suspend fun scheduleMessage(
+        chatId: String,
+        messageType: Int,
+        body: com.virjar.tk.protocol.body.MessageBody,
+        deliverAt: Long,
+        operationId: String,
+    ): Outcome<com.virjar.tk.protocol.model.ScheduledMessage> = outcome {
+        require(chatId.isNotBlank()) { "定时发送 chatId 不能为空" }
+        require(operationId.isNotBlank() && operationId.length <= 64) { "定时发送 operationId 非法" }
+        require(deliverAt > currentEpochMillis()) { "投递时间必须晚于当前时间" }
+        require(deliverAt <= currentEpochMillis() + MAX_SCHEDULE_HORIZON_MILLIS) { "投递时间不能超过 30 天" }
+        val scheduled = rpc.scheduleMessage(
+            com.virjar.tk.protocol.model.ScheduledMessageDraft(
+                chatId = chatId,
+                messageType = messageType,
+                deliverAt = deliverAt,
+                operationId = operationId,
+                body = body,
+            ),
+        )
+        currentCoroutineContext().ensureActive()
+        check(scheduled.scheduledId.isNotBlank() && scheduled.chatId == chatId) {
+            "定时发送响应身份无效"
+        }
+        scheduled
+    }
+
+    /** 取消一条仍处 WAITING 的定时消息；仅发起者可取消，终态重复取消幂等成功。 */
+    suspend fun cancelScheduledMessage(scheduledId: String, operationId: String): Outcome<Boolean> = outcome {
+        require(scheduledId.isNotBlank() && operationId.isNotBlank()) { "取消参数不能为空" }
+        rpc.cancelScheduledMessage(scheduledId, operationId)
+    }
+
+    /** 当前账号在某会话的待发定时消息（WAITING 与 FAILED，deliverAt 升序）。 */
+    suspend fun listScheduledMessages(chatId: String): Outcome<List<com.virjar.tk.protocol.model.ScheduledMessage>> = outcome {
+        require(chatId.isNotBlank()) { "定时消息列表 chatId 不能为空" }
+        val list = rpc.listScheduledMessages(chatId)
+        currentCoroutineContext().ensureActive()
+        check(list.all { it.chatId == chatId && it.scheduledId.isNotBlank() }) { "定时消息列表响应身份无效" }
+        list
+    }
+
+
+    /**
      * 添加当前用户的一个回应。服务端 row-keyed 幂等：重复点击/重试都安全；
      * 状态更新由服务端事件回环（含本端）收敛，不依赖本方法的返回快照。
      */
@@ -227,6 +275,12 @@ class MessageRepository internal constructor(
         const val READ_MIRROR_LOCK_STRIPES = 32
     }
 }
+
+/** 定时发送的最大投递跨度；与服务端 horizon 校验一致。 */
+private const val MAX_SCHEDULE_HORIZON_MILLIS = 30L * 24 * 60 * 60 * 1000
+
+private fun currentEpochMillis(): Long =
+    com.virjar.tk.shared.platform.platformCurrentTimeMillis()
 
 private fun requireMessageQueryPageLimit(limit: Int) {
     require(limit in 1..Message.MAX_QUERY_PAGE_SIZE) {

@@ -307,6 +307,9 @@ internal fun createServerModule(
     single<ChatRepository> { ExposedChatRepository(database = get()) }
     single<ChatMemberRepository> { ExposedChatMemberRepository(database = get()) }
     single<MessageReactionRepository> { ExposedMessageReactionRepository(database = get()) }
+    single<com.virjar.tk.server.domain.message.ScheduledMessageRepository> {
+        com.virjar.tk.server.infra.db.repository.ExposedScheduledMessageRepository(database = get())
+    }
     single<ChatAccessSource> { ExposedChatAccessSource(database = get()) }
     single<InviteLinkRepository> { ExposedInviteLinkRepository(database = get()) }
     single<ConversationRepository> {
@@ -577,6 +580,12 @@ internal fun createServerModule(
             managedChats = get(),
         )
     }
+    single { com.virjar.tk.server.domain.message.ScheduledMessageService(
+        repository = get(),
+        unitOfWork = get(),
+        access = get(),
+        messageService = get(),
+    ) }
     single<BotMessageSender> { MessageServiceBotSender(get()) }
     single { BotService(get(), get(), get(), get(), get(), get(), get<PgUnitOfWork>()) }
     single { PresenceService(get(), get()) }
@@ -636,7 +645,7 @@ internal fun createServerModule(
                 ContactRpcImpl(session.uid, get(), get(), get())
             }
             register(ChatRpcContract.SERVICE) { session -> ChatRpcImpl(session.uid, get(), get()) }
-            register(MessageRpcContract.SERVICE) { session -> MessageRpcImpl(session.uid, get(), get(), get(), session.protocolVersion) }
+            register(MessageRpcContract.SERVICE) { session -> MessageRpcImpl(session.uid, get(), get(), get(), get(), session.protocolVersion) }
             register(com.virjar.tk.protocol.rpc.gen.TaskRpcContract.SERVICE) { session ->
                 com.virjar.tk.server.protocol.rpc.TaskRpcImpl(session.uid, get())
             }

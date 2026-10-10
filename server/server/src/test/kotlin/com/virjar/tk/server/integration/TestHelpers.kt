@@ -358,6 +358,9 @@ class TestEnvironment : AutoCloseable {
     val contentSearchService: com.virjar.tk.server.domain.search.ContentSearchService get() = koin.get()
     val contentAssetIndex: com.virjar.tk.server.infra.search.ContentAssetSearchIndex get() = koin.get()
     val messageService: MessageService get() = koin.get()
+    val scheduledMessageService: com.virjar.tk.server.domain.message.ScheduledMessageService get() = koin.get()
+    val scheduledMessageRepository: com.virjar.tk.server.domain.message.ScheduledMessageRepository get() = koin.get()
+    val unitOfWork: com.virjar.tk.server.domain.transaction.PgUnitOfWork get() = koin.get()
     val serviceAccountMessages: com.virjar.tk.server.domain.message.ServiceAccountMessages get() = koin.get()
 
     /** 真实接线的指令路由：结算与恢复扫描挂到本环境消息存储，发送链可注入替换。 */

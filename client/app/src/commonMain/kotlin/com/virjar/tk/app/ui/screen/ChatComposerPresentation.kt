@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -121,6 +122,8 @@ internal fun WideComposerToolbar(
 internal fun CompactChatComposer(
     voiceMode: Boolean,
     editingSessionActive: Boolean,
+    /** 定时发送入口（MSG-01/F3）；语音/编辑态由调用方传 null 隐藏。 */
+    scheduleAction: (() -> Unit)? = null,
     composerMode: ChatComposerMode,
     showFormatting: Boolean,
     onToggleFormatting: () -> Unit,
@@ -282,6 +285,19 @@ internal fun CompactChatComposer(
                     )
                 }
                 Spacer(Modifier.weight(1f))
+                if (scheduleAction != null && !editingSessionActive) {
+                    FilledIconButton(
+                        onClick = scheduleAction,
+                        modifier = Modifier.size(44.dp).testTag("chat.schedule.entry"),
+                    ) {
+                        Icon(
+                            Icons.Filled.Schedule,
+                            contentDescription = "定时发送",
+                            tint = Tk.colors.secondaryText,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
                 FilledIconButton(
                     onClick = sendAction,
                     modifier = Modifier.size(44.dp).testTag("chat.send"),
@@ -308,6 +324,8 @@ internal fun CompactChatComposer(
 internal fun WideComposerInput(
     voiceMode: Boolean,
     composerMode: ChatComposerMode,
+    /** 定时发送入口（MSG-01/F3）；语音/编辑态由调用方传 null 隐藏。 */
+    scheduleAction: (() -> Unit)? = null,
     richState: RichTextState,
     sourceInput: TextFieldValue,
     onSourceInputChange: (TextFieldValue) -> Unit,
@@ -369,6 +387,21 @@ internal fun WideComposerInput(
                 )
             }
             Spacer(Modifier.width(Tk.spacing.sm))
+            if (scheduleAction != null && !voiceMode && !editingSessionActive) {
+                FilledIconButton(
+                    onClick = scheduleAction,
+                    modifier = Modifier
+                        .height(Tk.dimens.inputMinHeight)
+                        .testTag("chat.schedule.entry"),
+                ) {
+                    Icon(
+                        Icons.Filled.Schedule,
+                        contentDescription = "定时发送",
+                        tint = Tk.colors.secondaryText,
+                    )
+                }
+                Spacer(Modifier.width(Tk.spacing.xs))
+            }
             Button(
                 onClick = sendAction,
                 modifier = Modifier.testTag("chat.send").height(Tk.dimens.inputMinHeight),

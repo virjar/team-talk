@@ -90,6 +90,41 @@ class ChatViewModel(
         }
     }
 
+    /** 定时发送（MSG-01/F3）：登记一条到点投递的富文本消息；失败经错误通道反馈。 */
+    suspend fun scheduleMessage(
+        body: com.virjar.tk.protocol.body.MessageBody,
+        deliverAt: Long,
+        operationId: String = com.virjar.tk.shared.platform.platformRandomUuid(),
+    ): Boolean = when (
+        val result = messageRepo.scheduleMessage(
+            chatId, com.virjar.tk.protocol.MessageType.RICH_TEXT.code, body, deliverAt, operationId,
+        )
+    ) {
+        is com.virjar.tk.shared.Outcome.Success -> true
+        is com.virjar.tk.shared.Outcome.Failure -> {
+            onError(result.error.message ?: "定时发送失败")
+            false
+        }
+    }
+
+    suspend fun cancelScheduledMessage(scheduledId: String, operationId: String): Boolean =
+        when (val result = messageRepo.cancelScheduledMessage(scheduledId, operationId)) {
+            is com.virjar.tk.shared.Outcome.Success -> result.value
+            is com.virjar.tk.shared.Outcome.Failure -> {
+                onError(result.error.message ?: "取消定时消息失败")
+                false
+            }
+        }
+
+    suspend fun loadScheduledMessages(): List<com.virjar.tk.protocol.model.ScheduledMessage> =
+        when (val result = messageRepo.listScheduledMessages(chatId)) {
+            is com.virjar.tk.shared.Outcome.Success -> result.value
+            is com.virjar.tk.shared.Outcome.Failure -> {
+                onError(result.error.message ?: "定时消息列表加载失败")
+                emptyList()
+            }
+        }
+
     /** 全文页只订阅一个身份；窗口裁剪不等于消息删除，持久事件也覆盖窗口外的编辑/撤回。 */
     internal fun observeMessageDetails(clientMsgId: String): Flow<Message?> = messageDetailsProjection(
         chatId, clientMsgId, messages, eventProcessor.lastEventId, localData,

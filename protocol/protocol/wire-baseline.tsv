@@ -177,6 +177,9 @@ rpc	groupFile/9	4	-	active	move(commandId:kotlin.String,chatId:kotlin.String,ent
 rpc	message/1	0	-	active	getHistory(chatId:kotlin.String,fromSeq:kotlin.Long,limit:kotlin.Int):List<com.virjar.tk.protocol.model.Message>
 rpc	message/10	0	-	active	saveMessage(srcChatId:kotlin.String,srcSeq:kotlin.Long,operationId:kotlin.String):com.virjar.tk.protocol.model.Message
 rpc	message/11	6	-	active	getThreadMessages(chatId:kotlin.String,rootSeq:kotlin.Long,fromSeq:kotlin.Long,limit:kotlin.Int):List<com.virjar.tk.protocol.model.Message>
+rpc	message/12	6	-	active	scheduleMessage(draft:com.virjar.tk.protocol.model.ScheduledMessageDraft):com.virjar.tk.protocol.model.ScheduledMessage
+rpc	message/13	6	-	active	cancelScheduledMessage(scheduledId:kotlin.String,operationId:kotlin.String):kotlin.Boolean
+rpc	message/14	6	-	active	listScheduledMessages(chatId:kotlin.String):List<com.virjar.tk.protocol.model.ScheduledMessage>
 rpc	message/2	0	-	active	search(chatId:kotlin.String,keyword:kotlin.String,limit:kotlin.Int):List<com.virjar.tk.protocol.model.Message>
 rpc	message/3	0	-	active	revoke(chatId:kotlin.String,serverSeq:kotlin.Long):kotlin.Unit
 rpc	message/4	0	-	active	edit(msg:com.virjar.tk.protocol.model.Message):kotlin.Unit
@@ -306,6 +309,8 @@ type	com.virjar.tk.protocol.model.OrganizationUnit	0	-	active	CLASS(unitId:kotli
 type	com.virjar.tk.protocol.model.OrganizationUnitPage	0	-	active	CLASS(revision:kotlin.Long,items:kotlin.collections.List<com.virjar.tk.protocol.model.OrganizationUnit>,nextCursor:kotlin.String?,snapshotChanged:kotlin.Boolean)
 type	com.virjar.tk.protocol.model.OrganizationUnitPageRequest	0	-	active	CLASS(cursor:kotlin.String?)
 type	com.virjar.tk.protocol.model.ProfilePatch	0	-	active	CLASS(name:com.virjar.tk.protocol.model.ProfilePatchValue<kotlin.String>,avatar:com.virjar.tk.protocol.model.ProfilePatchValue<com.virjar.tk.protocol.model.Attachment?>,sex:com.virjar.tk.protocol.model.ProfilePatchValue<kotlin.Int>,phone:com.virjar.tk.protocol.model.ProfilePatchValue<kotlin.String?>)
+type	com.virjar.tk.protocol.model.ScheduledMessage	6	-	active	CLASS(scheduledId:kotlin.String,chatId:kotlin.String,senderUid:kotlin.String,messageType:kotlin.Int,deliverAt:kotlin.Long,status:kotlin.Int,createdAt:kotlin.Long,operationId:kotlin.String,body:com.virjar.tk.protocol.body.MessageBody?)
+type	com.virjar.tk.protocol.model.ScheduledMessageDraft	6	-	active	CLASS(chatId:kotlin.String,messageType:kotlin.Int,deliverAt:kotlin.Long,operationId:kotlin.String,body:com.virjar.tk.protocol.body.MessageBody?)
 type	com.virjar.tk.protocol.model.SyncCheckpointChatPage	0	-	active	CLASS(items:kotlin.collections.List<com.virjar.tk.protocol.model.Chat>,nextCursor:kotlin.String?)
 type	com.virjar.tk.protocol.model.SyncCheckpointContactPage	0	-	active	CLASS(items:kotlin.collections.List<com.virjar.tk.protocol.model.Contact>,nextCursor:kotlin.String?)
 type	com.virjar.tk.protocol.model.SyncCheckpointHeader	0	-	active	CLASS(datasetId:kotlin.String,checkpointId:kotlin.String,baseEventId:kotlin.Long,currentUser:com.virjar.tk.protocol.model.User)

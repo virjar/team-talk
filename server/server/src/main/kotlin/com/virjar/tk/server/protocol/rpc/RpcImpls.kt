@@ -143,6 +143,7 @@ class MessageRpcImpl(
     private val messageService: MessageService,
     private val conversationService: ConversationService,
     private val reactionService: MessageReactionService,
+    private val scheduledMessageService: com.virjar.tk.server.domain.message.ScheduledMessageService,
     private val protocolVersion: com.virjar.tk.protocol.ProtocolVersion = com.virjar.tk.protocol.ProtocolVersions.CURRENT,
 ) : MessageRpcStub(uid) {
     override suspend fun getHistory(chatId: String, fromSeq: Long, limit: Int) =
@@ -165,6 +166,13 @@ class MessageRpcImpl(
     override suspend fun getThreadMessages(chatId: String, rootSeq: Long, fromSeq: Long, limit: Int) =
         messageService.getThreadMessages(uid, chatId, rootSeq, fromSeq, limit)
             .map { it.forProtocol(protocolVersion) }
+
+    override suspend fun scheduleMessage(draft: com.virjar.tk.protocol.model.ScheduledMessageDraft) =
+        scheduledMessageService.schedule(uid, draft)
+    override suspend fun cancelScheduledMessage(scheduledId: String, operationId: String) =
+        scheduledMessageService.cancel(uid, scheduledId, operationId)
+    override suspend fun listScheduledMessages(chatId: String) =
+        scheduledMessageService.listWaiting(uid, chatId)
 }
 
 class ConversationRpcImpl(uid: String, private val service: ConversationService) : ConversationRpcStub(uid) {

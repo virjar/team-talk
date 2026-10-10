@@ -101,6 +101,10 @@ private val schemaMigrations = listOf(
     SchemaMigration("add_client_release_snapshot_token") {
         exec("ALTER TABLE client_release ADD COLUMN IF NOT EXISTS snapshot_token varchar(36)")
     },
+    SchemaMigration("create_scheduled_messages") {
+        // MSG-01/F3 定时发送：调度权威表；投递与幂等语义见 ScheduledMessageService。
+        SchemaUtils.create(ScheduledMessages)
+    },
 )
 
 /** Caller owns the schema_metadata lock; new migrations must not commit before their completion receipt. */

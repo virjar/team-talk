@@ -740,3 +740,28 @@ object ClientTelemetryAdminAudits : LongIdTable("client_telemetry_admin_audits")
         index("idx_client_telemetry_admin_audit_action_time", false, action, createdAt)
     }
 }
+
+/** 定时发送调度（MSG-01/F3）。到点由 scheduled-message worker 投递；状态契约见协议 ScheduledMessage。 */
+object ScheduledMessages : Table("scheduled_messages") {
+    val scheduledId = varchar("scheduled_id", 36)
+    val chatId = varchar("chat_id", 256)
+    val senderUid = varchar("sender_uid", 64)
+    val messageType = integer("message_type")
+    /** canonical body 的 wire 编码；投递时经 MessageBodyRegistry 解码重组 Message。 */
+    val bodyBytes = blob("body_bytes").nullable()
+    val deliverAt = long("deliver_at")
+    val status = integer("status")
+    val operationId = varchar("operation_id", 64)
+    val createdAt = long("created_at")
+    val settledAt = long("settled_at").nullable()
+    override val primaryKey = PrimaryKey(scheduledId)
+
+    init {
+        // 幂等身份：同一发起者的 operationId 只允许一条调度；重试返回原记录。
+        index("idx_scheduled_operation", true, senderUid, operationId)
+        // 到期扫描：WAITING 按 deliverAt 升序。
+        index("idx_scheduled_due", false, deliverAt, scheduledId,
+            filterCondition = { status eq 0 })
+        check("ck_scheduled_status") { status inList listOf(0, 1, 2, 3) }
+    }
+}

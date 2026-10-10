@@ -434,6 +434,21 @@ internal fun Application.module(
                         delay(1_000L)
                     }
                 },
+                MaintenanceWorker("scheduled-message-delivery") {
+                    while (isActive) {
+                        try {
+                            val processed = koin.get<com.virjar.tk.server.domain.message.ScheduledMessageService>()
+                                .deliverDue(System.currentTimeMillis())
+                            // 有到期积压时快速续扫，稳态低频心跳。
+                            if (processed >= 1) delay(500L) else delay(10_000L)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            logger.warn("Scheduled message delivery remains pending", failure)
+                            delay(10_000L)
+                        }
+                    }
+                },
                 MaintenanceWorker("task-due-reminders") {
                     while (isActive) {
                         val delayMillis = try {

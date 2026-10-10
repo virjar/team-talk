@@ -54,4 +54,23 @@ interface MessageRpc {
     @RpcMethod(11)
     @com.virjar.tk.protocol.SinceProtocol(6)
     suspend fun getThreadMessages(chatId: String, rootSeq: Long, fromSeq: Long, limit: Int): List<Message>
+
+    /**
+     * 定时发送（MSG-01/F3）：登记一条到点投递的消息。[draft.operationId] 幂等——
+     * 重试复用同值返回原调度记录，不产生第二条。服务端做成员资格与正文基础校验；
+     * 到点投递走与 MESSAGE 帧相同的完整发送链，投递失败置 FAILED 保留在列表。
+     */
+    @RpcMethod(12)
+    @com.virjar.tk.protocol.SinceProtocol(6)
+    suspend fun scheduleMessage(draft: com.virjar.tk.protocol.model.ScheduledMessageDraft): com.virjar.tk.protocol.model.ScheduledMessage
+
+    /** 取消一条仍处 WAITING 的调度；仅发起者可取消，幂等成功。 */
+    @RpcMethod(13)
+    @com.virjar.tk.protocol.SinceProtocol(6)
+    suspend fun cancelScheduledMessage(scheduledId: String, operationId: String): Boolean
+
+    /** 当前用户在某会话的待发定时消息（WAITING，按 deliverAt 升序）。 */
+    @RpcMethod(14)
+    @com.virjar.tk.protocol.SinceProtocol(6)
+    suspend fun listScheduledMessages(chatId: String): List<com.virjar.tk.protocol.model.ScheduledMessage>
 }

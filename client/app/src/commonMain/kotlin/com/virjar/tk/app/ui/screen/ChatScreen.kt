@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Surface
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import com.virjar.tk.shared.platform.platformCurrentTimeMillis
@@ -178,6 +179,7 @@ fun ChatPanel(
     val chatNotice by viewModel.chatNotice.collectAsState()
     var noticeBarDismissed by remember(chatId) { mutableStateOf(false) }
     var showNoticeDetail by remember(chatId) { mutableStateOf(false) }
+    var showScheduleDialog by remember(chatId) { mutableStateOf(false) }
     val showNoticeBar = chatType == ChatType.GROUP.code && !noticeBarDismissed && chatNotice != null
     val loading by viewModel.loading.collectAsState()
     val loadingOlder by viewModel.loadingOlder.collectAsState()
@@ -1087,6 +1089,11 @@ fun ChatPanel(
                 editingFailedMessage = editingFailedMessage != null,
                 editingSaving = editingSaving || composerSending || resolvingDraftConflict,
                 onCancelEditing = actionAdmission.guard(::cancelEditing),
+                scheduleAction = if (voiceMode || editingSessionActive || savedReplyTarget.clientMsgId.isNotEmpty()) {
+                    null
+                } else {
+                    actionAdmission.guard { showScheduleDialog = true }
+                },
                 media = admittedMedia,
                 showEmoji = showEmoji,
                 onShowEmojiChange = actionAdmission.guard { visible: Boolean -> showEmoji = visible },
@@ -1120,6 +1127,26 @@ fun ChatPanel(
             )
         }
 
+        if (showScheduleDialog) {
+            ChatScheduleSendDialog(
+                viewModel = viewModel,
+                composerMarkdown = composerMarkdownSnapshot(),
+                buildBody = { markdown ->
+                    val admitted = admitChatEmbeddedAssetsOrReport(
+                        markdown, embeddedAssetSnapshot, viewModel::onError,
+                    ) ?: return@ChatScheduleSendDialog null
+                    buildChatRichTextBodyOrReport(markdown, admitted, viewModel::onError)
+                },
+                onDismiss = { showScheduleDialog = false },
+                onScheduled = { deliverAt ->
+                    showScheduleDialog = false
+                    resetComposer(requestFocus = true, committedSend = false)
+                    uiResultScope.launch {
+                        snackbarHostState.showSnackbar("已定时，将于 " + formatChatTime(deliverAt) + " 发送")
+                    }
+                },
+            )
+        }
         if (showNoticeDetail && chatNotice != null) {
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { showNoticeDetail = false },

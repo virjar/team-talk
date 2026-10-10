@@ -249,7 +249,7 @@ class TaskIntegrationTest {
         val stored = ctx.messageService.getHistory(owner, chat.chatId, 0, 10).first { it.serverSeq == seq }
         assertEquals(TaskRefBody(task.taskId, task.title, "任务 · 待处理"), stored.body)
         assertFailsWith<TaskAccessDeniedException> { service().get(peer, task.taskId) }
-        fun rpc(version: ProtocolVersion) = MessageRpcImpl(peer, ctx.messageService, ctx.conversationService, ctx.reactionService, version)
+        fun rpc(version: ProtocolVersion) = MessageRpcImpl(peer, ctx.messageService, ctx.conversationService, ctx.reactionService, ctx.scheduledMessageService, version)
         val old = rpc(ProtocolVersion(0, 1)); val current = rpc(ProtocolVersion(0, 2))
         assertEquals(stored, current.getHistory(chat.chatId, 0, 10).first { it.serverSeq == seq })
         // 旧协商版本的占位形态：保留类型码与身份、剥正文、打投影标记位
