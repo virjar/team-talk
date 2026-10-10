@@ -19,8 +19,8 @@ internal fun collapsedMessagePreview(body: MessageBody?): String? {
         is ReplyBody -> body.content
         else -> return null
     }
-    if (markdown.length <= 1800 && markdown.count { it == '\n' } +
-        Regex("<br\\s*/?>", RegexOption.IGNORE_CASE).findAll(markdown).count() < 36) return null
+    if (markdown.length <= 2400 && markdown.count { it == '\n' } +
+        Regex("<br\\s*/?>", RegexOption.IGNORE_CASE).findAll(markdown).count() < 48) return null
     var end = minOf(240, markdown.length)
     if (end < markdown.length && end > 0 && markdown[end - 1].isHighSurrogate()) end--
     val preview = MdParser.parse(markdown.substring(0, end), embeddedAssetRenderScopeFor(body)).joinToString("\n", transform = ::previewText)
