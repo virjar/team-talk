@@ -100,6 +100,11 @@ class ChatViewModel(
         .map { it?.peerReadSeq ?: 0L }
         .stateIn(scope, SharingStarted.Eagerly, 0L)
 
+    /** 群公告（MSG-01/F2）：`Chat.notice` 服务端权威，CHAT_UPDATED 全量投影刷新；空白视为无公告。 */
+    val chatNotice: StateFlow<String?> = localCache.observeChat(chatId)
+        .map { chat -> chat?.notice?.takeIf(String::isNotBlank) }
+        .stateIn(scope, SharingStarted.Eagerly, null)
+
     /** 私聊对端 uid（仅 chatType=1 非空）；@ 可见性按会话范围过滤候选（内测 T047）。 */
     val chatPeerUid: StateFlow<String?> = localCache.observeConversation(chatId)
         .map { conversation -> conversation?.takeIf { it.chatType == 1 }?.peerUid }

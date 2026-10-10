@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Surface
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import com.virjar.tk.shared.platform.platformCurrentTimeMillis
 import com.virjar.tk.shared.platform.platformRandomUuid
 
@@ -172,6 +174,11 @@ fun ChatPanel(
     // 滚出窗口后面板保持已载内容，进程重建后面板自然关闭。
     val threadReplyCounts by viewModel.threadReplyCounts.collectAsState()
     var threadRootSeq by rememberSaveable { mutableStateOf<Long?>(null) }
+    // 群公告条（MSG-01/F2）：群聊且有公告时显示；关闭只影响本次会话组合。
+    val chatNotice by viewModel.chatNotice.collectAsState()
+    var noticeBarDismissed by remember(chatId) { mutableStateOf(false) }
+    var showNoticeDetail by remember(chatId) { mutableStateOf(false) }
+    val showNoticeBar = chatType == ChatType.GROUP.code && !noticeBarDismissed && chatNotice != null
     val loading by viewModel.loading.collectAsState()
     val loadingOlder by viewModel.loadingOlder.collectAsState()
     val hasMore by viewModel.hasMore.collectAsState()
@@ -948,6 +955,13 @@ fun ChatPanel(
         ),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
+            if (showNoticeBar) {
+                ChatNoticeBar(
+                    notice = chatNotice.orEmpty(),
+                    onClick = { showNoticeDetail = true },
+                    onDismiss = { noticeBarDismissed = true },
+                )
+            }
             ChatMessageList(
                 loading = loading,
                 messages = messages,
@@ -1106,6 +1120,25 @@ fun ChatPanel(
             )
         }
 
+        if (showNoticeDetail && chatNotice != null) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showNoticeDetail = false },
+                title = { Text("群公告") },
+                text = {
+                    Text(
+                        chatNotice.orEmpty(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier
+                            .testTag("chat.notice.detail")
+                            .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { showNoticeDetail = false }) { Text("知道了") }
+                },
+                modifier = Modifier.testTag("chat.notice.dialog"),
+            )
+        }
         // 线程面板（MSG-01/F1）：宽窗右缘抽屉，窄屏全屏页；返回键关闭。
         threadRootSeq?.let { rootSeq ->
             val threadRoot = messages.firstOrNull { it.serverSeq == rootSeq }
