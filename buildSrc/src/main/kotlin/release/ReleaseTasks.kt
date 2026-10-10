@@ -58,7 +58,20 @@ fun registerReleaseTasks(
     val desktopRevision = if (snapshot) metadata.snapshotDesktopRevision(version, sourceCommit) else version.buildNumber + 1
     // 一次快照发布一枚随机令牌（全平台共享）：客户端持有不同令牌即被引导跟随，
     // 同版本号/同提交的覆盖发布也能触达。
-    val snapshotToken = if (snapshot) java.util.UUID.randomUUID().toString() else ""
+    // 快照令牌的密封文件（SNAPSHOT_TOKEN）在 assembleReleaseBundle 完成后写入；
+    // 此处只读——bundle 目录存在性是 reuseBundle 判据，求值期不得提前创建目录。
+    // SNAPSHOT_TOKEN 放 revision 目录（bundle 目录的封闭文件集之外），verify 不受影响。
+    val snapshotTokenFile = if (snapshot) java.io.File(
+        root, "build/snapshots/${config.client.applicationId}/${version.name}/revision-$desktopRevision.SNAPSHOT_TOKEN",
+    ) else null
+    // 一次快照发布一枚令牌；令牌密封进 bundle，中断重试复用同值——否则随机令牌会改变
+    // release.json 字节，使 uploadSha 必变而永远无法命中服务端的"同字节重试"路径
+    // （2026-10-10 MSG-01 发布实测踩坑）。
+    val snapshotToken = when {
+        !snapshot -> ""
+        snapshotTokenFile?.exists() == true -> snapshotTokenFile.readText().trim()
+        else -> java.util.UUID.randomUUID().toString()
+    }
     project.extensions.extraProperties.set("desktopRevision", desktopRevision)
     val identity = BundleIdentity(version, sourceCommit, config,
         distributionKind = if (privateDistribution) mode else "release",
@@ -165,6 +178,10 @@ fun registerReleaseTasks(
                 File(root, "client/headless/build/distributions/${HeadlessDistribution.archiveName(identity.buildIdentity)}"),
             )
             project.logger.lifecycle("Sealed release bundle: ${bundle.absolutePath}")
+            snapshotTokenFile?.let { tokenFile ->
+                tokenFile.parentFile.mkdirs()
+                if (!tokenFile.exists()) tokenFile.writeText(snapshotToken)
+            }
         }
     }
     // Configure ordering lazily in each project. Resolving another project's task dependencies
