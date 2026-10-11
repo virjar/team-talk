@@ -3,4 +3,8 @@
     <cache-path name="session_attachments" path="teamtalk-media/attachments/" />
     <cache-path name="captured_videos" path="teamtalk-media/captured/" />
     <cache-path name="captured_photos" path="teamtalk-media/photos/" />
+    <!-- 应用内升级闭环（MSG-01 期间实测缺陷）：下载的 APK 存放在 cache/upgrade/，
+         必须在 FileProvider 路径内才能拉起系统安装器；缺失时 getUriForFile 抛
+         IllegalArgumentException 直接闪退（0.0.7 私有分发实测，fault.uncaught）。 -->
+    <cache-path name="upgrade_packages" path="teamtalk-upgrade/" />
 </paths>

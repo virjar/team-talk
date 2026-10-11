@@ -22,7 +22,7 @@ internal typealias AndroidUpgradeInfo = AndroidReleaseManifest
  */
 internal object AndroidAppUpgrade {
 
-    private const val UPGRADE_DIRECTORY = "teamtalk-upgrade"
+    internal const val UPGRADE_DIRECTORY = "teamtalk-upgrade"
     private const val PART_SUFFIX = ".part"
     private const val CONNECT_TIMEOUT_MILLIS = 8_000
     private const val READ_TIMEOUT_MILLIS = 30_000
