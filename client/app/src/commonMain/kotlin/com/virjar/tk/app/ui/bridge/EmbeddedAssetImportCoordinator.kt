@@ -1,5 +1,6 @@
 package com.virjar.tk.app.ui.bridge
 
+import com.virjar.tk.shared.log.AppLog
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
 import com.virjar.tk.app.ui.component.rich.PendingAssetJobState
 import com.virjar.tk.protocol.http.AttachmentUploadIdentity
@@ -99,7 +100,10 @@ class EmbeddedAssetImportCoordinator<S : Any>(
                     publish(binding, EmbeddedAssetImportEvent.StateChanged(PendingAssetJob(assetId, assetId),
                         EmbeddedAssetImportPlacement(selection.displayName, selection.presentation)))
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { publishOnUi { if (!closed.get()) durable.preparationFailed(binding.ownerKey) } }
+                catch (failure: Exception) {
+                    AppLog.fault("AssetImport", "chat asset prepare failed: ${failure.message}", failure)
+                    publishOnUi { if (!closed.get()) durable.preparationFailed(binding.ownerKey) }
+                }
                 finally { prepared?.let(releaseSource) }
             }
         }
@@ -139,6 +143,7 @@ class EmbeddedAssetImportCoordinator<S : Any>(
                     EmbeddedAsset(attempt.assetId, result.file, result.thumbnail, result.width, result.height), attempt.placement))
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
+                AppLog.fault("AssetImport", "chat asset upload failed: ${failure.message}", failure)
                 retryStore.fail(attempt, failure.message?.takeIf(String::isNotBlank) ?: "上传失败")
                     ?.let { publishCurrent(attempt, it) }
             }

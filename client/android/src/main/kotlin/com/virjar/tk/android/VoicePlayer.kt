@@ -10,6 +10,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import com.virjar.tk.shared.log.AppLog
 import com.virjar.tk.protocol.model.Attachment
 
 /**

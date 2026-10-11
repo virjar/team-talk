@@ -1,5 +1,7 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.log.PlatformOnlyTkLogger
+import com.virjar.tk.shared.log.TkLogger
 import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.payload.MessageAckPayload
@@ -81,6 +83,14 @@ class SendQueue(
     )
     private val callbackGate = SessionWorkGate("SendQueue")
     private val callbackLease = callbackGate.lease()
+
+    /** 终态失败与长期重试是用户直接可见的故障；绑定为 session logger 后 fault 进遥测。 */
+    private var failureLogger: TkLogger = PlatformOnlyTkLogger("SendQueue")
+
+    /** ClientSession 组装后绑定有遥测槽的 logger；未绑定时 fault 只写平台控制台。 */
+    fun bindFailureLogger(logger: TkLogger) {
+        failureLogger = logger
+    }
     private val worker: Job
     private val _queueSnapshots = MutableStateFlow(EMPTY_OUTGOING_QUEUE_SNAPSHOT)
     /** 转换驱动的元数据快照，供诊断/遥测使用；载荷绝不 decode。 */
@@ -270,6 +280,12 @@ class SendQueue(
             else -> OutgoingFailureCode.UNEXPECTED_FAILURE
         }
         if (!failureCode.retriesAutomatically) {
+            failureLogger.fault(
+                "message terminal failed: code=$failureCode reason=$reason "
+                    + "clientMsgId=${outgoing.message.clientMsgId.take(12)} attempt=${outgoing.attemptCount} "
+                    + "detail=${failure?.message ?: "n/a"}",
+                failure,
+            )
             callbackGate.runIfActive(callbackLease) {
                 localCache.markOutgoingMessageTerminalFailed(
                     outgoing.localOrdinal,

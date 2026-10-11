@@ -100,7 +100,12 @@ class ImClient(
         transitionTo = { next -> transport.transitionTo(next) },
         connectionScope = { transport.coroutineScope },
         writeProtocol = { proto -> transport.writeProtocolNow(proto) },
-        closeTransport = { reason, cause -> transport.closeForRecoveryNow(reason, cause) },
+        closeTransport = { reason, cause ->
+            // 恢复性断连是关键遥测事件（checkpoint 损坏、投影失败等触发）；此前只写
+            // PlatformOnly 控制台，fault.reported 零记录（2026-10-10 遥测复盘）。
+            com.virjar.tk.shared.log.AppLog.fault("ImClient", reason, cause)
+            transport.closeForRecoveryNow(reason, cause)
+        },
         retryTransport = { generation, reason ->
             transport.retryAuthenticationIfCurrent(generation, reason)
         },

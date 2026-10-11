@@ -1,5 +1,6 @@
 package com.virjar.tk.android
 
+import com.virjar.tk.shared.log.AppLog
 import android.content.ContentValues
 import android.content.Context
 import android.media.MediaScannerConnection
@@ -102,7 +103,10 @@ internal suspend fun exportAndroidAttachmentToUserLocation(
         true
     } catch (cancelled: CancellationException) {
         throw cancelled
-    } catch (_: Exception) {
+    } catch (failure: Exception) {
+        // 保存到设备失败（存储满/MediaStore 拒绝/权限变化）此前完全吞掉，
+        // 用户只见 toast 而服务端零线索。
+        AppLog.fault("MediaExport", "attachment export to device failed", failure)
         false
     }
 }

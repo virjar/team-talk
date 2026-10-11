@@ -63,7 +63,18 @@ class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
         if (currentProcess != packageName) return
 
         // 在凭据、草稿写入器与任何数据库打开前处理本安装的 major 边界。
-        com.virjar.tk.shared.client.prepareAndroidClientDataVersion(this)
+        // 迁移崩溃发生在（下方第 87 行）uncaught handler 安装之前，必须自行持久化，
+        // 否则用户表现为持续闪退而维护者零线索（0.0.7 遥测复盘 P0-12）。
+        try {
+            com.virjar.tk.shared.client.prepareAndroidClientDataVersion(this)
+        } catch (failure: Throwable) {
+            com.virjar.tk.shared.client.flushPendingCrash(
+                getDir("teamtalk", MODE_PRIVATE),
+                "data version migration failed: ${failure.stackTraceToString()}",
+            )
+            throw failure
+        }
+
         try {
             com.virjar.tk.shared.client.resumePendingAccountCleanup(
                 androidAccountDataCleanup(this),

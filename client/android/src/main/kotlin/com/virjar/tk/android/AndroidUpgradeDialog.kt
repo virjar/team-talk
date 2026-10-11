@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.style.TextAlign
+import com.virjar.tk.shared.log.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.io.File
@@ -83,6 +84,7 @@ internal fun AndroidUpgradeDialog(
             if (AndroidApkInstaller.install(context, file)) {
                 onDismiss()
             } else {
+                AppLog.fault("AppUpgrade", "installer start failed after grant", null)
                 installHint = "无法启动系统安装器，请稍后重试。"
             }
             return
@@ -108,7 +110,8 @@ internal fun AndroidUpgradeDialog(
                     AndroidUpgradeUiState.Available(info)
                 else -> AndroidUpgradeUiState.UpToDate
             }
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            AppLog.fault("AppUpgrade", "upgrade check failed", failure)
             AndroidUpgradeUiState.Failed
         }
     }
@@ -138,7 +141,8 @@ internal fun AndroidUpgradeDialog(
                 state = AndroidUpgradeUiState.ReadyToInstall(file)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (failure: Exception) {
+                AppLog.fault("AppUpgrade", "upgrade download failed", failure)
                 state = AndroidUpgradeUiState.Failed
             }
         }

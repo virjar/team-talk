@@ -894,9 +894,14 @@ fun ChatPanel(
                 ) ?: return@sendAction
                 val validated = validatedMessageOrReport(message) ?: return@sendAction
                 val submittedContext = captureComposerContext()
-                val revision = composerContextStore.save(chatId, submittedContext) ?: return@sendAction
-                if (revision <= 0L) {
-                    viewModel.onError("聊天草稿存储尚未准备好")
+                val revision = composerContextStore.save(chatId, submittedContext) ?: run {
+                    // 静默丢弃会让用户以为消息已发出；必须留痕（actionTelemetry 的
+                    // STARTED 也由此收敛为失败终态）。
+                    com.virjar.tk.shared.log.AppLog.fault(
+                        "ChatSend",
+                        "composer draft store rejected save; message not sent",
+                    )
+                    viewModel.onError("聊天草稿存储尚未准备好，消息未发送")
                     return@sendAction
                 }
                 val submission = composerContextStore.beginSend(chatId, revision)

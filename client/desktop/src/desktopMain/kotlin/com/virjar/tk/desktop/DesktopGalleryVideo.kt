@@ -1,5 +1,6 @@
 package com.virjar.tk.desktop
 
+import com.virjar.tk.shared.log.AppLog
 import com.virjar.tk.shared.AppError
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -190,7 +191,8 @@ private fun DesktopVideoPageInstance(
         } catch (_: AppError.AuthExpired) {
             // 认证退役拥有 UI 切换；不要把它暴露成可重试的 IO 错误。
             retirePlayer()
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            AppLog.fault("GalleryVideo", "video download/open failed", failure)
             publicationGate {
                 state = DesktopGalleryVideoLoadState.Error(
                     message = "视频下载或本地打开失败",

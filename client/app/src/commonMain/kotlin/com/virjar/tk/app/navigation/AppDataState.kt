@@ -336,6 +336,9 @@ open class AppDataState(
 
     private fun handleError(throwable: Throwable, fallbackMessage: String) {
         if (throwable is CancellationException) throw throwable
+        // 全部 Feature 业务写路径的统一错误汇聚点：失败必须进遥测（fault.reported），
+        // 否则群文件/文档/任务/组织等操作的服务端拒绝与异常在服务端零线索。
+        com.virjar.tk.shared.log.AppLog.fault("SessionActions", fallbackMessage, throwable)
         destroyGate.runIfOpen {
             when (throwable) {
                 is AppError.AuthExpired -> {

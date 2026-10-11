@@ -716,6 +716,8 @@ fun createSession(
     rpcClient.bindLogger(sessionLogOwner.logger("RpcClient"))
     ep.bindLogger(sessionLogOwner.logger("EventProcessor"))
     friendPresenceRepository.bindLogger(sessionLogOwner.logger("FriendPresenceRepository"))
+    sendQueue.bindFailureLogger(sessionLogOwner.logger("SendQueue"))
+    sendQueue.bindFailureLogger(sessionLogOwner.logger("SendQueue"))
     rpcClient.start()
     friendPresenceRepository.start()
     // EventProcessor 先订阅入站事件，再安装持久 cursor/批次投影 binding 并发起显式分页同步。
