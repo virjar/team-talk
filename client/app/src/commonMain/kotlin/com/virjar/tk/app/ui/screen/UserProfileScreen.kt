@@ -57,6 +57,22 @@ internal fun availableUserProfileDestructiveActions(
 internal fun canAddFriendFromProfile(user: User, myUid: String): Boolean =
     user.uid != myUid && user.role == UserRole.HUMAN
 
+/**
+ * 资料页"发消息"入口资格（办公语义）：好友始终可发起；同组织同事无需好友关系即可直接
+ * 私聊。[organizationSummary] 是服务端按 T001/T008 边界裁决后的归属投影——查看者自身
+ * 必须是组织成员，否则为 null；归属非空即双方同在组织中（当前单组织模型）。加载失败
+ * 或访客视角返回 null，保持仅好友可发的旧行为；黑名单等终态拒绝由服务端创建私聊时
+ * 权威裁决。
+ */
+internal fun canStartPersonalChatFromProfile(
+    targetUid: String,
+    myUid: String,
+    isFriend: Boolean,
+    organizationSummary: com.virjar.tk.protocol.model.UserOrganizationSummary?,
+): Boolean = targetUid != myUid && (
+    isFriend || organizationSummary?.takeIf { it.uid == targetUid }?.paths?.isNotEmpty() == true
+    )
+
 @Composable
 fun UserProfileScreen(
     user: User?,
@@ -223,8 +239,8 @@ fun UserProfileContent(
                 ),
             ) {
                 when {
-                    isFriend -> {
-                        if (onSaveRemark != null) {
+                    canStartPersonalChatFromProfile(user.uid, myUid, isFriend, orgSummary) -> {
+                        if (isFriend && onSaveRemark != null) {
                             key(user.uid) { FriendRemarkEditor(remark = remark, onSave = onSaveRemark) }
                             Spacer(Modifier.height(8.dp))
                         }
@@ -236,11 +252,30 @@ fun UserProfileContent(
                                 onClick = onSendMessage,
                                 modifier = Modifier.weight(1f).testTag("profile.sendMessage"),
                             ) { Text("发消息") }
-                            if (onCreateGroup != null) {
+                            if (isFriend && onCreateGroup != null) {
                                 OutlinedButton(
                                     onClick = onCreateGroup,
                                     modifier = Modifier.weight(1f).testTag("profile.createGroup"),
                                 ) { Text("发起群聊") }
+                            } else if (!isFriend) {
+                                // 同组织同事：好友申请保留为次动作，是否加好友由用户自行决定
+                                when {
+                                    hasPendingApply -> OutlinedButton(
+                                        onClick = {},
+                                        modifier = Modifier.weight(1f).testTag("profile.applied"),
+                                        enabled = false,
+                                    ) { Text("已申请，等待对方验证") }
+                                    hasIncomingApply -> OutlinedButton(
+                                        onClick = { onViewFriendApplies?.invoke() },
+                                        modifier = Modifier.weight(1f).testTag("profile.incomingApply"),
+                                        enabled = onViewFriendApplies != null,
+                                    ) { Text("对方已申请，去处理") }
+                                    canAddFriendFromProfile(user, myUid) -> OutlinedButton(
+                                        onClick = onAddFriend,
+                                        modifier = Modifier.weight(1f).testTag("profile.addFriend"),
+                                        enabled = !isApplyingFriend,
+                                    ) { Text(if (isApplyingFriend) "申请中…" else "添加好友") }
+                                }
                             }
                         }
                         if (UserProfileDestructiveAction.DeleteFriend in destructiveActions) {
