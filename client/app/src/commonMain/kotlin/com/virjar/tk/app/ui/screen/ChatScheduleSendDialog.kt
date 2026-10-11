@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.virjar.tk.app.ui.platform.hourMinute
 import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.protocol.body.RichTextBody
 import com.virjar.tk.app.viewmodel.ChatViewModel
@@ -80,7 +81,7 @@ internal fun ChatScheduleSendDialog(
             .toInstant(zone)
         val local = target.toLocalDateTime(zone)
         date = local.date.toString()
-        time = "%02d:%02d".format(local.hour, local.minute)
+        time = local.hourMinute()
         inputError = null
     }
 

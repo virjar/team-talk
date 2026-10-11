@@ -32,6 +32,7 @@ import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.app.ui.component.rich.EmbeddedAssetRenderScope
+import com.virjar.tk.app.ui.platform.formatUiMonthDayTime
 import com.virjar.tk.app.ui.theme.Tk
 import kotlinx.datetime.toLocalDateTime
 import kotlin.math.abs
@@ -591,7 +592,7 @@ internal fun MergeForwardSnapshotView(body: com.virjar.tk.protocol.body.MergeFor
                             color = Tk.colors.secondaryText,
                         )
                         Text(
-                            formatEntryTime(entry.timestamp),
+                            formatUiMonthDayTime(entry.timestamp),
                             style = MaterialTheme.typography.labelSmall,
                             color = Tk.colors.secondaryText,
                         )
@@ -606,10 +607,4 @@ internal fun MergeForwardSnapshotView(body: com.virjar.tk.protocol.body.MergeFor
             }
         }
     }
-}
-
-private fun formatEntryTime(timestamp: Long): String {
-    val zone = kotlinx.datetime.TimeZone.currentSystemDefault()
-    val local = kotlin.time.Instant.fromEpochMilliseconds(timestamp).toLocalDateTime(zone)
-    return "%02d-%02d %02d:%02d".format(local.monthNumber, local.dayOfMonth, local.hour, local.minute)
 }

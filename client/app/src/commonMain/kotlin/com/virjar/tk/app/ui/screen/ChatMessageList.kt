@@ -42,7 +42,11 @@ import com.virjar.tk.shared.client.OutgoingFailureCode
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.MessageReactionGroup
 import com.virjar.tk.app.ui.platform.rememberClipboardTextWriter
+import com.virjar.tk.app.ui.platform.localUiDateTime
 import com.virjar.tk.app.ui.theme.Tk
+import kotlinx.datetime.atTime
+import kotlinx.datetime.plus
+import kotlinx.datetime.toInstant
 import com.virjar.tk.app.ui.component.LocalFileDownloads
 import com.virjar.tk.app.ui.component.MessagePreview
 import com.virjar.tk.app.ui.component.messageCopyableImageAttachment
@@ -515,10 +519,8 @@ private fun messageMenuItems(
             text = { Text("明天 9:00 提醒我") },
             onClick = {
                 val zone = kotlinx.datetime.TimeZone.currentSystemDefault()
-                val tomorrow = java.time.Instant.ofEpochMilli(
-                    com.virjar.tk.shared.platform.platformCurrentTimeMillis(),
-                ).atZone(java.time.ZoneId.systemDefault()).toLocalDate().plusDays(1)
-                val at = tomorrow.atTime(9, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                val tomorrow = localUiDateTime().date.plus(1, kotlinx.datetime.DateTimeUnit.DAY)
+                val at = tomorrow.atTime(9, 0).toInstant(zone).toEpochMilliseconds()
                 onMenuMessageChange(null)
                 onRemindLater(msg, at)
             },
