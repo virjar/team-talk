@@ -23,6 +23,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.desktop.DesktopImageCodec
 import com.virjar.tk.protocol.model.Attachment
+import com.virjar.tk.shared.log.AppLog
 import com.virjar.tk.app.ui.UiActionAdmission
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -129,6 +130,20 @@ private fun CachedImageRequestContent(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
+            // 下载/租约异常曾是与解码失败并列的主要画廊故障来源，却长期不上报
+            // （0.0.7 私有用户"画廊加载失败"无任何遥测线索的根因）。带 cause 链上报。
+            AppLog.fault(
+                "MediaGallery",
+                "gallery image open failed: ${attachment.path.takeLast(48)}",
+                e,
+            )
+            resources.telemetry.recordMedia(
+                page = ClientUiPage.CHAT,
+                mediaKind = ClientMediaKind.IMAGE,
+                operation = MediaOperation.DOWNLOAD,
+                outcome = ClientActionOutcome.FAILED,
+                reason = MediaFailureReason.IO,
+            )
             publicationGate {
                 value = CachedImageState.Failed(e.message ?: "download failed")
             }

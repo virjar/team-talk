@@ -307,6 +307,9 @@ private fun TelemetryBatch.toDraft(
                             ),
                         )
                     }
+                    payload.exceptionMessage?.let {
+                        append(' ').append(sanitizeTelemetryDiagnosticText(it))
+                    }
                     payload.stackFrames.forEach { frame ->
                         append(' ').append(
                             sanitizeTelemetryStableText(

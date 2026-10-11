@@ -8,7 +8,7 @@ import release.publish.GitHubPublisher
 import java.io.File
 import java.util.Properties
 
-/** The same graph is used by GitHub and private workstations; CI contains no packaging or upload logic. */
+/** GitHub 与私有工作站共用同一任务图；CI 不包含打包或上传逻辑。 */
 fun registerReleaseTasks(
     project: Project,
     version: ReleaseVersion,
@@ -86,7 +86,7 @@ fun registerReleaseTasks(
     fun notes(): String {
         if (!privateDistribution) return metadata.verify(version, sourceCommit)
         metadata.verifySource(version, sourceCommit)
-        // Auto-generated notes are sealed with the build: fetching tags later must not change a retry.
+        // 自动生成的说明随构建一并密封：之后拉取 tag 不得改变重试结果。
         if (reuseBundle) return File(bundle, "RELEASE_NOTES.md").readText()
         return if (snapshot) snapshotNotes(identity) + "\n" + metadata.commitAppendix(version, snapshot = true)
             else privateInstallationNotes(identity)
@@ -130,7 +130,7 @@ fun registerReleaseTasks(
         }
     }
 
-    // Preflight precedes expensive producers and catches missing credentials before building packages.
+    // 预检先于高成本的生产任务执行，在打包前暴露缺失的凭据。
     val preflight = project.tasks.register("prepareRelease") {
         val task = this
         task.group = "release build"
@@ -176,6 +176,7 @@ fun registerReleaseTasks(
                 File(root, "server/server/build/distributions/teamtalk-server-${version.name}.zip"),
                 notes, metadata.commitAppendix(version, snapshot),
                 File(root, "client/headless/build/distributions/${HeadlessDistribution.archiveName(identity.buildIdentity)}"),
+                androidMappingFile = File(root, "client/android/build/outputs/mapping/release/mapping.txt"),
             )
             project.logger.lifecycle("Sealed release bundle: ${bundle.absolutePath}")
             snapshotTokenFile?.let { tokenFile ->
@@ -184,8 +185,8 @@ fun registerReleaseTasks(
             }
         }
     }
-    // Configure ordering lazily in each project. Resolving another project's task dependencies
-    // during projectsEvaluated violates Gradle's project state locks.
+    // 在各 project 中惰性配置执行顺序。在 projectsEvaluated 期间解析其他 project 的
+    // 任务依赖会违反 Gradle 的 project 状态锁。
     project.subprojects.filterNot { it.path.startsWith(":protocol:") }.forEach { child ->
         child.tasks.configureEach { mustRunAfter(preflight) }
     }
@@ -236,7 +237,7 @@ fun registerReleaseTasks(
     }
 }
 
-/** Snapshot notes describe the actual private build; the maintainer's public release notes stay untouched. */
+/** 快照说明描述实际的私有构建；维护者的公开发行说明保持原样。 */
 private fun snapshotNotes(identity: BundleIdentity): String = """
     # ${identity.client.displayName} ${identity.version.name} 内测快照
 
@@ -255,7 +256,7 @@ private fun snapshotNotes(identity: BundleIdentity): String = """
     当前仍为开发者预览，不保证长期兼容；普通升级保留已有资料，具体变更见本构建的提交记录。
 """.trimIndent() + "\n"
 
-/** Installation facts for an independent private app, separate from the public version's release notes. */
+/** 独立私有应用的安装要点，与公版的发行说明相互独立。 */
 private fun privateInstallationNotes(identity: BundleIdentity): String = """
     # ${identity.client.displayName} ${identity.version.name} 私有安装包
 

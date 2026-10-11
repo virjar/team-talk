@@ -20,7 +20,7 @@ data class BundleIdentity(
     val sourceCommit: String,
     val deployment: DeploymentConfig,
     val distributionKind: String = "release",
-    // Historical manifest field name; snapshots record the actual development schema, without freezing it.
+    // 历史遗留的 manifest 字段名；快照记录实际的开发协议 schema，但不冻结它。
     val protocolContractSha256: String? = null,
     val desktopRevision: Int = version.buildNumber + 1,
 ) {
@@ -40,7 +40,7 @@ data class BundleIdentity(
     val deploymentSha256: String get() = sha256(deployment.toCanonicalJson().toByteArray(Charsets.UTF_8))
 }
 
-/** Builds once into a temporary sibling, seals every byte, then publishes the local directory. */
+/** 一次性构建到临时同级目录，密封每个字节，然后发布本地目录。 */
 object ReleaseBundle {
     const val MANIFEST = "release-manifest.json"
     const val CHECKSUMS = "SHA256SUMS"
@@ -56,6 +56,7 @@ object ReleaseBundle {
         notes: String,
         commits: String,
         headlessZip: File,
+        androidMappingFile: File? = null,
     ): File {
         if (destination.exists()) {
             verify(destination, identity, notes)
@@ -89,6 +90,9 @@ object ReleaseBundle {
             }
             val assets = File(temporary, "assets").apply { mkdirs() }
             apk.copyTo(File(assets, "${identity.client.desktopName}-${identity.version.name}-android.apk"))
+            // R8 反混淆 mapping 随制品密封（0.0.7 遥测复盘需求）：混淆栈帧
+            // （o8.f u8.n1.c:427）只有靠同构建 mapping 才能还原类名/行号。
+            androidMappingFile?.takeIf { it.isFile }?.copyTo(File(assets, "mapping.txt"))
             serverZip.copyTo(File(assets, "TeamTalk-${identity.version.name}-server.zip"))
             val headlessArtifact = "assets/${HeadlessDistribution.archiveName(identity.buildIdentity)}"
             headlessZip.copyTo(File(temporary, headlessArtifact))
@@ -140,7 +144,7 @@ object ReleaseBundle {
         }
     }
 
-    /** Reuse accepts the same source/configuration and exact sealed files, never a relabelled directory. */
+    /** 复用只接受相同源码/配置与逐字节一致的密封文件，绝不接受重新贴标的目录。 */
     fun verify(directory: File, identity: BundleIdentity, notes: String): JsonObject {
         require(directory.isDirectory && !Files.isSymbolicLink(directory.toPath())) { "Release bundle is missing: $directory" }
         val manifestFile = File(directory, MANIFEST)
@@ -156,7 +160,7 @@ object ReleaseBundle {
             field("sourceCommit") == identity.sourceCommit && field("buildIdentity") == identity.buildIdentity) {
             "Release bundle belongs to a different version, source, protocol or deployment configuration"
         }
-        // Keep established release manifests unchanged; snapshot and private deliveries cannot claim their tag.
+        // 既有正式版 manifest 保持不变；快照与私有分发不能认领其 tag。
         require((manifest["distributionKind"]?.jsonPrimitive?.content ?: "release") == identity.distributionKind &&
             manifest["protocolContractSha256"]?.jsonPrimitive?.content == identity.protocolContractSha256 &&
             if (identity.distributionKind == "release") manifest["tag"]?.jsonPrimitive?.content == identity.version.tag
@@ -195,7 +199,7 @@ object ReleaseBundle {
         require(File(directory, "RELEASE_NOTES.md").readText() == notes &&
             field("notesSha256") == sha256(File(directory, "RELEASE_NOTES.md"))) { "Bundle notes differ from the distribution description" }
         require(File(directory, CHECKSUMS).readText() == checksumText(directory)) { "SHA256SUMS does not match the bundle" }
-        // Existing sealed format 1/2 bundles predate Headless; retries preserve those exact three assets.
+        // 既有 format 1/2 密封 bundle 早于 Headless 引入；重试时原样保留那三份制品。
         val headlessArtifact = manifest["headlessArtifact"]?.jsonPrimitive?.content
         if (format == "3") {
             require(assets(directory).size == 4) { "Incomplete release bundle" }
@@ -284,7 +288,7 @@ object ReleaseBundle {
         DesktopTarget.values().flatMap { target -> desktopInstallers(File(directory, "desktop/${target.key}")) }
             .sortedBy(File::getName)
 
-    /** Producers keep installers in a child directory; sealed bundles flatten only distributable files. */
+    /** 生产方把安装器放在子目录；密封 bundle 只平铺收录可分发文件。 */
     internal fun desktopInstallers(directory: File): List<File> =
         listOf(directory, File(directory, "installer")).flatMap { it.listFiles().orEmpty().toList() }
             .filter { it.isFile && it.name != "payload.zip" && it.extension in setOf("zip", "gz", "exe", "deb") }
@@ -301,8 +305,8 @@ object ReleaseBundle {
     private fun matchesDeploymentSnapshot(snapshot: String, deployment: DeploymentConfig): Boolean {
         val current = deployment.toCanonicalJson()
         if (snapshot == current) return true
-        // Released seals omitted iOS, and older seals also omitted Android. Only historical defaults
-        // may be omitted; preserve exact sealed bytes instead of rewriting distributed directories.
+        // 已发布的密封省略了 iOS，更早的密封还省略了 Android。只有历史默认值
+        // 才允许省略；保留密封时的原始字节，而不重写已分发的目录。
         val values = Json.parseToJsonElement(current).jsonObject.toMutableMap()
         val client = values.getValue("client").jsonObject.toMutableMap()
         if (deployment.client.iosBundleId != "${deployment.client.applicationId}.ios" || deployment.apnsPush != null) return false
@@ -322,7 +326,7 @@ object ReleaseBundle {
             regularFiles(source).forEach { file ->
                 val entry = ZipArchiveEntry(file.relativeTo(source).invariantSeparatorsPath).apply {
                     time = 0L
-                    unixMode = 0b110100100 // Static site files are not executable on the server.
+                    unixMode = 0b110100100 // 静态站点文件在服务器上不可执行。
                 }
                 zip.putArchiveEntry(entry)
                 file.inputStream().use { it.copyTo(zip) }

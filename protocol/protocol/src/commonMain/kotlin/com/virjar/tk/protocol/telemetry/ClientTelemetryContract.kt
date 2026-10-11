@@ -136,6 +136,8 @@ data class TelemetryFaultPayload(
     val origin: String? = null,
     val reasonCode: String? = null,
     val exceptionClass: String? = null,
+    /** 异常消息与 cause 链摘要（"类: 消息 ← 类: 消息"）。定位真实故障的关键字段。 */
+    val exceptionMessage: String? = null,
     val stackFrames: List<TelemetryStackFrame> = emptyList(),
     val fatal: Boolean = false,
 ) : TelemetryEventPayload
@@ -434,6 +436,9 @@ object ClientTelemetryValidation {
                 payload.origin?.let { requireName(it, "fault origin") }
                 payload.reasonCode?.let { requireName(it, "fault reasonCode") }
                 payload.exceptionClass?.let { requireName(it, "exceptionClass", allowDollar = true) }
+                payload.exceptionMessage?.let {
+                    requireDiagnosticText(it, "exceptionMessage")
+                }
                 require(payload.stackFrames.size <= ClientTelemetryLimits.MAX_STACK_FRAMES) {
                     "too many stack frames"
                 }

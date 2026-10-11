@@ -236,6 +236,9 @@ class ClientTelemetryRecorder internal constructor(
                     faultCode = "legacy.app_log",
                     origin = "app_log",
                     exceptionClass = throwable?.let(::platformExceptionClassName)?.let { stableTelemetryName(it, "Throwable") },
+                    // cause 链原始信息（类: 消息）是定位用户真实故障的关键；只记事件序列
+                    // 无法定位问题（2026-10-10 遥测复盘结论）。脱敏在服务端 ingest 完成。
+                    exceptionMessage = throwable?.let(::telemetryCauseChain),
                     stackFrames = throwable?.let { platformTelemetryStackFrames(it, ClientTelemetryLimits.MAX_STACK_FRAMES) }.orEmpty(),
                     fatal = false,
                 ),
@@ -568,6 +571,34 @@ private fun requireSafeGeneratedId(id: String) {
 
 internal expect fun platformExceptionClassName(failure: Throwable): String
 internal expect fun platformTelemetryStackFrames(failure: Throwable, limit: Int): List<TelemetryStackFrame>
+
+/** cause 链摘要："类: 消息 ← 类: 消息"（最多 3 层，超长截断到诊断消息上限）。 */
+private fun telemetryCauseChain(failure: Throwable): String {
+    val chain = generateSequence(failure as Throwable?) { it.cause as? Throwable }
+        .take(3)
+        .map { t -> "${t::class.simpleName}: ${t.message ?: "(无消息)"}" }
+        .joinToString(" ← ")
+    return redactCredentialMarkers(chain).take(ClientTelemetryLimits.MAX_MESSAGE_CHARS)
+}
+
+/**
+ * 凭据标记（password/token/authorization/bearer 及其值）在录制端即被整体替换为
+ * 占位符：录制校验（requireDiagnosticText）对这类标记是"含即拒收"，而事件丢失
+ * 比脱敏后保留更伤定位能力。不含标记的异常文本原样保留。
+ */
+private fun redactCredentialMarkers(text: String): String =
+    CREDENTIAL_MARKER_BARE.replace(
+        CREDENTIAL_MARKER_WITH_VALUE.replace(text) { "<redacted>" },
+        "<redacted>",
+    )
+
+private val CREDENTIAL_MARKER_WITH_VALUE = Regex(
+    "(?i)(password\\s*[=:]\\s*|token\\s*[=:]\\s*|authorization\\s*:\\s*|bearer\\s+)\\S*",
+)
+
+private val CREDENTIAL_MARKER_BARE = Regex(
+    "(?i)password\\s*[=:]|token\\s*[=:]|authorization\\s*:|bearer\\s+",
+)
 
 
 /** 持久化崩溃文本的结构化解析：线程、异常类、首行摘要与主异常栈帧。 */
