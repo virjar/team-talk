@@ -3,7 +3,7 @@ package com.virjar.tk.protocol.model
 import com.virjar.tk.protocol.*
 import kotlinx.serialization.Serializable
 
-/** applied/operationRevision are stable receipt facts; current may be newer on an exact retry. */
+/** applied/operationRevision 是稳定的回执事实；精确重试时 current 可能更新。 */
 @SinceProtocol(2)
 @Serializable
 data class ChatDraftMutationResult(val applied: Boolean, val operationRevision: Long, val current: ChatDraftSnapshot) : IProto {

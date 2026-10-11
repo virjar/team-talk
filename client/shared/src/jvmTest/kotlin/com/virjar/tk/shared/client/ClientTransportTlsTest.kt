@@ -514,7 +514,7 @@ class ClientTransportTlsTest {
         ) as SSLServerSocket
     }
 
-    /** Netty's SelfSignedCertificate lacks SAN; use the JDK tool for the real IP identity case. */
+    /** Netty 的 SelfSignedCertificate 缺少 SAN；真实 IP 身份场景改用 JDK 工具。 */
     private fun ipCertificateKeyStore(): KeyStore {
         val directory = Files.createTempDirectory("teamtalk-ip-tls-test").toFile()
         try {

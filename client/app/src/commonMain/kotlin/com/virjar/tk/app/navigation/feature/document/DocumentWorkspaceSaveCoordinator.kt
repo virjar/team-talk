@@ -382,11 +382,11 @@ internal class DocumentWorkspaceSaveCoordinator(
                     if (merge != null) {
                         val published = publishSaveMerge(merge, createCommand)
                         if (published && createCommand != null) {
-                            // The original parent request has completed durably and its current
-                            // projection is published. Resume only admitted commands that depended
-                            // on it, including descendants through an existing remote parent.
-                            // Receipt-only completion deliberately leaves children for a later
-                            // refresh or explicit save, whose original request the server validates.
+                            // 原始的父请求已经持久完成，其当前投影也已发布。
+                            // 只恢复依赖它的已准入命令，
+                            // 包括经由既有远端父文档的子孙创建。
+                            // 仅有回执的完成刻意把子命令留给之后的刷新或显式保存，
+                            // 其原始请求由服务端校验。
                             replayPendingCreates(workspace.spaces.filter { it.spaceId == saved.spaceId },
                                 completedAncestorId = saved.documentId)
                         } else if (!published && createCommand != null) {

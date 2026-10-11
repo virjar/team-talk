@@ -19,7 +19,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
 import java.util.UUID
 
-/** Creator/assignee own mutations. Only explicitly shared group tasks grant current members read access. */
+/** 变更权限归创建人/执行人。只有显式共享的群任务才授予当前成员读取权限。 */
 class TaskService(
     private val repository: TaskRepository,
     private val unitOfWork: PgUnitOfWork,
@@ -67,7 +67,7 @@ class TaskService(
                 if (receipt.fingerprint != fingerprint || receipt.taskId != command.taskId) {
                     throw ReliableCommandConflictException("任务操作标识已用于不同请求")
                 }
-                // A committed ACK stays valid after reassignment; never return the old private body.
+                // 已提交的 ACK 在重新指派后依然有效；绝不返回旧的私有内容。
                 return@write TaskCommandResult(repository.find(transaction, command.taskId)?.takeIf { it.readableBy(uid) })
             }
             repository.requireReceiptCapacity(transaction, uid, clock())
@@ -99,7 +99,7 @@ class TaskService(
                     val current = readable(uid, before)
                     requireRevision(current, command.expectedRevision)
                     val status = requireNotNull(command.status)
-                    // The assignee cannot undo the creator's cancellation decision.
+                    // 执行人不能撤销创建人的取消决定。
                     if ((status == TaskPolicy.CANCELLED || current.status == TaskPolicy.CANCELLED) && uid != current.creatorUid) {
                         throw TaskAccessDeniedException()
                     }
@@ -162,8 +162,8 @@ class TaskService(
 
     suspend fun modify(uid: String, command: TaskDetailsCommand): TaskDetailsCommandResult {
         val fingerprint = reliableCommandFingerprint("task-details-v1", uid, Json.encodeToString(command))
-        // Committed acknowledgements are resolved before re-reading newly referenced documents.
-        // Their permission may have changed since the first attempt.
+        // 先解析已提交的确认，再重新读取新引用的文档。
+        // 自首次尝试以来，这些文档的权限可能已发生变化。
         val replay = unitOfWork.write {
             if (uid !in repository.lockUsers(transaction, setOf(uid))) throw TaskAccessDeniedException()
             ReliableCommandPolicy.requireActiveIssuedAt(command.issuedAt, clock(), "任务操作")
@@ -238,8 +238,8 @@ class TaskService(
             if (command.kind == TaskDetailsCommand.DEFER) {
                 extension = extension.copy(metrics = extension.metrics.copy(deferralCount = Math.addExact(extension.metrics.deferralCount, 1), lastDeferredAt = now))
             }
-            // Match the existing document/file binding boundary: once bound, an aborted write cannot
-            // turn a published path back into an uploader-owned staging object.
+            // 与既有的文档/文件绑定边界保持一致：一旦绑定，中止的写入不能
+            // 把已发布的路径重新变回上传者所有的暂存对象。
             if (paths.isNotEmpty()) requireNotNull(attachments).markBusinessBound(paths)
             recordChange(this, uid, before, after, extension, if (before == null) TaskAudit.CREATED else TaskAudit.EDITED)
             if (command.kind == TaskDetailsCommand.DEFER) repository.appendDeferral(transaction,
@@ -279,7 +279,7 @@ class TaskService(
         after.info
     }
 
-    /** The anchor lock and atomic next-date advance create at most one latest missed occurrence. */
+    /** 锚点锁与原子推进的下一期日期，最多只会创建一个最新的漏过期次。 */
     suspend fun generateRecurring(limit: Int = 100): Int {
         require(limit in 1..100)
         val candidates = unitOfWork.read { repository.seriesCandidates(transaction, clock(), limit) }
@@ -338,7 +338,7 @@ class TaskService(
         repository.attachmentTasks(transaction, path).any { id -> repository.find(transaction, id)?.let { canRead(transaction, uid, it) } == true }
     }
 
-    /** A restart needs no volatile timer state. The task lock orders completion/reassignment against delivery. */
+    /** 重启不依赖易失的定时器状态。任务锁为完成/重新指派与投递之间定序。 */
     suspend fun remindDue(limit: Int = 100): Int {
         require(limit in 1..100)
         val candidates = unitOfWork.read { repository.dueCandidates(transaction, clock(), limit) }
@@ -453,7 +453,7 @@ class TaskService(
     }
 }
 
-/** Cursors carry only immutable ordering coordinates; every page still applies current participants. */
+/** 游标只携带不可变的排序坐标；每一页仍会应用当前参与者过滤。 */
 private object TaskCursor {
     fun list(uid: String, view: Int, task: WorkTask) = "t1:$uid:$view:${task.createdAt}:${task.taskId}"
     fun list(uid: String, view: Int, cursor: String?): TaskPageAnchor? {

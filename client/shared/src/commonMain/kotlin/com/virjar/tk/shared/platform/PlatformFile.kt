@@ -1,6 +1,6 @@
 package com.virjar.tk.shared.platform
 
-/** Platform path. JVM aliases java.io.File so existing platform callers keep their source API. */
+/** 平台路径。JVM 将其别名为 java.io.File，让既有平台调用方保持源码 API 不变。 */
 expect class PlatformFile {
     constructor(pathname: String)
     constructor(parent: PlatformFile?, child: String)

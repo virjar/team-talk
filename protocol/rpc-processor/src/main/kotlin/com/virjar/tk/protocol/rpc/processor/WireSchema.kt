@@ -155,7 +155,7 @@ internal class WireSchemaGenerator(
             }
         }
         entries.groupBy { it.identity }.filterValues { it.size > 1 }.forEach { (key, _) -> logger.error("Duplicate wire identity: $key") }
-        // A source set emptied by retirement must still be checked against its committed tombstones.
+        // 因退役而被清空的源码集仍须对照已提交的墓碑校验。
         if (entries.isEmpty() && policy.baseline == null) return
         val current = WireSchema(policy.major, policy.current, entries)
         val previous = policy.baseline?.takeIf(File::isFile)?.let { WireSchema.parse(it.readText()) }

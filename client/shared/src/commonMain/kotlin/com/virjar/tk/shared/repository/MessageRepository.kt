@@ -31,7 +31,7 @@ class MessageRepository internal constructor(
     private val rpc = MessageRpcProxy(rpcClient)
     private val readMirrorLocks = Array(READ_MIRROR_LOCK_STRIPES) { Mutex() }
 
-    /** Reads an exact reference without changing the resident history window or its paging lease. */
+    /** 读取精确引用，不改变常驻历史窗口或其分页租约。 */
     suspend fun getMessage(chatId: String, serverSeq: Long): Outcome<Message?> = outcome {
         require(chatId.isNotBlank() && serverSeq > 0L) { "Message reference requires a chat and confirmed sequence" }
         val page = rpc.getHistory(chatId, serverSeq, 1)

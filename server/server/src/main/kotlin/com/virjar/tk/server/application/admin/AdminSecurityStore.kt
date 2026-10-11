@@ -2,7 +2,7 @@ package com.virjar.tk.server.application.admin
 
 import kotlinx.serialization.Serializable
 
-/** Blocking persistence port, called on the HTTP/startup blocking boundary. Never stores bearer tokens. */
+/** 阻塞式持久化端口，在 HTTP/启动的阻塞边界上调用。绝不存储 bearer token。 */
 interface AdminSecurityStore {
     fun credential(): AdminCredential?
     fun saveCredential(credential: AdminCredential, action: String, now: Long)
@@ -31,7 +31,7 @@ data class AdminAuditRecord(
     val failureReason: AdminAuditFailureReason?,
 )
 
-/** Stable categories only: exception messages and submitted credentials never enter the audit record. */
+/** 仅保留稳定分类：异常消息与提交的凭据绝不进入审计记录。 */
 @Serializable
 enum class AdminAuditFailureReason {
     INVALID_CREDENTIALS, RATE_LIMITED, UNAUTHENTICATED, FORBIDDEN, INVALID_REQUEST,

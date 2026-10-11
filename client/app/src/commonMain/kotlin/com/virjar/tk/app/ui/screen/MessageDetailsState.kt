@@ -8,7 +8,7 @@ import com.virjar.tk.protocol.model.Message
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 
-/** The page's open lifetime is independent of a bounded chat window or an unavailable local row. */
+/** 页面的打开生命周期独立于有界的聊天窗口或不可用的本地行。 */
 class MessageDetailsState internal constructor(restoredClientMsgId: String = "") {
     internal class Selection(val clientMsgId: String, initial: Message?) {
         var message by mutableStateOf(initial)
@@ -29,8 +29,8 @@ class MessageDetailsState internal constructor(restoredClientMsgId: String = "")
 
     internal suspend fun collect(selected: Selection, projection: Flow<Message?>) {
         projection.collect { message ->
-            // A cancelled read can finish after close/reopen, including another opening of the
-            // same clientMsgId. Only this exact page opening may replace its snapshot.
+            // 被取消的读取可能在关闭/重开之后才完成，包括同一 clientMsgId 的再一次
+            // 打开。只有这次确切的页面打开才能替换其快照。
             if (selection === selected) {
                 selected.message = message
                 selected.loading = false
@@ -39,7 +39,7 @@ class MessageDetailsState internal constructor(restoredClientMsgId: String = "")
     }
 
     internal companion object {
-        // Large message bodies never enter Android's saved-state bundle.
+        // 大消息正文绝不进入 Android 的 saved-state bundle。
         val StateSaver = Saver<MessageDetailsState, String>(
             save = { it.selection?.clientMsgId.orEmpty() },
             restore = { MessageDetailsState(it) },
@@ -47,7 +47,7 @@ class MessageDetailsState internal constructor(restoredClientMsgId: String = "")
     }
 }
 
-/** Uses the existing ViewModel/local-data boundary; no message observer survives this composition. */
+/** 使用既有的 ViewModel/local-data 边界；没有消息观察者会在该组合结束后存活。 */
 @Composable
 fun rememberMessageDetails(viewModel: ChatViewModel): MessageDetailsState {
     val state = rememberSaveable(viewModel, saver = MessageDetailsState.StateSaver) { MessageDetailsState() }

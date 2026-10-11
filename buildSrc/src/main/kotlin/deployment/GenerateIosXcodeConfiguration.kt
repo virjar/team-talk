@@ -25,7 +25,7 @@ import javax.imageio.ImageIO
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
 
-/** Generates public Xcode inputs independently of Kotlin/Native or an installed Apple toolchain. */
+/** 独立于 Kotlin/Native 或已安装的 Apple 工具链生成公开的 Xcode 输入。 */
 abstract class GenerateIosXcodeConfiguration : DefaultTask() {
     @get:Input abstract val bundleId: Property<String>
     @get:Input abstract val displayName: Property<String>
@@ -37,7 +37,7 @@ abstract class GenerateIosXcodeConfiguration : DefaultTask() {
     @get:InputFile @get:PathSensitive(PathSensitivity.NONE)
     abstract val iconSource: RegularFileProperty
     @get:Internal abstract val outputDirectory: DirectoryProperty
-    // Other plugins also generate sources below build/generated; own only these Xcode artifacts.
+    // 其他插件也会在 build/generated 下生成源码；只把这几个 Xcode 产物声明为本任务的输出。
     @get:OutputFile val configurationFile get() = outputDirectory.file("TeamTalkDeployment.xcconfig")
     @get:OutputFile val infoPlistFile get() = outputDirectory.file("TeamTalk-Info.plist")
     @get:OutputDirectory val assetsDirectory get() = outputDirectory.dir("Assets.xcassets")
@@ -59,7 +59,7 @@ internal fun writeIosXcodeConfiguration(
     buildNumber: Int,
 ) {
     val serverUri = URI(serverUrl)
-    // xcconfig has line-oriented syntax. Put arbitrary display text in a generated plist instead.
+    // xcconfig 是按行解析的语法；任意展示文本改放到生成的 plist 中。
     outputDirectory.resolve("TeamTalkDeployment.xcconfig").apply {
         parentFile.mkdirs()
         writeText("""
@@ -88,7 +88,7 @@ internal fun writeIosXcodeConfiguration(
     outputDirectory.resolve("TeamTalk-Info.plist").writeText(infoPlistTemplate.readText()
         .replace("__TEAMTALK_DISPLAY_NAME__", escapedDisplayName)
         .replace("<!-- __TEAMTALK_TRANSPORT_SECURITY__ -->", transportSecurity))
-    // Render the existing brand's line/circle geometry. iOS supplies the corner mask itself.
+    // 渲染现有品牌的线条/圆形几何；iOS 自行处理圆角遮罩。
     val document = DocumentBuilderFactory.newInstance().apply {
         setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
     }.newDocumentBuilder().parse(iconSource)

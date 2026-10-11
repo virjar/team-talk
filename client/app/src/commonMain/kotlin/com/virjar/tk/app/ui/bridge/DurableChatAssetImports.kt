@@ -18,7 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.launch
 
-/** Projects account-owned upload commands into the existing editor import events on Main. */
+/** 在 Main 上把账号所有的上传命令投影进既有的编辑器导入事件。 */
 internal class DurableChatAssetImports(
     private val drafts: LocalChatDrafts,
     private val uploads: LocalChatAssetUploads,
@@ -27,8 +27,8 @@ internal class DurableChatAssetImports(
     private val localData: UiLocalDataBoundary,
     private val reportFailure: (Throwable, String) -> Unit,
 ) : ChatAssetImportDelegate {
-    // These imports receive their initial placement from the live platform picker. A cold process
-    // has no such delivery and can recover a command persisted just before its editor frame.
+    // 这些导入的初始 placement 来自实时的平台选择器。冷进程没有这样的投递，
+    // 只能恢复在其编辑器帧之前刚好持久化的命令。
     private data class LiveImport(val chatId: String, val preparing: Boolean)
     private val liveImportLock = PlatformLock()
     private val liveImports = mutableMapOf<String, LiveImport>()
@@ -59,8 +59,8 @@ internal class DurableChatAssetImports(
                         if (previous == upload) continue
                         val placement = upload.placement()
                         if (previous == null && upload.assetId !in references && !synchronized(liveImportLock) { liveImports.containsKey(upload.assetId) }) {
-                            // A rapid rebind may precede persistence of the recovered placement. Track
-                            // that delivery just like a live picker so a second binding cannot duplicate it.
+                            // 快速重新绑定可能先于恢复 placement 的持久化发生。像实时
+                            // 选择器一样追踪那次投递，使第二次绑定无法重复投递。
                             synchronized(liveImportLock) { liveImports[upload.assetId] = LiveImport(id, preparing = false) }
                             sink.publish(EmbeddedAssetImportEvent.StateChanged(
                                 PendingAssetJob(upload.assetId, upload.assetId), placement,

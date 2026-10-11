@@ -46,16 +46,16 @@ repositories {
 }
 
 dependencies {
-    // Gradle 8's kotlin-dsl uses its embedded Kotlin compiler, independently of the product catalog.
-    // Keep a compatible JSON runtime here; product modules use the newer serialization release.
+    // Gradle 8 的 kotlin-dsl 使用其内嵌 Kotlin 编译器，与产品依赖目录相互独立。
+    // 这里保留一个兼容的 JSON 运行时；产品模块使用更新的 serialization 版本。
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("org.apache.commons:commons-compress:1.28.0")
-    // Read references without changing bytecode when selecting Desktop's Material icon subset.
+    // 选取 Desktop 的 Material 图标子集时只读引用、不改动字节码。
     implementation("org.ow2.asm:asm-commons:9.8")
     implementation("org.apache.sshd:sshd-sftp:2.19.0")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.85")
     implementation("org.bouncycastle:bcprov-jdk18on:1.85.2")
-    // Match the Android Gradle plugin: verify the actual signed APK before sealing a release.
+    // 与 Android Gradle 插件保持一致：封版前校验实际签名后的 APK。
     implementation("com.android.tools.build:apksig:8.13.2")
     // launch4j：把 bootstrap jar 包裹成 Windows GUI exe（core + 按宿主 OS 的 workdir 分类器，
     // 均来自 Maven Central；mac 产物为 x64 二进制，Apple Silicon 经 Rosetta 运行）。
@@ -71,7 +71,7 @@ dependencies {
     testImplementation("org.tukaani:xz:1.10")
 }
 
-// Gradle ProjectBuilder exercises the real packaging tasks in isolated temporary directories.
+// Gradle ProjectBuilder 在隔离的临时目录中执行真实的打包任务。
 tasks.test {
     jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
     testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL

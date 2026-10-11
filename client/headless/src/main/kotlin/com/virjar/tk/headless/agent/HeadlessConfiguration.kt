@@ -30,7 +30,7 @@ internal data class AgentLaunchSettings(
     val deployment: DeploymentIdentity get() = DeploymentIdentity.from(host, port, serverUrl)
 }
 
-/** Endpoint configuration is independent of refresh credentials and survives ordinary bundle upgrades. */
+/** 端点配置独立于 refresh 凭据，并在常规 bundle 升级后继续有效。 */
 internal object HeadlessConfiguration {
     private const val FILE_NAME = "agent-settings.json"
     private const val MAX_BYTES = 128L * 1024
@@ -135,7 +135,7 @@ internal object HeadlessConfiguration {
             put("configuration", "not-configured")
             put("authentication", "not-configured")
         } else {
-            AgentDataDirectoryPolicy.openRuntime(dataDir) // Existing directories are validated, never repaired.
+            AgentDataDirectoryPolicy.openRuntime(dataDir) // 已存在的目录只校验，绝不修复。
             val settings = load(dataDir)
             put("configuration", if (settings == null) "runtime-options" else "saved")
             settings?.let {

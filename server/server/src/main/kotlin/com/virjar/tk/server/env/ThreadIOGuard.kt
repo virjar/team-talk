@@ -1,12 +1,12 @@
 package com.virjar.tk.server.env
 
 /**
- * Fail-fast guard for threads that must never perform blocking IO.
+ * 面向绝不允许执行阻塞 IO 的线程的 fail-fast 守卫。
  *
- * Protection is opt-in and thread-confined. A nesting depth supports independently owned wrappers;
- * the final matching [unprotectCurrentThread] removes the ThreadLocal entry so pooled threads do
- * not retain guard state after their owner exits. Ordinary IO workers, registry loopers, trace
- * workers and other explicitly blocking owners remain allowed unless their lifecycle protects them.
+ * 保护需显式开启且线程封闭。嵌套深度支持独立持有的包装者；
+ * 最后一个匹配的 [unprotectCurrentThread] 移除 ThreadLocal 条目，使池化线程
+ * 在其持有者退出后不残留守卫状态。普通 IO 工作线程、registry 循环线程、trace
+ * 工作线程及其他显式阻塞的持有者仍然放行，除非其生命周期自行开启保护。
  */
 object ThreadIOGuard {
     private val protectionDepth = ThreadLocal<Int>()
@@ -29,8 +29,8 @@ object ThreadIOGuard {
     }
 
     /**
-     * Called at the lowest common boundary of a blocking resource. An accidental call on a
-     * protected transport EventLoop fails before borrowing a connection or starting the IO.
+     * 在阻塞资源的最低公共边界调用。受保护传输 EventLoop 上的误调用
+     * 会在借用连接或开始 IO 之前就失败。
      */
     fun check(operation: String = "blocking IO") {
         if ((protectionDepth.get() ?: 0) > 0) {

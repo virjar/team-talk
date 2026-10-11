@@ -175,9 +175,9 @@ interface OptimisticMessageEditLease
  */
 interface LocalCache : LocalDocumentProjection {
     /**
-     * Compact the current factory-owned SQLite database without replacing this cache or its facts.
-     * Blocking IO: all other cache operations and close wait until maintenance finishes. In-memory
-     * implementations need not support physical storage maintenance.
+     * 压缩当前由工厂持有的 SQLite 数据库，而不替换本缓存或其事实。阻塞 IO：
+     * 其余全部缓存操作与 close 会等待维护结束。纯内存实现不需要支持物理
+     * 存储维护。
      */
     fun compactStorage(): LocalCacheStorageCompactionReport =
         throw LocalCacheStorageCompactionException(LocalCacheStorageCompactionFailure.UNSUPPORTED_STORAGE)
@@ -650,7 +650,7 @@ interface LocalCache : LocalDocumentProjection {
         authoritativeMessageHeads: Map<String, Long> = emptyMap(),
     ): Boolean
 
-    /** Legacy reads that lack same-chat evidence. Fetch message heads within the same snapshot lease. */
+    /** 缺少同 chat 证据的遗留读取；在同一快照租约内拉取消息头。 */
     fun conversationReadValidationCandidates(conversations: List<Conversation>): List<String> = emptyList()
 
     /**
@@ -802,9 +802,9 @@ interface MessagePager {
     fun loadMore(pageSize: Int = DEFAULT_PAGE_SIZE): MessagePageLoadResult
 
     /**
-     * Rebuild this resident window from the newest bounded local snapshot and invalidate its old
-     * server history chain. Online callers then establish authority with getHistory(fromSeq = 0).
-     * This synchronous operation publishes [messages]; it does not create another pager lease.
+     * 从最新的有界本地快照重建该常驻窗口，并使其旧的服务器历史链失效。在线
+     * 调用方随后用 getHistory(fromSeq = 0) 建立权威。该同步操作会发布
+     * [messages]；不会创建另一个 pager 租约。
      */
     fun reloadLatest()
 

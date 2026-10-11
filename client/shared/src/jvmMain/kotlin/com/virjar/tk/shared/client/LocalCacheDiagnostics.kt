@@ -45,9 +45,9 @@ data class LocalCacheDiagnosticReport(
 )
 
 /**
- * Offline diagnostics of an installation or an exported Android app-data directory. No cache factory,
- * migration, credentials reader or application session is opened. SQLite only sees a private temporary
- * copy; WAL is included. Source changes during capture invalidate every aggregate from that capture.
+ * 对一个安装目录或导出的 Android app-data 目录做离线诊断。不打开任何缓存工厂、
+ * 迁移、凭据读取器或应用会话。SQLite 只接触一份私有临时副本；WAL 一并包含。
+ * 采集期间源发生变化会使该次采集的全部聚合失效。
  */
 object LocalCacheDiagnostics {
     const val MAX_DATABASES = 128
@@ -125,7 +125,7 @@ object LocalCacheDiagnostics {
                     }
                 }
             }
-            // Older flat files are inventory only: their namespace cannot be inferred safely.
+            // 更旧的平铺文件只做清点：其命名空间无法被安全推断。
             children(root).forEach { entry ->
                 val base = removeSidecar(entry.fileName.toString())
                 if (base.matches(Regex("cache_e[0-9]+(?:_[\\p{L}\\p{N}_-]+)?\\.db"))) add(root.resolve(base), null, false)

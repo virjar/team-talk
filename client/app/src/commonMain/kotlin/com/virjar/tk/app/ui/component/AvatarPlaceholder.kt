@@ -128,5 +128,5 @@ private fun isCjkCodePoint(cp: Int): Boolean =
         cp in 0x3400..0x4DBF ||  // CJK 扩展 A
         cp in 0x3000..0x303F     // CJK 符号和标点（含「」等）
 
-/** Character classification for complete Unicode scalars, including supplementary CJK. */
+/** 面向完整 Unicode 标量值的字符分类，包括增补平面 CJK。 */
 internal expect fun isDisplayLetterOrDigit(codePoint: Int): Boolean

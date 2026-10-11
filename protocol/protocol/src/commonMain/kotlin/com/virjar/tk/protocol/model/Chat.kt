@@ -8,7 +8,7 @@ import com.virjar.tk.protocol.PacketBuffer
 @Serializable
 data class Chat(
     val chatId: String,
-    val chatType: Int,       // 1=personal, 2=group
+    val chatType: Int,       // 1=单聊，2=群聊
     val name: String? = null,
     val avatar: String? = null,
     val creator: String? = null,

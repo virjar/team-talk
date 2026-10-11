@@ -44,7 +44,7 @@ fun interface GroupAvatarReferences {
     fun getCurrentAvatarChatId(path: String): String? = null
 }
 
-/** Unsent ready assets belong to one account, never all members of the draft's chat. */
+/** 未发送的成品附件属于单个账号，绝不属于草稿会话的全部成员。 */
 interface ChatDraftAttachmentReferences {
     fun getReferencedPaths(paths: Set<String>): Set<String>
     fun canRead(uid: String, path: String): Boolean

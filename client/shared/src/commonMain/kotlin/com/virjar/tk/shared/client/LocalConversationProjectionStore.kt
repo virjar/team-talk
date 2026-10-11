@@ -291,8 +291,8 @@ internal class LocalConversationProjectionStore(
         synchronized(stateLock) {
             val confirmedSeq = maxOf(conversationsById[chatId]?.lastSeq ?: 0L,
                 pendingReadsByChatId[chatId]?.validatedReadSeq ?: 0L)
-            // Do not substitute another chat's cursor, or turn an invalid request into "read all".
-            // Reading history before the conversation event arrives is still a valid offline read.
+            // 不要用别的 chat 的游标顶替，也不要把一次非法请求变成「全部已读」。
+            // 在 conversation 事件到达之前读历史，仍是一次有效的离线读取。
             require(readSeq <= confirmedSeq || readSeq <= latestConfirmedMessageSeqLocked(chatId)) {
                 "readSeq exceeds confirmed messages for chat $chatId"
             }
@@ -563,7 +563,7 @@ internal class LocalConversationProjectionStore(
         snapshotFence.markMutation()
     }
 
-    /** Positive local proof only: missing projection rows never disprove a read. */
+    /** 只认正向的本地证据：投影行缺失绝不能推翻一次读取。 */
     private fun confirmedReadEvidenceLocked(remote: Conversation): Long {
         val local = conversationsById[remote.chatId]
         val pending = pendingReadsByChatId[remote.chatId]
@@ -589,7 +589,7 @@ internal class LocalConversationProjectionStore(
     fun lastKnownConversationHeadLocked(chatId: String): Long =
         conversationsById[chatId]?.lastSeq ?: 0L
 
-    /** Part of the caller's transaction; publish the replacement only after all SQL succeeds. */
+    /** 属于调用方事务的一部分；只在全部 SQL 成功后才发布替换结果。 */
     private fun persistReadPlanLocked(chatId: String, read: LocalConversationRead?) {
         val current = pendingReadsByChatId[chatId]
         if (read == current) return

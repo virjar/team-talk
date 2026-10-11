@@ -23,11 +23,11 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Test
 
 /**
- * Explicit real-client connection baseline for the deployed development server.
+ * 面向已部署开发服务器的真实客户端连接基线。
  *
- * Account creation happens before the measured ramp. The ramp, hold, and reconnect phases then
- * exercise ordinary SDK sessions only. Offline simulation closes the selected clients' transports;
- * it never changes host networking or any process-wide network setting.
+ * 账号创建发生在被测爬坡之前，之后的爬坡、保持与重连阶段
+ * 只使用普通 SDK 会话。离线模拟仅关闭所选客户端的传输层，
+ * 绝不修改宿主机网络或任何进程级网络设置。
  */
 class RemoteConnectionCapacityBaselineTest {
     @Test
@@ -39,8 +39,8 @@ class RemoteConnectionCapacityBaselineTest {
         val runId = UUID.randomUUID().toString().replace("-", "").take(12)
 
         val credentials = prepareAccounts(config, runId)
-        // Session destruction is asynchronous on each client's EventLoop. Give the fixture phase
-        // a short, fixed drain before measuring the server-side connection baseline.
+        // 会话销毁在各客户端的 EventLoop 上异步执行。在测量服务端连接基线之前，
+        // 给夹具阶段留出一段短暂固定的排空时间。
         delay(FIXTURE_SETTLE_MILLIS)
         resourceSnapshots += sampler.sample("baseline", Instant.now().toString())
 
@@ -101,10 +101,10 @@ class RemoteConnectionCapacityBaselineTest {
     ): List<Credential> {
         val credentials = mutableListOf<Credential>()
         repeat(config.clientCount) { index ->
-            // Registration is fixture preparation, not the measured connection ramp. Keep it
-            // serial so a small deployment's BCrypt/IO concurrency ceiling cannot manufacture a
-            // capacity failure before the baseline starts; the shared pacer still respects the
-            // production registration source window.
+            // 注册属于夹具准备，不是被测的连接爬坡。
+            // 保持串行，使小型部署的 BCrypt/IO 并发上限
+            // 无法在基线开始前制造出容量失败；
+            // 共享配速器依然遵守生产注册的源窗口。
             val session = RemoteAcceptanceSupport.registerUser(
                 suffix = "conn-cap-$index",
                 password = CAPACITY_FIXTURE_PASSWORD,
@@ -151,9 +151,9 @@ class RemoteConnectionCapacityBaselineTest {
                 }
             }
             if ((groupIndex + 1) * config.rampGroupSize < credentials.size) {
-                // The server window starts when its first AUTH arrives, not when this test starts
-                // creating sockets. A full post-group interval keeps actual AUTH groups separated
-                // even when connection establishment inside a group is slow.
+                // 服务端窗口从收到第一个 AUTH 开始计时，而不是本测试开始创建 socket 时。
+                // 组后的完整间隔能保证实际的 AUTH 组彼此分离，
+                // 即使组内建连较慢也不受影响。
                 delay(config.rampIntervalMs)
             }
         }
@@ -285,17 +285,17 @@ class RemoteConnectionCapacityBaselineTest {
                         )
                         true
                     } catch (_: TimeoutCancellationException) {
-                        // Session.awaitAuthenticationAfter owns the timeout. An outer
-                        // withTimeoutOrNull cannot consume that nested timeout identity and would
-                        // abort the whole test instead of recording an unrecovered target.
+                        // 超时由 Session.awaitAuthenticationAfter 自己持有。外层
+                        // withTimeoutOrNull 无法消费该嵌套超时的身份，只会中止整个测试，
+                        // 而不是记录一个未恢复的目标。
                         false
                     }
                     if (recovered) System.nanoTime() - reconnectStarted else null
                 }
             }.awaitAll().filterNotNull()
         } finally {
-            // Idempotent and scoped to these logical clients; also releases a paused target when a
-            // disconnect observation or later assertion fails.
+            // 该操作幂等且仅作用于这些逻辑客户端；当断开观察或后续断言失败时，
+            // 也会释放处于暂停状态的目标。
             targets.forEach { session -> session.imClient.resumeReconnectAfterSimulatedDrop() }
             controlMonitor.cancelAndJoin()
         }

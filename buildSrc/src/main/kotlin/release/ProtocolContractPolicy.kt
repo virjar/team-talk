@@ -3,7 +3,7 @@ package release
 import java.io.File
 import java.util.Properties
 
-/** An explicitly frozen wire contract, independent of a product installation. */
+/** 显式冻结的 wire 契约，与产品安装无关。 */
 data class ProtocolContractSnapshot(
     val protocolMajor: Int,
     val protocolMinor: Int,
@@ -11,7 +11,7 @@ data class ProtocolContractSnapshot(
     val wireBaseline: File,
 )
 
-/** Formal releases and any explicitly frozen historical contracts share the same number space. */
+/** 正式发布与任何显式冻结的历史契约共享同一编号空间。 */
 object ProtocolContractPolicy {
     private const val CONTRACTS = "protocol/protocol/contracts"
     private const val DEVELOPMENT_BASELINE = "protocol/protocol/wire-baseline.tsv"
@@ -64,7 +64,7 @@ object ProtocolContractPolicy {
         return candidate
     }
 
-    /** Explicit source edit only. Ordinary build and publication tasks never freeze a contract implicitly. */
+    /** 仅限显式源码编辑。普通构建与发布任务绝不隐式冻结契约。 */
     fun prepare(rootDir: File, major: Int, minor: Int, minimum: Int): ProtocolContractSnapshot {
         val directory = File(rootDir, "$CONTRACTS/$major.$minor")
         if (directory.exists()) return verify(rootDir, major, minor, minimum)
@@ -100,7 +100,7 @@ object ProtocolContractPolicy {
     }
 }
 
-/** One set of wire evolution rules applies to every distribution channel. */
+/** 同一套 wire 演进规则适用于所有分发渠道。 */
 internal object ProtocolContractRules {
     fun validate(snapshot: ProtocolContractSnapshot) {
         check(snapshot.protocolMajor in 0..32767 && snapshot.protocolMinor in 0..65535 &&

@@ -53,7 +53,7 @@ class DeploymentDslTest {
         assertEquals("ssh.example.com", config.deployHost)
         assertEquals(2222, config.deployPort)
         assertEquals("/srv/teamtalk", config.deployPath)
-        assertEquals(443, config.sslPort) // HTTP port is not a dormant HTTPS listener port.
+        assertEquals(443, config.sslPort) // HTTP 端口不会兼作休眠的 HTTPS 监听端口。
     }
 
     @Test

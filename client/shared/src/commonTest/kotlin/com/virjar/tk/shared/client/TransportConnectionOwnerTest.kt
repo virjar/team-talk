@@ -47,7 +47,7 @@ class TransportConnectionOwnerTest {
         owner.connect("localhost", 5101)
         backend.drain()
         val replacement = backend.channels.last()
-        old.ready() // A native completion can already have been queued when close won.
+        old.ready() // close 已经获胜时，原生完成回调可能早已入队。
         old.packet(PongSignal)
         replacement.ready()
         backend.drain()
@@ -88,7 +88,7 @@ class TransportConnectionOwnerTest {
         assertEquals(logicalOwner, owner.currentOwnerGeneration)
         assertEquals(2, backend.channels.size)
 
-        retry = false // One-shot AUTH terminal failure must stop even though the socket can reconnect.
+        retry = false // 一次性 AUTH 终态失败必须停止，即便 socket 本身还能重连。
         backend.channels.last().close()
         backend.drain()
         assertEquals(2, ended)
@@ -102,7 +102,7 @@ class TransportConnectionOwnerTest {
         val count = backend.channels.size
         owner.destroy()
         backend.drain()
-        backend.runOnLoop(queuedTimer) // Exercise a timer already dispatched before cancellation.
+        backend.runOnLoop(queuedTimer) // 演练一个在取消之前就已派发的定时器。
         assertEquals(count, backend.channels.size)
         assertEquals(ConnectionState.DISCONNECTED, owner.state.value)
         assertFalse(owner.execute { error("destroyed owner ran work") })
@@ -119,7 +119,7 @@ class TransportConnectionOwnerTest {
     )
 }
 
-/** Tests control callback order at the actual backend seam, without sockets or timing sleeps. */
+/** 在真实的 backend 接缝处测试控制回调顺序，不依赖 socket 或定时等待。 */
 private class ControlledTransportBackend : ClientTransportBackend {
     private val queue = ArrayDeque<() -> Unit>()
     val timers = ArrayDeque<() -> Unit>()

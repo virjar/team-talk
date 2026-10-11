@@ -15,7 +15,7 @@ import platform.darwin.inet_addr
 import platform.posix.*
 import kotlin.test.*
 
-/** Runs on an iOS simulator/device, with only an ephemeral 127.0.0.1 listener. */
+/** 在 iOS 模拟器/真机上运行，只使用一个临时的 127.0.0.1 监听器。 */
 class IosTcpChannelIntegrationTest {
     // 回归：真实应用在登录后事件同步帧（>4 KiB）因 AUTH_RESP 后上限未放宽被
     // validateHeader 拒绝，连接循环 ProtocolCorruptionException 断开而停在离线。
@@ -130,14 +130,14 @@ class IosTcpChannelIntegrationTest {
             port = server.port,
             certificatePem = null,
             onReady = { source ->
-                // This fixture exercises post-authentication frames, including payloads above 4 KiB.
+                // 本夹具测试认证之后的帧，包括超过 4 KiB 的 payload。
                 source.authenticated = true
                 ready.complete(Unit)
             },
             onPacket = { source, packet ->
                 delivered.incrementAndGet()
                 check(packets.trySend(packet).isSuccess)
-                // The fourth complete frame is already in the same peer write as this third one.
+                // 第四个完整帧与这第三个帧位于同一次对端写入中。
                 if ((packet as? ResponsePayload)?.requestId == 3) source.close()
             },
             onClosed = { _, failure -> closeCount.incrementAndGet(); closed.complete(failure) },
@@ -153,7 +153,7 @@ class IosTcpChannelIntegrationTest {
                 val expectedBody = ByteArray(4097) { (it % 251).toByte() }
                 val first = PacketFrames.encode(ResponsePayload(1, 0, expectedBody))
 
-                // Keep each incomplete prefix on the real socket before making the next part available.
+                // 在提供下一部分之前，让每个不完整前缀停留在真实 socket 上。
                 accepted.write(first, 0, 2)
                 assertNull(withTimeoutOrNull(30) { packets.receive() }, "A partial header cannot be a packet")
                 accepted.write(first, 2, PacketFrames.HEADER_SIZE - 2 + 13)
@@ -177,8 +177,8 @@ class IosTcpChannelIntegrationTest {
                 }
                 assertNull(closed.await(), "Closing after a complete frame must not report a transport failure")
 
-                // A post-close write may reach the old socket buffer or be rejected by the kernel.
-                // Neither it nor the already buffered fourth frame may reach the retired channel owner.
+                // close 之后的写入可能进入旧 socket 缓冲区，也可能被内核拒绝。
+                // 它与已缓冲的第四个帧都不得到达已退役的 channel owner。
                 accepted.write(PacketFrames.encode(ResponsePayload(5, 0, byteArrayOf(5))), allowDisconnected = true)
                 phase = "waiting for socket disconnection"
                 accepted.awaitDisconnect()
@@ -186,7 +186,7 @@ class IosTcpChannelIntegrationTest {
                 withContext(executor) {
                     assertFalse(channel.isActive)
                     assertFailsWith<IllegalStateException> { channel.writeAndFlush(PingSignal) }
-                    channel.close() // Idempotent even after the native cancellation callback has returned.
+                    channel.close() // 即使原生取消回调已经返回，close 也是幂等的。
                 }
                 assertEquals(3L, delivered.get())
                 assertEquals(1L, closeCount.get())

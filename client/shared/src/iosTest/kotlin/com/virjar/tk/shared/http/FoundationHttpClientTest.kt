@@ -53,7 +53,7 @@ class FoundationHttpClientTest {
                     try { entered.complete(Unit); awaitCancellation() }
                     finally { withContext(NonCancellable) { cleanupStarted.complete(Unit); releaseCleanup.await() } }
                 }
-                // The body exits, but its structured child still owns admitted work.
+                // 主体已退出，但其结构化子协程仍持有已准入的工作。
             }
         }
         withTimeout(5_000) { entered.await() }

@@ -23,7 +23,7 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import java.security.MessageDigest
 import java.util.UUID
 
-/** Mobile hints share the durable sync dispatch transaction; only the HTTP attempt happens outside it. */
+/** 移动端提示共享持久的同步分发事务；只有 HTTP 投递尝试发生在事务之外。 */
 internal class OemPushNotifications(
     private val database: Database,
     private val configuration: OemPushConfiguration,
@@ -84,7 +84,7 @@ internal class OemPushNotifications(
         }
         val configuredPackage = configuration.packageName(vendor)
         return transaction(database) {
-            // Same lock order as credential refresh/revocation. The epoch comes from authenticated RPC context.
+            // 锁顺序与凭据刷新/吊销一致。epoch 来自已认证的 RPC 上下文。
             val user = Users.selectAll().where { Users.uid eq uid }.forUpdate().singleOrNull()
                 ?: return@transaction false
             val device = Devices.selectAll().where {
@@ -117,8 +117,8 @@ internal class OemPushNotifications(
                 existing[OemPushRegistrations.deploymentFingerprint] == deploymentFingerprint
             ) {
                 if (deviceFlag == AuthRules.DEVICE_FLAG_IOS) {
-                    // APNs may reissue the same bytes after restoring validity. Keep pending work,
-                    // but an older in-flight 410 must not delete this fresh registration.
+                    // APNs 可能在恢复有效性后重发相同字节。保留待处理工作，
+                    // 但较早的在途 410 不得删除这份新注册。
                     OemPushRegistrations.update({ OemPushRegistrations.refreshTokenHash eq refreshHash }) {
                         it[generation] = UUID.randomUUID().toString()
                         it[registeredAt] = clock()
@@ -130,7 +130,7 @@ internal class OemPushNotifications(
             val registrationHash = digest(if (deviceFlag == AuthRules.DEVICE_FLAG_IOS) {
                 "$vendor:$packageName:$registrationId"
             } else registrationId)
-            // An installation changing accounts must stop targeting its previous login.
+            // 切换了账号的安装必须停止指向其上一次登录。
             OemPushRegistrations.deleteWhere {
                 (refreshTokenHash eq refreshHash) or (OemPushRegistrations.registrationHash eq registrationHash)
             }
@@ -148,7 +148,7 @@ internal class OemPushNotifications(
         }
     }
 
-    /** Called inside SyncEventDispatcher's mark-dispatched transaction, never from the TCP event loop. */
+    /** 在 SyncEventDispatcher 的标记分发事务内调用，绝不在 TCP 事件循环中调用。 */
     fun recordDispatchedEvent(uid: String, eventId: Long, notifyType: Int, payload: ByteArray) {
         if (configuration.channels.isEmpty() || notifyType != NotifyType.MESSAGE_RECV.code) return
         val message = ProtoCodec.decode(Message, payload)
@@ -174,8 +174,8 @@ internal class OemPushNotifications(
             val chats = pendingChats(row).toMutableMap()
             chats[message.chatId] = maxOf(chats[message.chatId] ?: 0, message.serverSeq)
             if (chats.size > ConversationCapacityPolicy.MAX_CONVERSATIONS_PER_USER) {
-                // Old scopes can outlive membership while the provider is unavailable. They must
-                // not consume today's conversation quota or block the durable sync dispatcher.
+                // 提供商不可用期间，旧 scope 可能比成员关系存活得更久。它们不得
+                // 消耗当前的会话配额，也不得阻塞持久的同步分发器。
                 val current = readableChatIds ?: conversations.readableConversations(uid)
                     .mapTo(mutableSetOf()) { it[Conversations.chatId] }
                     .also { readableChatIds = it }
@@ -187,7 +187,7 @@ internal class OemPushNotifications(
             }) {
                 it[pendingEventId] = eventId
                 it[OemPushRegistrations.pendingChats] = Json.encodeToString(chats)
-                // Preserve a failed provider's backoff when new messages arrive.
+                // 新消息到达时保留已失败提供商的退避。
             }
         }
     }
@@ -238,11 +238,11 @@ internal class OemPushNotifications(
         }.singleOrNull() ?: return null
         val uid = credential[Credentials.uid]
         if (row[OemPushRegistrations.packageName] != configuration.packageName(vendor)) return null
-        // Re-registration/revocation and newer queue entries may have happened after the bounded scan.
+        // 有界扫描之后可能已发生重新注册/吊销或出现更新的队列条目。
         if (!OemPushRegistrations.selectAll().where { sameAttempt(row) }.any()) return null
         val pending = pendingChats(row)
-        // One coalesced notification can point at any still-readable pending conversation. Reading
-        // the newest conversation must not erase an older unread conversation in the same batch.
+        // 一条合并通知可以指向任意仍可读的待处理会话。读取最新会话
+        // 不得抹掉同一批次中更早的未读会话。
         val chatId = conversations.readableConversations(uid).andWhere {
             (Conversations.chatId inList pending.keys.toList()) and (Conversations.isMuted eq false)
         }.orderBy(Conversations.lastMsgTimestamp, SortOrder.DESC).toList().firstOrNull { conversation ->
@@ -256,7 +256,7 @@ internal class OemPushNotifications(
         return OemPushNotification(
             vendor, row[OemPushRegistrations.registrationId], row[OemPushRegistrations.deploymentFingerprint],
             datasetId, uid, chatId,
-            // Retry of one pending event retains the OEM dedup key, including across server restarts.
+            // 同一待处理事件的重试保留 OEM 去重键，包括跨服务器重启的情况。
             digest("${row[OemPushRegistrations.generation]}:${row[OemPushRegistrations.pendingEventId]}").take(20),
             row[OemPushRegistrations.registeredAt],
         )
@@ -272,8 +272,8 @@ internal class OemPushNotifications(
         if (result.invalidRegistration) {
             OemPushRegistrations.deleteWhere { sameRegistration(row) }
         } else {
-            // Failure/backoff belongs to the registration even when more messages arrived during
-            // HTTP. Only a successful acknowledgement consumes the captured pending event set.
+            // 即使 HTTP 期间又有更多消息到达，失败/退避仍归属于该注册。
+            // 只有成功的确认才会消费已捕获的待处理事件集合。
             OemPushRegistrations.update({ if (result.accepted) sameAttempt(row) else sameRegistration(row) }) {
                 if (result.accepted) {
                     it[deliveredEventId] = row[OemPushRegistrations.pendingEventId]

@@ -78,7 +78,7 @@ internal class ChatDraftSync(cachedDraft: String?, restored: ChatComposerContext
         lastPublishedDraft = markdown
     }
 
-    /** The composer send transaction already committed the empty mirror. Do not queue another clear. */
+    /** 编辑器发送事务已经提交了空镜像。不要再排队一次清空。 */
     fun acceptCommittedClear() {
         lastPublishedDraft = ""
     }

@@ -3,7 +3,7 @@ package com.virjar.tk.protocol.model
 import com.virjar.tk.protocol.*
 import kotlinx.serialization.Serializable
 
-/** revision zero is absent; a cleared draft retains its positive revision as a tombstone. */
+/** revision 为零表示无草稿；被清除的草稿保留正数 revision 作为墓碑。 */
 @SinceProtocol(2)
 @Serializable
 data class ChatDraftSnapshot(

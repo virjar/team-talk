@@ -21,7 +21,7 @@ import com.virjar.tk.app.navigation.feature.chat.RetainedTextSlot
 import com.virjar.tk.app.navigation.feature.chat.SavedChatReplyTarget
 import com.virjar.tk.app.navigation.feature.chat.SavedChatEditingSession
 
-/** App ownership tests control the commit boundary; SDK integration tests own actual SQLite recovery. */
+/** App 所有权测试控制提交边界；真正的 SQLite 恢复由 SDK 集成测试负责。 */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ChatComposerPersistenceTest {
     @Test
@@ -73,7 +73,7 @@ class ChatComposerPersistenceTest {
         val receiving = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             store.receivePersisted(CHAT) { current }
         }
-        // localData uses a queued dispatcher; this edit happens after the read began and before it resumes.
+        // localData 使用排队调度器；这次编辑发生在读取开始之后、恢复执行之前。
         current = current.copy(markdown = "读取期间输入")
         assertNull(receiving.await())
         writer.runNext()
@@ -92,7 +92,7 @@ class ChatComposerPersistenceTest {
         val cache = FakeLocalCache()
         cache.chatDrafts.save(ChatDraftSnapshot(CHAT, revision = 1, markdown = "A的旧草稿"))
         cache.upsertConversation(Conversation(CHAT, chatType = 2, draft = "A的旧草稿"))
-        // A is viewing another page when the regular conversation projection receives B's update.
+        // 常规会话投影收到 B 的更新时，A 正停留在另一个页面。
         cache.upsertConversation(Conversation(CHAT, chatType = 2, draft = "B的新草稿"))
         val writer = ControlledWriter(cache)
         val reopened = newStore(cache, writer)
@@ -104,7 +104,7 @@ class ChatComposerPersistenceTest {
         writer.runNext()
         assertEquals("B的新草稿", cache.chatDrafts.get(CHAT)?.markdown)
 
-        // A remote clear is an explicit empty draft, not absence of a loaded conversation.
+        // 远端清空是显式的空草稿，不等于会话尚未加载。
         cache.upsertConversation(Conversation(CHAT, chatType = 2, draft = null))
         assertEquals("", newStore(cache, writer).hydrate(CHAT)?.markdown)
     }

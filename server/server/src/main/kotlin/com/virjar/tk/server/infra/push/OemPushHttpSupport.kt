@@ -48,7 +48,7 @@ internal suspend fun OemPushSender.oemPushExchange(request: HttpRequest, timeout
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Exception) {
-        // Coroutine stack-trace recovery can copy CompletionException around the HTTP future's wrapper.
+        // 协程栈恢复可能在 HTTP future 的包装外再复制多层 CompletionException。
         val cause = generateSequence<Throwable>(error) { (it as? CompletionException)?.cause }
             .take(8)
             .last()
@@ -83,7 +83,7 @@ internal fun pushRejected(reason: String) = OemPushDeliveryResult(false, reason)
 
 internal class PushResponseTooLarge : IOException("Push response exceeds limit")
 
-/** Reject before buffering an oversized response, including chunked bodies without Content-Length. */
+/** 在缓冲超大的响应之前先行拒绝，包括没有 Content-Length 的分块响应体。 */
 internal class BoundedPushResponse : HttpResponse.BodySubscriber<ByteArray> {
     private val completion = CompletableFuture<ByteArray>()
     private val bytes = ByteArrayOutputStream()
@@ -103,8 +103,8 @@ internal class BoundedPushResponse : HttpResponse.BodySubscriber<ByteArray> {
     override fun onNext(items: List<ByteBuffer>) {
         if (completion.isDone) return
         if (items.sumOf { it.remaining().toLong() } > OEM_PUSH_MAX_RESPONSE_BYTES - bytes.size()) {
-            // JDK cancellation can synchronously report a generic IOException via onError.
-            // Publish the precise local failure before terminating the subscription.
+            // JDK 取消时可能经 onError 同步报告一个泛化的 IOException。
+            // 先发布精确的本地失败，再终止订阅。
             completion.completeExceptionally(PushResponseTooLarge())
             subscription?.cancel()
             return

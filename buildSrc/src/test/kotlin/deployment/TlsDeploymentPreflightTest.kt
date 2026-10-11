@@ -128,7 +128,7 @@ class TlsDeploymentPreflightTest {
         assertFailsWith<GradleException> {
             validateLocalTlsPemFiles(root, "other-tcp-tls/certificate.pem", "other-tcp-tls/private-key.pem", certificate)
         }
-        // HTTPS material may include a chain; its first certificate must remain the configured server leaf.
+        // HTTPS 材料可能包含证书链；其第一张证书必须仍是配置的服务器 leaf 证书。
         val chain = File(root, "fullchain.pem").apply {
             writeText(config.tcpTlsCertificatePem + File(otherMaterial, "certificate.pem").readText())
         }

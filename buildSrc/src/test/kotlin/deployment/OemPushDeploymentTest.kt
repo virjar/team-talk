@@ -217,7 +217,7 @@ class OemPushDeploymentTest {
     private fun credentials(root: File, name: String, content: String = "appKey=$CLIENT_KEY\nappSecret=$SERVER_SECRET\n") =
         File(root, name).apply { writeText(content) }
 
-    // Configuration only fingerprints this input; these tests do not build an Android SDK or APK.
+    // 配置只对该输入做指纹；这些测试不构建 Android SDK 或 APK。
     private fun sdk(root: File, name: String, content: String) = File(root, name).apply { writeText(content) }
 
     private fun digest(file: File) = MessageDigest.getInstance("SHA-256").digest(file.readBytes())

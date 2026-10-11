@@ -3,7 +3,7 @@ package com.virjar.tk.shared.client
 import com.virjar.tk.protocol.IProto
 import kotlinx.coroutines.flow.StateFlow
 
-/** Serial connection owner. Every backend enforces the same owner and connection leases. */
+/** 串行连接 owner。每个后端都强制相同的 owner 与连接租约。 */
 internal interface ClientTransportOwner : MessageSendTransport {
     val ownerGenerationState: StateFlow<Long>
     val state: StateFlow<ConnectionState>

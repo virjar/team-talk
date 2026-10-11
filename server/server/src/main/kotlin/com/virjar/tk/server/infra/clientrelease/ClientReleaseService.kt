@@ -237,7 +237,7 @@ internal class ClientReleaseService(
         }
     }
 
-    /** A retained channel row records registry ownership even after its pointer is cleared. */
+    /** 保留的通道行即使在指针被清空后仍记录注册中心的归属。 */
     fun managesAndroidDownloads(): Boolean = tx {
         ClientChannels.selectAll().where { ClientChannels.clientType eq ClientUpdateContracts.CLIENT_ANDROID }.count() > 0
     }
@@ -304,7 +304,7 @@ internal class ClientReleaseService(
                     } get ClientReleases.id
                 } else {
                     if (existing[ClientReleases.uploadSha256] == uploadSha) {
-                        // Retry acknowledges the existing bytes without changing operator channel/disable decisions.
+                        // 重试确认既有字节有效，不改变运维已做的通道/停用决策。
                         return@tx existing[ClientReleases.id]
                     }
                     throw ClientReleaseConflictException("release identity already exists with different bytes")
@@ -449,7 +449,7 @@ internal class ClientReleaseService(
             ClientReleaseFiles.deleteWhere { ClientReleaseFiles.releaseId eq releaseId }
             ClientReleases.deleteWhere { ClientReleases.id eq releaseId }
         }
-        // Content-addressed objects are retained: deletion after a DB reference check races with import.
+        // 内容寻址对象保留不删：数据库引用检查后的删除会与并发导入竞态。
         audit.record(actor, "client_release.delete", "release=$releaseId", 200)
     }
 

@@ -10,7 +10,7 @@ data class Contact(
     val uid: String,
     val friendUid: String,
     val remark: String? = null,
-    val status: Int = 1,     // 1=normal, 2=blocked
+    val status: Int = 1,     // 1=正常，2=已拉黑
     val user: User? = null,
 ) : IProto {
 

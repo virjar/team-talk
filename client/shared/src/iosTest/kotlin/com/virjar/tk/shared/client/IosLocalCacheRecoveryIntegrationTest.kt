@@ -43,14 +43,14 @@ class IosLocalCacheRecoveryIntegrationTest {
         assertTrue(file.length() > 256)
         assertFalse(PlatformFile(file.parentFile, ".cache-recovery").exists())
         assertTrue(checkNotNull(file.parentFile?.list()).none { it.startsWith(".cache-corrupt-") })
-        // The replacement remains reopenable and owns the same account namespace.
+        // 重建后的库仍可重新打开，并拥有同一个账号命名空间。
         createIosLocalCache(deployment, dataset, "owner", root).close()
     }
 
     @Test
     fun schemaFiveMigratesWithDataIntactAndLocalHistoryFlagsSurviveReopen() = withDataDirectory { root ->
-        // Fixed 5 -> 6 fixture: 5.sqm adds only conversation_local_flag, with its two local flags.
-        // All older tables keep their current layout. Update this fixture explicitly if the schema grows.
+        // 固定的 5 -> 6 夹具：5.sqm 只新增 conversation_local_flag 表及其两个本地标记。
+        // 其余旧表保持现有布局。schema 增长时需显式更新此夹具。
         assertEquals(6L, AppDatabase.Schema.version)
         val dataset = platformRandomUuid()
         val file = databaseFile(root, dataset)
@@ -98,7 +98,7 @@ class IosLocalCacheRecoveryIntegrationTest {
             assertNull(cleared.lastMessage)
             assertEquals(1, cleared.unreadCount, "manual unread survives reopening an otherwise fully read conversation")
             assertTrue(reopened.getMessages(chatId).isEmpty())
-            // Both a late live event and a fetched history page must obey the persisted clear watermark.
+            // 迟到的实时事件与拉取的历史页都必须遵守已持久化的清空水位。
             reopened.insertMessage(original)
             val lease = reopened.beginMessageHistoryLease(chatId, resetResidentWindow = true)
             assertTrue(reopened.applyMessageHistoryPage(lease, listOf(original)))

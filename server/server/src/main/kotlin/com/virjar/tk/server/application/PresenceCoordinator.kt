@@ -41,7 +41,7 @@ class PresenceCoordinator internal constructor(
     mailboxCapacity: Int,
     private val broadcastPresence: suspend (PresenceTransition) -> Unit,
     shutdownTimeoutMillis: Long = DEFAULT_SHUTDOWN_TIMEOUT_MILLIS,
-    /** Lossless, non-blocking lifecycle observer; unlike the broadcast mailbox, this callback cannot be coalesced. */
+    /** 无损、非阻塞的生命周期观察者；与广播邮箱不同，该回调不能被合并。 */
     private val lifecycleObserver: PresenceTransitionObserver? = null,
 ) : AutoCloseable {
     constructor(
@@ -110,7 +110,7 @@ class PresenceCoordinator internal constructor(
                         } catch (failure: Exception) {
                             logger.warn("Presence lifecycle observer failed for uid={}", transition.uid, failure)
                         } finally {
-                            // Lifecycle transitions are delivered directly; UI fanout remains bounded/coalesced.
+                            // 生命周期迁移直接投递；UI 扇出仍保持有界/可合并。
                             enqueue(transition)
                         }
                     },

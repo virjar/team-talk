@@ -141,8 +141,8 @@ class OemPushIntegrationTest {
         val leftSeq = send(sender, leftGroup.chatId)
         ctx.chatService.leaveGroup(receiver.principal.uid, leftGroup.chatId)
         ctx.conversationService.deleteConversation(receiver.principal.uid, newerChat.chatId)
-        // Model an unavailable provider retaining old scopes: two actual retired conversations and
-        // the remaining historical IDs no longer present in the current readable conversation set.
+        // 模拟一个不可用 provider 仍保留旧 scope 的情形：两个真实退役的会话，
+        // 其余是已不在当前可读会话集合中的历史 ID。
         val retired = mutableMapOf(leftGroup.chatId to leftSeq, newerChat.chatId to newerSeq)
         repeat(com.virjar.tk.protocol.model.ConversationCapacityPolicy.MAX_CONVERSATIONS_PER_USER - retired.size) {
             retired[UUID.nameUUIDFromBytes("retired-push-$it".encodeToByteArray()).toString()] = 1L

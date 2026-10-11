@@ -15,7 +15,7 @@ data class ReleaseArtifactIdentity(
     val serverProtocol: ServerProtocolWindow? = null,
 )
 
-/** The target artifact's window, including staged builds produced outside this checkout. */
+/** 目标产物的协议窗口，包括在本 checkout 之外产出的暂存构建。 */
 data class ServerProtocolWindow(val major: Int, val minimumMinor: Int, val currentMinor: Int) {
     init {
         require(major in 0..32767 && minimumMinor in 0..65535 && currentMinor in minimumMinor..65535) {

@@ -127,7 +127,7 @@ internal fun importDesktopClipboardAsset(gateway: EmbeddedAssetImportGateway): B
     true
 }.getOrDefault(false)
 
-/** Swing picker/drop/clipboard adapt sources; app owns the shared import lifecycle. */
+/** Swing 的 picker/drop/clipboard 负责适配各来源；共享的导入生命周期归 app 所有。 */
 internal class DesktopEmbeddedAssetImportGateway(
     resources: DesktopSessionResources,
     transfer: DesktopFileTransfer,

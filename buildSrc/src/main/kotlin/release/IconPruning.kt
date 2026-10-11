@@ -76,14 +76,14 @@ internal fun createMaterialIconSubset(original: File, consumers: Set<File>, dest
                 }
 
                 override fun mapValue(value: Any?): Any? {
-                    // Preserve literal Class.forName references as well. Dynamically assembled icon
-                    // class names are not an API of this library; use ordinary Icons.* properties.
+                    // 同时保留字面量 Class.forName 引用。动态拼装的图标类名不属于本库 API；
+                    // 请使用普通的 Icons.* 属性。
                     if (value is String) map(value.replace('.', '/'))
                     return super.mapValue(value)
                 }
             }
-            // ClassWriter supplies visitors for method bodies, annotations, descriptors and handles.
-            // Its output is never used: original class bytes are copied unchanged below.
+            // ClassWriter 为方法体、注解、描述符与句柄提供 visitor。
+            // 其输出从不被使用：下方原样复制原始类字节。
             ClassReader(bytes).accept(ClassRemapper(ClassWriter(0), references), ClassReader.SKIP_DEBUG)
         }
 

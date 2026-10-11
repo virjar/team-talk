@@ -23,7 +23,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** Real TCP framing and production ImAgent, using only the fixture's isolated PostgreSQL schema. */
+/** 真实 TCP 组帧与生产 ImAgent，仅使用测试夹具隔离的 PostgreSQL schema。 */
 class ServerProtocolNegotiationTest {
     @Test
     fun `server negotiates the highest shared minor and rejects incompatible windows before auth`() {
@@ -36,7 +36,7 @@ class ServerProtocolNegotiationTest {
                 assertEquals(server, response.server)
                 assertEquals(ProtocolVersion(0, 3), response.negotiated)
 
-                // Credentials are accepted only after negotiation, and still use the unchanged AUTH body.
+                // 凭据只在协商之后才被接受，且仍使用未变更的 AUTH 包体。
                 peer.send(PacketType.AUTH.code, registration())
                 val authenticated = peer.receive(PacketType.AUTH_RESP.code, AuthResponsePayload)
                 assertEquals(AuthResponsePayload.CODE_OK, authenticated.code)
@@ -74,7 +74,7 @@ class ServerProtocolNegotiationTest {
                 peer.assertClosed()
             }
             Peer(environment.tcpPort).use { peer ->
-                // The third AUTH preamble byte is a fixed marker, not a compatibility version.
+                // AUTH 前导码的第三个字节是固定标记，不是兼容性版本号。
                 val malformed = ProtoCodec.encode(registration()).also { it[2] = 1 }
                 peer.send(PacketType.AUTH.code, malformed)
                 peer.assertClosed()

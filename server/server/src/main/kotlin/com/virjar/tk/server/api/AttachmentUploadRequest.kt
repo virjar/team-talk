@@ -10,7 +10,7 @@ import com.virjar.tk.server.infra.storage.STAGING_TEMP_SUFFIX
 import com.virjar.tk.server.infra.storage.UPLOAD_STAGING_TEMP_PREFIX
 import java.io.File
 
-/** One HTTP upload owns its staging, attempt and response pin until delivery finishes or fails. */
+/** 单次 HTTP 上传在投递完成或失败之前，独占其暂存文件、上传尝试与响应占位。 */
 internal class AttachmentUploadRequest(
     private val fileStore: FileStore,
     private val admission: AttachmentUploadLease,
@@ -36,21 +36,21 @@ internal class AttachmentUploadRequest(
 
     fun ownTemporaryFile(file: File) { temporaryFiles += file }
 
-    /** Retirement is part of publication: failure still leaves the attempt open for rollback. */
+    /** 退役是发布的一部分：失败时上传尝试仍保持打开以便回滚。 */
     fun retireTemporaryFiles() = retireUploadTemporaryFiles(fileStore, temporaryFiles)
 
     fun complete(encodedReceipt: String) {
         val started = checkNotNull(attempt as? BeginFileStoreUploadResult.Started) {
             "Only a started upload can publish a receipt"
         }
-        // FileStore durably completes and activates this pin atomically. Keep it through respondText.
+        // FileStore 以原子方式持久完成并激活该占位。将其保持到 respondText 结束。
         deliveryLease = started.transaction.complete(encodedReceipt).deliveryLease
     }
 
     fun recordFailure(failure: Throwable) { terminalFailure = failure }
 
     override fun close() {
-        // This request has one cleanup terminal; a later close cannot release retained admission.
+        // 本请求只有一个清理终态；之后的 close 无法释放已保留的准入。
         if (closed) return
         closed = true
         val retirementCandidates = LinkedHashSet<File>()
@@ -76,7 +76,7 @@ internal class AttachmentUploadRequest(
         }
         val deliveryClosed = clean { deliveryLease?.close() }
         val retired = clean { retireUploadTemporaryFiles(fileStore, retirementCandidates) }
-        // Unknown or unconfirmed cleanup retains this admission slot; later GC cannot release it.
+        // 未知或未确认的清理会保留该准入槽位；后续 GC 无法将其释放。
         if (attemptClosed && deliveryClosed && retired && !hasUnlocatedResidue) admission.close()
         cleanupFailure?.let { cleanup ->
             val first = terminalFailure

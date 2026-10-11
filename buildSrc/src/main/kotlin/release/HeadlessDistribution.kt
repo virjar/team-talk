@@ -11,7 +11,7 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
 import org.apache.commons.compress.archivers.zip.ZipFile as PortableZipFile
 
-/** A portable SDK distribution, independent of Desktop installation names and server configuration. */
+/** 便携 SDK 发行包，与 Desktop 安装名及服务器配置无关。 */
 object HeadlessDistribution {
     const val ARTIFACT_TYPE = "headless-distribution"
     const val CHECKSUMS = "SHA256SUMS"
@@ -27,7 +27,7 @@ object HeadlessDistribution {
         return "TeamTalk-$buildIdentity-headless.zip"
     }
 
-    /** Called after Sync has copied the current JVM jar, complete runtime classpath and license. */
+    /** 在 Sync 复制完当前 JVM jar、完整运行时 classpath 与 license 之后调用。 */
     fun seal(directory: File, version: ReleaseVersion, buildIdentity: String, channel: String = "stable") {
         require(channel in setOf("stable", "preview", "snapshot")) { "Invalid headless update channel" }
         requirePayload(directory)
@@ -61,7 +61,7 @@ object HeadlessDistribution {
         }
     }
 
-    /** Fixed timestamps and Unix modes make the same input bytes portable across packaging hosts. */
+    /** 固定时间戳与 Unix 权限位，使相同输入字节在不同打包宿主上保持一致。 */
     fun archive(directory: File, destination: File, version: ReleaseVersion, buildIdentity: String) {
         verify(directory, version, buildIdentity)
         destination.parentFile.mkdirs()
@@ -80,7 +80,7 @@ object HeadlessDistribution {
         verifyArchive(destination, version, buildIdentity)
     }
 
-    /** ReleaseBundle consumes the archive's own identity and byte inventory, never the current build directory. */
+    /** ReleaseBundle 只消费归档自身的身份与字节清单，从不读取当前构建目录。 */
     fun verifyArchive(archive: File, version: ReleaseVersion, buildIdentity: String) {
         PortableZipFile.builder().setFile(archive).get().use { zip ->
             val entries = zip.entries.asSequence().take(4097).toList()

@@ -2,7 +2,7 @@ package com.virjar.tk.protocol
 
 import com.virjar.tk.protocol.model.TaskPolicy
 
-/** A start reminder has its own marker; released WorkTask.remindedAt remains a due reminder. */
+/** 开始提醒使用独立标记；已发布的 WorkTask.remindedAt 仍只表示到期提醒。 */
 @SinceProtocol(3)
 data class TaskStartedPayload(val taskId: String, val revision: Long, val remindedAt: Long) : IProto {
     init { TaskPolicy.requireId(taskId); require(revision > 0 && remindedAt >= 0) }

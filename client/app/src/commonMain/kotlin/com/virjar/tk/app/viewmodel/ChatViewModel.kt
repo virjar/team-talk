@@ -453,10 +453,10 @@ class ChatViewModel(
         return latest
     }
 
-    /** Restore a contiguous newest window before the UI scrolls; a retained index-0 anchor is not a page. */
+    /** 在 UI 滚动之前恢复一个连续的 newest 窗口；仅保留的 index-0 锚点不算一页。 */
     fun returnToLatest(onLocalWindowReady: () -> Unit) {
         clearMessageFocus()
-        // Clearing the old route's focus effect must not cancel this new jump intent.
+        // 清除旧 route 的 focus effect 不得取消这次新的跳转意图。
         latestWindowJob?.cancel()
         latestWindowJob = scope.launch {
             pagerOwner.awaitReady()
@@ -464,8 +464,8 @@ class ChatViewModel(
             historyRequestMutex.withLock {
                 try {
                     _loading.value = true
-                    // Invalidate before crossing IO: prompt cancellation may discard the return
-                    // after the pager has already invalidated its former server history chain.
+                    // 在跨越 IO 之前先失效：即时取消可能在 pager 已使其旧服务端历史链失效之后，
+                    // 丢弃这次返回。
                     latestHistoryChainReady.value = false
                     latestHistoryPage = emptyList()
                     _remoteHasMore.value = true
@@ -475,9 +475,9 @@ class ChatViewModel(
                 } catch (_: AppError.AuthExpired) {
                     handleAuthExpired()
                 } catch (_: AppError.Network) {
-                    // The newest local snapshot is already visible; reconnect establishes authority.
+                    // 最新的本地快照已经可见；重连会建立权威。
                 } catch (_: AppError.Timeout) {
-                    // Retain that same local snapshot when the network times out.
+                    // 网络超时时保留同一份本地快照。
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
@@ -770,7 +770,7 @@ class ChatViewModel(
         if (!admitted) actionTelemetry.failSend(sending.clientMsgId)
     }
 
-    /** Completion means outbox + projection + exact draft consumption committed locally, not server ACK. */
+    /** 完成指 outbox + 投影 + 确切草稿消费已在本地提交，而不是服务端 ACK。 */
     fun sendComposerMessage(
         message: Message,
         draftRevision: Long,
@@ -821,7 +821,7 @@ class ChatViewModel(
         }
     }
 
-    /** Rebind a persisted reply outside the visible page; a server denial never falls back to cached content. */
+    /** 重新绑定可见页之外的持久化回复；服务端拒绝时绝不回退到缓存内容。 */
     suspend fun recoverComposerReply(clientMsgId: String, serverSeq: Long): Message? {
         val cached = localData.run { localCache.findMessage(chatId, clientMsgId) }
         val sequence = serverSeq.takeIf { it > 0L } ?: cached?.serverSeq ?: return null
@@ -1119,7 +1119,7 @@ class ChatViewModel(
     }
 }
 
-/** Cold projection: only an open details page reads outside the resident message window. */
+/** 冷投影：只有打开的详情页才在驻留消息窗口之外读取。 */
 internal fun messageDetailsProjection(
     chatId: String,
     clientMsgId: String,
@@ -1128,8 +1128,8 @@ internal fun messageDetailsProjection(
     localData: UiLocalDataBoundary,
     readLocal: suspend () -> Message?,
 ): Flow<Message?> = combine(window, committedEventId) { messages, _ ->
-    // Preserve optimistic edits while resident. A MESSAGE_RECV commits to SQLite before its
-    // event cursor advances, so an edit/revoke outside this bounded window still refreshes.
+    // 驻留期间保留乐观编辑。MESSAGE_RECV 在其事件游标推进之前先提交到 SQLite，
+    // 因此该有界窗口之外的编辑/撤回仍会刷新。
     messages.firstOrNull { it.chatId == chatId && it.clientMsgId == clientMsgId }
         ?: try {
             localData.run(readLocal)?.takeIf { it.chatId == chatId && it.clientMsgId == clientMsgId }

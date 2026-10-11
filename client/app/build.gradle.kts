@@ -45,8 +45,8 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            // Platform shells depend on :client:shared explicitly. Keep SDK internals off :client:app's
-            // transitive API so the module boundary remains android/desktop -> app + shared.
+            // 平台壳显式依赖 :client:shared。不让 SDK 内部实现进入 :client:app 的
+            // 传递 API，模块边界保持为 android/desktop -> app + shared。
             implementation(project(":client:shared"))
             api(libs.jetbrains.compose.runtime)
             api(libs.jetbrains.compose.foundation)

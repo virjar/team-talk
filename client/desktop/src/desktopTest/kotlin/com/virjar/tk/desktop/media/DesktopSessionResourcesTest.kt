@@ -489,8 +489,8 @@ class DesktopSessionResourcesTest {
                     credentialProvider = {
                         if (!retireDuringAuthResponse && mediaDirectory.get()?.listFiles().orEmpty()
                                 .any { it.name.endsWith(".part") }) {
-                            // First checks pass. The identity changes only after the reservation
-                            // and its temporary file exist, immediately before HTTP admission.
+                            // 前几次校验通过。身份只在预留及其临时文件
+                            // 已存在之后、紧接 HTTP 准入之前才改变。
                             credentials.set(replacement)
                         }
                         credentials.get()
@@ -516,8 +516,8 @@ class DesktopSessionResourcesTest {
                     original.close()
                 }
 
-                // A different login uses the same process-wide root budget. It must be able to
-                // reserve the entire quota, proving the failed owner's reservation was returned.
+                // 另一次登录使用同一个进程级根目录预算。它必须能够
+                // 预留全部配额，证明失败 owner 的预留已被归还。
                 val next = resources(dataDir, uid = "replacement", quotaBytes = 4L,
                     downloader = downloader { _, partial -> partial.writeText("next") })
                 try {

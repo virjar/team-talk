@@ -13,7 +13,7 @@ import kotlinx.coroutines.*
 import platform.Foundation.*
 import platform.posix.*
 
-/** Reopen a stable local file for each reliable retry; never materialize an attachment in NSData. */
+/** 每次可靠重试都重新打开一个稳定的本地文件；绝不用 NSData 物化整个附件。 */
 fun PlatformFile.asUploadSource(): UploadSource {
     val file = canonicalFile
     require(file.isFile && !file.isSymbolicLink()) { "待上传文件不存在" }
@@ -107,7 +107,7 @@ private class FoundationFileTransport : PlatformFileTransport {
                     if (headers.status !in 200..299) throw fileUploadHttpFailure(headers.status)
                 }.second
             } finally {
-                // URLSession reads from a descriptor; cancelling the task before unlinking is safe on POSIX.
+                // URLSession 从描述符读取；在 unlink 之前取消任务在 POSIX 上是安全的。
                 task?.cancel()
                 temporary.delete()
             }

@@ -203,8 +203,8 @@ class LocalCacheStorageCompactionIntegrationTest {
     @Test
     fun `integrity failure rejects without repairing or replacing the owner`() = rawCache { file, cache, driver ->
         cache.enqueueOutgoingMessage(message("corrupt-check"), 1, FINGERPRINT)
-        // The file-backed SQLDelight driver releases its connection after each nontransactional
-        // statement. Keep this fixture-only PRAGMA and mutation on one actual JDBC connection.
+        // 基于文件的 SQLDelight driver 在每条非事务语句之后都会释放连接。把这条仅限
+        // 夹具的 PRAGMA 与变更保持在同一个真实 JDBC 连接上执行。
         connection(file).use { db ->
             db.createStatement().use { sql ->
                 sql.execute("PRAGMA ignore_check_constraints=ON")
@@ -354,7 +354,7 @@ class LocalCacheStorageCompactionIntegrationTest {
         finally { root.deleteRecursively() }
     }
 
-    /** Only blocks a real SQL operation; all storage, transactions and cursor behavior stay real. */
+    /** 只阻塞真实的 SQL 操作；全部存储、事务与游标行为都保持真实。 */
     private class ObservedDriver(private val delegate: SqlDriver) : SqlDriver by delegate {
         val blockNextUserRead = AtomicBoolean(false)
         val userReadEntered = CountDownLatch(1)

@@ -8,18 +8,18 @@ import com.virjar.tk.shared.database.AppDatabase
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 
-// Android SQLite builds can force temporary databases into memory, including VACUUM's rebuilt copy.
-// A desktop disk-space limit is not an appropriate bound for this native memory allocation.
+// Android 的 SQLite 构建可能把临时数据库强制放进内存，包括 VACUUM 重建出的副本。
+// 桌面端的磁盘空间上限并不适合约束这种原生内存分配。
 internal const val MAX_ANDROID_LOCAL_CACHE_COMPACTION_BYTES = 64L * 1024 * 1024
 
-/** The maintenance handle could not be closed; opening another account owner requires process restart. */
+/** 维护句柄无法关闭；打开另一个账号 owner 需要重启进程。 */
 class AndroidLocalCacheStorageCloseException(cause: Throwable) :
     IllegalStateException("Android local cache maintenance could not close its database", cause)
 
 /**
- * Blocking, offline maintenance of an existing Android account database. The application must first
- * close its session and keep new account/cache owners out until this call finishes, including close.
- * Unlike the normal cache factory this entry never creates a schema, migrates, quarantines or rebuilds.
+ * 对既有 Android 账号数据库的阻塞式离线维护。应用必须先关闭其会话，
+ * 并把新的账号/缓存 owner 挡在外面，直到本调用（包括 close）完成。
+ * 与普通 cache factory 不同，该入口绝不创建 schema、执行迁移、隔离或重建。
  */
 fun compactAndroidLocalCacheStorage(
     context: Context,
@@ -44,7 +44,7 @@ fun compactAndroidLocalCacheStorage(
     val outcome = runCatching {
         LocalCacheStorageMaintenance(databaseFile, MAX_ANDROID_LOCAL_CACHE_COMPACTION_BYTES).compact(driver)
     }
-    // A close failure is not a successful maintenance result; the application must keep admission shut.
+    // close 失败不算一次成功的维护；应用必须保持准入关闭。
     try {
         driver.close()
     } catch (closeFailure: Throwable) {
@@ -68,7 +68,7 @@ private class ExistingAndroidMaintenanceCallback : AndroidSqliteDriver.Callback(
     override fun onDowngrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = rejectSchema()
 
     override fun onCorruption(db: SupportSQLiteDatabase) {
-        // Never delegate to AndroidX's default callback: it deletes the database and its sidecars.
+        // 绝不委托给 AndroidX 的默认回调：它会删除数据库及其 sidecar。
         throw SQLiteDatabaseCorruptException("Local cache maintenance refuses corrupt storage")
     }
 

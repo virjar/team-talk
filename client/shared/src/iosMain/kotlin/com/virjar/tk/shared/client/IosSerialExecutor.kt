@@ -11,7 +11,7 @@ import kotlinx.coroutines.Runnable
 import kotlin.coroutines.CoroutineContext
 import platform.darwin.*
 
-/** One serial GCD queue owns state; accepted work is drained before closing storage. */
+/** 一条串行 GCD 队列拥有全部状态；已接受的任务会在关闭存储前排空。 */
 internal class IosSerialExecutor(name: String, private val capacity: Int = Int.MAX_VALUE) : CoroutineDispatcher() {
     private val logger = PlatformOnlyTkLogger("IosSerialExecutor")
     val queue = dispatch_queue_create(name, null)
@@ -28,7 +28,7 @@ internal class IosSerialExecutor(name: String, private val capacity: Int = Int.M
             try {
                 task()
             } catch (failure: Throwable) {
-                // As on Netty/executor workers, one rejected task must not cross the native block boundary.
+                // 与 Netty/executor 工作线程一致：单个失败任务绝不能越过原生 block 边界传播。
                 logger.fault("Serial worker task failed", failure)
             } finally {
                 synchronized(lock) { runningThread = 0; queued-- }
@@ -40,7 +40,7 @@ internal class IosSerialExecutor(name: String, private val capacity: Int = Int.M
     override fun isDispatchNeeded(context: CoroutineContext): Boolean = !inExecutor()
     override fun dispatch(context: CoroutineContext, block: Runnable) {
         if (!execute { block.run() }) {
-            // Coroutine cleanup still needs a dispatcher after the owned queue rejects new work.
+            // 自有队列拒绝新任务后，协程清理仍需要一个 dispatcher。
             context[Job]?.cancel(CancellationException("iOS serial executor is closed"))
             Dispatchers.Default.dispatch(context, block)
         }

@@ -258,8 +258,8 @@ class AuthSyncCoordinator(
             ConnectionTraceContextPolicy.requireToken(correlationId, "auth.correlationId")
             val source = pending.credentials.toWirePayload(correlationId, connectionGeneration)
             val negotiated = _protocolCompatibility.value?.negotiated
-            // Published 0.0–0.3 servers accept only UNKNOWN/ANDROID/DESKTOP. Keep the sealed
-            // local identity as IOS so a reconnect to an upgraded server advertises it again.
+            // 已发布的 0.0–0.3 服务器只接受 UNKNOWN/ANDROID/DESKTOP。将封存的
+            // 本地身份保持为 IOS，以便重连到升级后的服务器时再次宣告它。
             val auth = if (source.deviceFlag == AuthRules.DEVICE_FLAG_IOS &&
                 negotiatedConnectionGeneration == connectionGeneration &&
                 negotiated?.major == 0 && negotiated.minor < 4
@@ -362,8 +362,8 @@ class AuthSyncCoordinator(
             closeTransport("Account-ban response is not supported by the negotiated protocol", null)
             return
         }
-        // Local adaptation into the existing authentication-attempt terminal path. This synthetic
-        // value is never encoded: the frozen AUTH_RESP failure format forbids a dataset identity.
+        // 本地适配进既有的认证尝试终态路径。这个合成值绝不会
+        // 被编码：冻结的 AUTH_RESP 失败格式禁止携带 dataset 身份。
         handleAuthResponse(connectionGeneration, AuthResponsePayload(
             code = AuthResponsePayload.CODE_ACCOUNT_BANNED,
             uid = payload.uid,

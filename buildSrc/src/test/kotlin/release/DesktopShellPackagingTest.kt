@@ -23,7 +23,7 @@ import org.gradle.testfixtures.ProjectBuilder
 import org.junit.Assume.assumeTrue
 import org.tukaani.xz.XZInputStream
 
-/** Exercise the produced launchers and package bytes; no UI or service fixtures are required. */
+/** 实测产出的启动器与安装包字节；不需要 UI 或服务端夹具。 */
 class DesktopShellPackagingTest {
     @Test
     fun `macOS packages carry a universal native launcher, JVM signature and architecture rejection`() = temporary { root ->
@@ -37,7 +37,7 @@ class DesktopShellPackagingTest {
         val displayName = "内部 '协作'"
         val url = "https://private.example.test/teamtalk/"
         fun machHeader(cpuType: Int) = byteArrayOf(
-            0xcf.toByte(), 0xfa.toByte(), 0xed.toByte(), 0xfe.toByte(), // MH_MAGIC_64 little-endian
+            0xcf.toByte(), 0xfa.toByte(), 0xed.toByte(), 0xfe.toByte(), // MH_MAGIC_64 小端
             cpuType.toByte(), (cpuType ushr 8).toByte(), (cpuType ushr 16).toByte(), (cpuType ushr 24).toByte(), // cputype 小端
             0, 0, 0, 0,
         )
@@ -420,7 +420,7 @@ class DesktopShellPackagingTest {
         val project = ProjectBuilder.builder().withProjectDir(root).build()
         val staging = File(root, "staging")
         File(staging, "TeamTalkPrivate/TeamTalkPrivate.exe").apply { parentFile.mkdirs(); writeText("exe fixture") }
-        // Use the real product icon; NSIS validates its binary format.
+        // 使用真实产品图标；NSIS 会校验其二进制格式。
         val repository = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
             .first { File(it, "client/desktop/packaging/icons/TeamTalk.ico").isFile }
         File(repository, "client/desktop/packaging/icons/TeamTalk.ico")
@@ -498,7 +498,7 @@ class DesktopShellPackagingTest {
         return exe.readBytes().copyOfRange(layout.offset, layout.offset + layout.size)
     }
 
-    /** Read the actual PE resource tree (RT_MANIFEST=24, CREATEPROCESS_MANIFEST_RESOURCE_ID=1). */
+    /** 读取真实的 PE 资源树（RT_MANIFEST=24，CREATEPROCESS_MANIFEST_RESOURCE_ID=1）。 */
     private fun windowsManifest(exe: File): WindowsManifest {
         val bytes = exe.readBytes()
         val pe = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)

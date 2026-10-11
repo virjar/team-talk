@@ -251,7 +251,7 @@ class LocalCacheDiagnosticsIntegrationTest {
             assertEquals(beforeOutside, inventory(outside))
             assertTrue(Files.isSymbolicLink(linked.toPath()))
 
-            // Small corrupt files exercise the actual scan bound without allocating hundreds of MiB.
+            // 用小的损坏文件验证真实扫描上限，而无需分配数百 MiB。
             repeat(129) { jvmDatabase(root, "bounded-$it").writeText("not SQLite") }
             val before = inventory(root)
             val bounded = LocalCacheDiagnostics.inspect(root)

@@ -5,14 +5,14 @@ import com.virjar.tk.protocol.body.AttachmentPolicy
 import com.virjar.tk.shared.client.AccountDataOwner
 import com.virjar.tk.shared.platform.PlatformFile as File
 
-/** An immutable, account-owned source. Its identifier never exposes a picker URI or user path. */
+/** 不可变的、账号所有的源；其标识符绝不暴露选择器 URI 或用户路径。 */
 data class StagedChatAsset(val sourceId: String, val length: Long, val sha256: String)
 
 /**
- * Durable source files belong to drafts/upload commands, not a screen or a running HTTP attempt.
- * Only the owner which has durably removed the last reference may [delete] a source. Closing a
- * transport or losing authentication does not remove it. All methods except [stage] perform
- * bounded blocking filesystem work and belong on the caller's storage dispatcher.
+ * 持久源文件归属于草稿/上传命令，而不是某个界面或一次进行中的 HTTP 尝试。
+ * 只有已持久移除最后一个引用的 owner 才能 [delete] 某个源；关闭 transport
+ * 或失去认证都不会移除它。除 [stage] 外的所有方法都执行有界阻塞的文件系统
+ * 操作，应运行在调用方的存储 dispatcher 上。
  */
 interface ChatAssetSpool {
     suspend fun stage(source: UploadSource): StagedChatAsset
@@ -21,7 +21,7 @@ interface ChatAssetSpool {
     fun list(): List<StagedChatAsset>
 }
 
-/** The host supplies its private installation root; account ownership and the on-disk format are shared. */
+/** 宿主提供其私有安装根目录；账号归属与磁盘格式由公共代码共享。 */
 expect fun createChatAssetSpool(
     dataDir: File,
     owner: AccountDataOwner,
@@ -29,6 +29,6 @@ expect fun createChatAssetSpool(
     maxEntries: Int = 128,
 ): ChatAssetSpool
 
-/** Exact namespace shared by construction and the existing account-ban cleanup hooks. */
+/** 构造与既有账号封禁清理钩子共享的确切命名空间。 */
 fun chatAssetSpoolDirectories(owner: AccountDataOwner): List<String> =
     listOf("chat-assets", owner.deploymentFingerprint, owner.datasetId, owner.uid)

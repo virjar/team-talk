@@ -10,9 +10,9 @@ import com.virjar.tk.protocol.payload.NotifyPayload
 import com.virjar.tk.protocol.payload.SyncBatchPayload
 
 /**
- * Per-connection wire projection; the original durable event and its stored bytes never change.
- * An unsupported durable event still advances the client's cursor, including an entire skipped page.
- * New business projections must provide a snapshot/bootstrap path when a client later upgrades.
+ * 按连接的线上投影；原始持久事件及其存储字节永不改变。
+ * 不支持的持久事件仍会推进客户端游标，包括整页被跳过的情况。
+ * 新业务投影必须提供快照/引导路径，供客户端日后升级时使用。
  *
  * 消息事件的对端降级不是"跳过"而是"占位"（[Message.readProjectionPlaceholder]）：保留身份
  * 与原始类型码、剥正文、打 FLAG_PROJECTION_PLACEHOLDER——旧客户端红点背后有可见的
@@ -30,7 +30,7 @@ private fun notificationForProtocol(event: NotifyPayload, version: ProtocolVersi
     val knownNotification = ProtocolWireRegistry.supportsNotifyType(event.notifyType, version)
     val supported = knownNotification && when (event.notifyType) {
         NotifyType.MESSAGE_RECV.code -> {
-            // Only read the bounded message header; event delivery never decodes a large body twice.
+            // 只读取有界的消息头；事件投递绝不会把大正文解码两次。
             val payload = checkNotNull(event.payload)
             if (ProtocolWireRegistry.supportsMessageType(Message.readMessageType(payload), version)) {
                 true

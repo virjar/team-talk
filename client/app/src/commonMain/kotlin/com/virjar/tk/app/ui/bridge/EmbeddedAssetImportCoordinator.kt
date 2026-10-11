@@ -13,7 +13,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-/** Platform code prepares/owns sources; this owner orders import, retry, and editor delivery. */
+/** 平台代码准备并持有 source；本 owner 负责排序导入、重试和编辑器投递。 */
 class EmbeddedAssetImportCoordinator<S : Any>(
     private val launch: (suspend () -> Unit) -> Job?,
     private val publishOnUi: (() -> Unit) -> Unit,
@@ -28,7 +28,7 @@ class EmbeddedAssetImportCoordinator<S : Any>(
     private val bindings = EmbeddedAssetImportBindingRouter()
     private val retryStore = EmbeddedAssetImportRetryStore(releaseSelection, releaseSource)
     private val closed = PlatformAtomicBoolean(false)
-    // Unknown-length content providers need a temporary snapshot before entering the bounded spool.
+    // 未知长度的 content provider 需要先做一次临时快照，再进入有界 spool。
     private val durablePreparation = Semaphore(1)
 
     fun capture() = bindings.capture()
@@ -94,7 +94,7 @@ class EmbeddedAssetImportCoordinator<S : Any>(
                     ensureOpen()
                     val candidate = prepare(selection)
                     prepared = candidate
-                    // The durable delegate commits its own immutable spool before this source is released.
+                    // 持久 delegate 在此 source 释放之前提交自己的不可变 spool。
                     durable.prepare(binding.ownerKey, assetId, source(candidate), selection)
                     publish(binding, EmbeddedAssetImportEvent.StateChanged(PendingAssetJob(assetId, assetId),
                         EmbeddedAssetImportPlacement(selection.displayName, selection.presentation)))
@@ -112,7 +112,7 @@ class EmbeddedAssetImportCoordinator<S : Any>(
     private fun launchAttempt(attempt: EmbeddedAssetImportRetryStore.Attempt<S>) {
         val start = CompletableDeferred<Unit>()
         val task = launch {
-            // Also handles UNDISPATCHED platform launchers: attach ownership before reading any source.
+            // 同时兼容 UNDISPATCHED 的平台启动器：在读取任何 source 之前先挂上所有权。
             start.await()
             try {
                 if (attempt.job.state == PendingAssetJobState.LOCAL) {

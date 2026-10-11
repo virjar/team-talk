@@ -34,12 +34,12 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Test
 
 /**
- * Explicit remote development baseline. This class lives in the capacityTest source set and is
- * therefore neither discovered nor compiled by the ordinary server test task.
+ * 显式的远程开发环境基线。本类位于 capacityTest 源集，
+ * 因此不会被普通的服务器测试任务发现或编译。
  *
- * Each sender owns a real authenticated connection and a distinct chat. The shared receiver is
- * only the observation point, so a burst exercises independent server `user-command` lanes while
- * notifications and history still converge through one ordinary SDK session.
+ * 每个发送方持有真实的已认证连接和独立的会话。共享的接收方只是观察点，
+ * 因此突发流量会并发压测服务端各自独立的 `user-command` 通道，
+ * 而通知与历史仍经由一个普通 SDK 会话汇聚。
  */
 class RemoteMessageCapacityBaselineTest {
     @Test
@@ -161,9 +161,9 @@ class RemoteMessageCapacityBaselineTest {
                 freshProbeSucceededLanes = freshProbeSucceededLanes,
                 elapsedMs = elapsedMillis(recoveryElapsed),
                 overloadObserved = overloadObserved,
-                // Unknown outcomes are retried to prove convergence, but only an explicit 503 is
-                // evidence of bounded overload. A healthy post-burst probe without such evidence
-                // must not claim that the overload-recovery gate passed.
+                // 未知结果会通过重试来证明收敛，但只有显式 503 才是
+                // 有界过载的证据。突发之后探针健康但缺少这种证据时，
+                // 不得宣称过载恢复门已通过。
                 passed = overloadObserved &&
                     initialTimeouts == 0 &&
                     initialTransportFailures == 0 &&
@@ -217,9 +217,9 @@ class RemoteMessageCapacityBaselineTest {
                     timeoutMs = config.eventCatchupTimeoutMs,
                 ) { conversation -> conversation.lastSeq == expectedLastSeq }
             }
-            // Conversation rows become visible inside event projection just before that event's
-            // cursor commit. Wait for a short quiet period so the target is the completed primary
-            // workload high-water mark, not a transient pre-commit sample.
+            // 会话行在事件投影中、恰在该事件游标提交之前才可见。等待一段短暂静默期，
+            // 使目标成为已完成主负载的高水位标记，
+            // 而不是提交前的瞬时采样。
             val catchupTargetCursor = awaitStableSyncCursor(
                 receiver,
                 config.eventCatchupTimeoutMs,
@@ -403,8 +403,8 @@ class RemoteMessageCapacityBaselineTest {
         scenario: String,
         firstAttemptNumber: Int,
     ): RecoveryRun {
-        // Keep the original Message instance: chatId, clientMsgId, timestamp and body are the
-        // immutable idempotency request. Recovery must never manufacture a new message generation.
+        // 保留原始 Message 实例：chatId、clientMsgId、timestamp 和 body 构成
+        // 不可变的幂等请求。恢复绝不能制造出新的消息代。
         val pending = messages.associateByTo(linkedMapOf(), LogicalMessage::identity)
         val successful = linkedMapOf<CapacityMessageIdentity, SubmitAttempt>()
         val terminal = linkedMapOf<CapacityMessageIdentity, SubmitAttempt>()
@@ -471,9 +471,9 @@ class RemoteMessageCapacityBaselineTest {
         config: CapacityConfig,
         deadlineNanos: Long,
     ): RecoveryRun = recoverMessages(
-        // These messages are fresh relative to the burst. If a probe itself meets residual
-        // overload or an unknown transport outcome, retry this exact immutable Message identity
-        // until the shared recovery deadline rather than creating another logical message.
+        // 这些消息相对突发是全新的。如果探针自身遇到残留的过载
+        // 或未知传输结果，就重试这个完全不变的 Message 身份
+        // 直至共享恢复截止时间，而不是创建另一条逻辑消息。
         messages = messages,
         config = config,
         deadlineNanos = deadlineNanos,

@@ -2,9 +2,9 @@ package com.virjar.tk.shared.repository
 
 import com.virjar.tk.shared.platform.PlatformFile
 
-/** Private spool IO; names are single components chosen by the common spool, never user paths. */
+/** 私有 spool IO；名称是由公共 spool 选取的单段组件，绝不是用户路径。 */
 internal interface ChatAssetSpoolStorage {
-    /** Canonical account directory identity, shared by independently reopened stores. */
+    /** 规范的账号目录 identity，由各自独立重新打开的存储实例共享。 */
     val directoryKey: String
     fun entries(limit: Int): List<String>
     fun inspect(name: String): ChatAssetFileSnapshot
@@ -12,7 +12,7 @@ internal interface ChatAssetSpoolStorage {
     fun openWriter(name: String): ChatAssetWriter
     fun openReader(name: String): ChatAssetReader
     fun publish(partial: String, ready: String)
-    /** Missing entries are already deleted; every present entry must still be a private regular file. */
+    /** 缺失的条目视为已删除；仍存在的条目必须还是私有的普通文件。 */
     fun delete(name: String)
     fun forceDirectory()
 }
@@ -22,7 +22,7 @@ internal interface ChatAssetWriter : AutoCloseable {
     fun sync()
 }
 internal interface ChatAssetReader : AutoCloseable {
-    /** Returns -1 at EOF; buffers belong to the caller and may be reused immediately. */
+    /** EOF 时返回 -1；缓冲区归调用方所有，可立即复用。 */
     fun read(bytes: ByteArray): Int
     fun rewind()
 }

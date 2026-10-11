@@ -9,7 +9,7 @@ import com.virjar.tk.server.application.admin.AdminSecurityStore
 import com.virjar.tk.server.domain.auth.AuthenticationAttemptGuard
 import com.virjar.tk.server.domain.auth.PasswordHasher
 
-/** Fast session/route fixture; persistence and BCrypt are exercised by AdminSecurityIntegrationTest. */
+/** 轻量的会话/路由 fixture；持久化与 BCrypt 由 AdminSecurityIntegrationTest 覆盖。 */
 internal fun testAdminSecurity(
     username: String? = "admin",
     password: String? = "test-only-password",

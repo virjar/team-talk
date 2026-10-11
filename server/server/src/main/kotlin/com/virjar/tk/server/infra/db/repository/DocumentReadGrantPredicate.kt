@@ -11,7 +11,7 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.or
 
-/** Shared SQL projection of the current document read policy. */
+/** 当前文档读取策略的共享 SQL 投影。 */
 internal fun relevantDocumentGrantCondition(
     actorUid: String,
     actorAccess: DocumentActorOrganizationAccess,

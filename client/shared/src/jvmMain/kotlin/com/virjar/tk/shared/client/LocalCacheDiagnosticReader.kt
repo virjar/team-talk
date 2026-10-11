@@ -13,7 +13,7 @@ import java.sql.DriverManager
 
 private data class DiagnosticQuery(val table: String, val where: String = "", val json: Boolean = false)
 
-/** Fixed aggregate queries: no caller-supplied SQL, payloads, tokens or message bodies enter the report. */
+/** 固定的聚合查询：任何调用方提供的 SQL、payload、token 或消息正文都不会进入报告。 */
 private val diagnosticQueries = linkedMapOf(
     "messages" to DiagnosticQuery("message"),
     "totalOutgoing" to DiagnosticQuery("outgoing_message"),
@@ -65,14 +65,14 @@ internal fun inspectLocalCacheCopy(
         if (database !in before) throw DiagnosticCaptureFailure("DATABASE_MAIN_MISSING")
         val total = before.values.sumOf { it.size }
         if (total > LocalCacheDiagnostics.MAX_DATABASE_BYTES || total > remainingBytes) throw DiagnosticCaptureFailure("SNAPSHOT_SIZE_LIMIT")
-        // Charge even unsuccessful captures, so many damaged candidates cannot bypass the I/O budget.
+        // 即使捕获失败也计入 I/O 预算，这样多个损坏的候选无法绕过它。
         consumedBytes = total
         temporary = Files.createTempDirectory("teamtalk-cache-diagnostic-")
         val security = JvmPrivatePathSecurity.forPath(temporary, JvmFileSystemIdentity.currentOwner(temporary))
         val privateCopy = temporary.resolve("snapshot")
         security.createDirectory(privateCopy)
         val capturedHashes = before.mapValues { (source, state) ->
-            // SHM is disposable shared-memory coordination, not WAL data. Regenerate it only in the copy.
+            // SHM 是一次性共享内存协调数据，不是 WAL 数据。只在副本中重新生成它。
             val copy = if (source == database || source.fileName.toString().endsWith("-wal") || source.fileName.toString().endsWith("-journal")) {
                 privateCopy.resolve(source.fileName.toString()).also(security::createEmptyFile)
             } else null
@@ -85,10 +85,10 @@ internal fun inspectLocalCacheCopy(
         }
         Class.forName("org.sqlite.JDBC")
         val copy = privateCopy.resolve(database.fileName)
-        // SQLite 3.51's mode=ro skips CHECK-constraint validation after reopening a database:
-        // both quick_check and integrity_check can report "ok" for rows violating a CHECK.
-        // Open only this disposable private copy with rw, then prohibit SQL writes before reading
-        // its schema. query_only preserves CHECK validation; the source never enters JDBC.
+        // SQLite 3.51 的 mode=ro 在重新打开数据库后会跳过 CHECK 约束校验：
+        // quick_check 与 integrity_check 都可能对违反 CHECK 的行报告 "ok"。
+        // 只用 rw 打开这个一次性私有副本，并在读取其 schema 之前禁止 SQL 写入。
+        // query_only 保留 CHECK 校验；源文件从不进入 JDBC。
         DriverManager.getConnection("jdbc:sqlite:${copy.toUri()}?mode=rw").use { connection ->
             connection.createStatement().use { statement ->
                 statement.execute("PRAGMA query_only = ON")
@@ -134,7 +134,7 @@ internal fun inspectLocalCacheCopy(
     } catch (failure: DiagnosticCaptureFailure) {
         issues += failure.reason
     } catch (_: Exception) {
-        // SQLite error text can contain SQL or caller paths. Only stable, non-sensitive reasons are returned.
+        // SQLite 错误文本可能包含 SQL 或调用方路径。只返回稳定且不敏感的原因。
         issues += "DATABASE_OR_SNAPSHOT_UNREADABLE"
     } finally {
         temporary?.let { directory ->
@@ -149,7 +149,7 @@ private fun Connection.diagnosticLong(sql: String): Long = createStatement().use
     statement.executeQuery(sql).use { rows -> check(rows.next()); rows.getLong(1) }
 }
 
-/** Reject symlinks at every known namespace component, including any swapped after the inventory scan. */
+/** 在每个已知命名空间组件处拒绝符号链接，包括清单扫描之后被替换的组件。 */
 private fun requireDiagnosticPath(root: Path, path: Path) {
     var current = root
     for (component in root.relativize(path)) {

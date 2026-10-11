@@ -7,7 +7,7 @@ import com.virjar.tk.protocol.SinceProtocol
 import com.virjar.tk.protocol.body.OfficeRefBody
 import kotlinx.serialization.Serializable
 
-/** Extension metadata lives outside the released WorkTask wire layout. */
+/** 扩展元数据位于已发布的 WorkTask wire 布局之外。 */
 @SinceProtocol(3)
 @Serializable
 data class TaskOptions(
@@ -40,7 +40,7 @@ data class TaskOptions(
     }
 }
 
-/** Unknown historical dates remain null; historyKnown distinguishes migrated tasks from new tasks. */
+/** 未知的历史日期保持 null；historyKnown 区分迁移任务与新任务。 */
 @SinceProtocol(3)
 @Serializable
 data class TaskMetrics(

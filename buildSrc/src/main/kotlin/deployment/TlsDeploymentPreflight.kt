@@ -58,7 +58,7 @@ internal fun validateLocalTlsPemFiles(
     }
     if (expectedCertificate != null) {
         try {
-            // -PsslCert may contain an HTTPS full chain; the first certificate is the server leaf.
+            // -PsslCert 可能包含 HTTPS 完整证书链；第一张证书即服务器 leaf 证书。
             val leaf = certificate.inputStream().use {
                 CertificateFactory.getInstance("X.509").generateCertificate(it) as X509Certificate
             }

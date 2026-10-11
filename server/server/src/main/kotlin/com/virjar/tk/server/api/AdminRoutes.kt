@@ -245,7 +245,7 @@ private val AdminAuthorizationPlugin = createRouteScopedPlugin(
         } else {
             call.attributes.put(ADMIN_PRINCIPAL_KEY, principal)
             adminAuditAction(call.request.httpMethod, call.request.path())?.let { action ->
-                // Persist admission before a sensitive handler can mutate business state.
+                // 在敏感 handler 修改业务状态之前，先持久化审计准入记录。
                 val target = call.request.path().removePrefix("/api/admin/").filterNot(Char::isISOControl).take(400)
                 call.attributes.put(ADMIN_AUDIT_KEY, auth.beginAudit(principal, action, target))
             }
@@ -261,8 +261,8 @@ private val AdminAuthorizationPlugin = createRouteScopedPlugin(
         }
     }
     on(CallFailed) { call, cause ->
-        // Global StatusPages sends its response outside this route's response hooks. Record only
-        // known handler failures here; cancellation and failed audit completion remain indeterminate.
+        // 全局 StatusPages 在本路由的响应钩子之外发送响应。此处只记录
+        // 已知的 handler 失败；取消与审计完成失败仍属不确定结局。
         if (cause is CancellationException || call.response.isCommitted) return@on
         call.attributes.getOrNull(ADMIN_AUDIT_KEY)?.let { auditId ->
             call.attributes.remove(ADMIN_AUDIT_KEY)

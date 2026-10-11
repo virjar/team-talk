@@ -14,13 +14,13 @@ internal object OemPushRegistrations : Table("oem_push_registrations") {
     val registrationId = varchar("registration_id", 4096)
     val registrationHash = varchar("registration_hash", 64).uniqueIndex()
     val generation = varchar("generation", 36)
-    /** APNs 410 timestamp only invalidates token registrations no newer than that timestamp. */
+    /** APNs 410 时间戳只使不晚于该时间戳的 token 注册失效。 */
     val registeredAt = long("registered_at").default(0)
     val packageName = varchar("package_name", 255)
     val deploymentFingerprint = varchar("deployment_fingerprint", 64)
     val pendingEventId = long("pending_event_id").default(0)
     val deliveredEventId = long("delivered_event_id").default(0)
-    /** chatId -> latest incoming message sequence; bounded by the existing account conversation quota. */
+    /** chatId -> 最新入站消息序列号；受既有账号会话配额约束。 */
     val pendingChats = text("pending_chats").default("{}")
     val attempts = integer("attempts").default(0)
     val nextAttemptAt = long("next_attempt_at").default(0)

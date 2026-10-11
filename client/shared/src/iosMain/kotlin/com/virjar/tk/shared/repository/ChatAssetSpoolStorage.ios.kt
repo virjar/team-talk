@@ -11,7 +11,7 @@ import platform.posix.*
 internal actual fun chatAssetSpoolStorage(dataDir: PlatformFile, directories: List<String>): ChatAssetSpoolStorage =
     IosChatAssetSpoolStorage(iosPrivateDirectory(dataDir, directories))
 
-/** POSIX handles and CoreCrypto remain native; no quota, ownership or lifecycle policy is duplicated. */
+/** POSIX 句柄与 CoreCrypto 保持原生；不重复实现配额、属主或生命周期策略。 */
 private class IosChatAssetSpoolStorage(private val directory: PlatformFile) : ChatAssetSpoolStorage {
     override val directoryKey: String = directory.canonicalPath
     private fun file(name: String) = PlatformFile(directory, name)

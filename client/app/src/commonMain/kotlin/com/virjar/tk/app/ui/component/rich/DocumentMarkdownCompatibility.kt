@@ -98,7 +98,7 @@ internal data class RichEditorMarkdownCapability(
                     continue
                 }
                 if (lineStart && indentation >= 4) break
-                // Spaces following a tag on the same line are inline spacing, not code indentation.
+                // 同一行内跟在标签后面的空格属于行内间距，不是代码缩进。
                 if (!lineStart) offset = tagStart
                 val tag = LINE_BREAK_TAG.matchAt(text, tagStart) ?: break
                 onBreak()

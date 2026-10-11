@@ -28,9 +28,9 @@ internal data class AndroidStorageMaintenanceState(
 )
 
 /**
- * Application owns this one maintenance operation, independently of Activity and authenticated UI
- * scopes. A non-IDLE state keeps authentication out of composition until the offline driver closes.
- * Nothing is persisted: process death uses SQLite recovery on the next normal open, never auto-VACUUM.
+ * Application 持有这唯一的维护操作，独立于 Activity 与已认证 UI 的
+ * 作用域。非 IDLE 状态会把认证挡在组合之外，直到离线 driver 关闭。
+ * 不持久化任何状态：进程死亡走下次正常打开时的 SQLite 恢复，绝不自动 VACUUM。
  */
 internal class AndroidStorageMaintenanceOwner(
     private val deploymentIdentity: DeploymentIdentity,
@@ -43,12 +43,12 @@ internal class AndroidStorageMaintenanceOwner(
     private var retiringOwner: Any? = null
     private var target: Target? = null
 
-    /** No database work here: changing the root surface first triggers ordinary SHUTDOWN retirement. */
+    /** 这里不做数据库工作：先切换根界面，才触发普通的 SHUTDOWN 退役。 */
     fun request(session: ClientSession): Boolean = beginRequest(
         session, session.deploymentIdentity, session.datasetId, session.ownerUid, session.isBusinessActive,
     )
 
-    /** The platform boundary supplies an exact owner identity; this step itself never borrows SQLite. */
+    /** 平台边界提供精确的 owner 身份；这一步本身绝不借用 SQLite。 */
     internal fun beginRequest(
         owner: Any,
         identity: DeploymentIdentity,
@@ -65,7 +65,7 @@ internal class AndroidStorageMaintenanceOwner(
         true
     }
 
-    /** The existing AuthController invokes this only after its entire retirement body has returned. */
+    /** 现有 AuthController 只在其整个退役流程返回之后才调用此方法。 */
     fun onSessionRetired(session: ClientSession, reason: SessionEndReason) = completeRetirement(
         session,
         reason == SessionEndReason.SHUTDOWN && session.endReason == SessionEndReason.SHUTDOWN &&
@@ -86,7 +86,7 @@ internal class AndroidStorageMaintenanceOwner(
 
     fun onRetirementFailed(session: ClientSession) = completeRetirement(session, closedSuccessfully = false)
 
-    /** There is deliberately no Activity cancellation or synchronous join of blocking SQLite work. */
+    /** 刻意不做 Activity 取消，也不同步等待阻塞的 SQLite 工作。 */
     fun compact(): Boolean {
         val selected = synchronized(lock) {
             if (mutableState.value.phase !in setOf(
@@ -102,7 +102,7 @@ internal class AndroidStorageMaintenanceOwner(
                 val report = compactStorage(deploymentIdentity, selected.datasetId, selected.uid)
                 AndroidStorageMaintenanceState(AndroidStorageMaintenancePhase.FINISHED, result = report)
             } catch (_: AndroidLocalCacheStorageCloseException) {
-                // Do not let a new authentication owner overlap a driver that failed to close.
+                // 不让新的认证 owner 与关闭失败的 driver 重叠。
                 retirementFailedState()
             } catch (failure: LocalCacheStorageCompactionException) {
                 AndroidStorageMaintenanceState(
@@ -124,7 +124,7 @@ internal class AndroidStorageMaintenanceOwner(
         return true
     }
 
-    /** Only explicit return from a completed/unused maintenance surface starts normal authentication. */
+    /** 只有从已完成/未使用的维护界面显式返回，才会开始正常认证。 */
     fun finish(): Boolean = synchronized(lock) {
         if (mutableState.value.phase != AndroidStorageMaintenancePhase.READY &&
             mutableState.value.phase != AndroidStorageMaintenancePhase.FINISHED

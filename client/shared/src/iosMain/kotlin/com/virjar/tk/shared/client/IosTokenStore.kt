@@ -14,7 +14,7 @@ import platform.Foundation.*
 import platform.Security.*
 import platform.posix.memcpy
 
-/** Keychain replaces the entire credential record atomically under one process owner lock. */
+/** Keychain 在单一进程 owner 锁下原子地替换整条凭据记录。 */
 class IosTokenStore(override val deploymentIdentity: DeploymentIdentity) : TokenStore {
     override val ownerClaimNamespace: String = "ios-keychain:$KEYCHAIN_SERVICE/auth"
     private val rejections = synchronized(credentialLock) {

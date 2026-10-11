@@ -1,10 +1,10 @@
 package com.virjar.tk.app.navigation.feature.document
 
 /**
- * Bounded, latest-per-owner admission shared by platform document writers.
- * The caller owns its state lock and the single disk writer; taking an entry does not retire its
- * generation. A delete or newer snapshot can therefore invalidate an entry already being encoded.
- * Payloads remain lazy, so admitting an editor frame never encodes document bodies.
+ * 平台各文档写入方共享的、按 owner 有界且只保留最新项的准入队列。
+ * 调用方自持状态锁与单一磁盘写入者；取出条目并不退役其
+ * generation。因此删除或更新的快照可能使一个正在编码的条目失效。
+ * 载荷保持惰性，准入一帧编辑器状态从不编码文档正文。
  */
 class DocumentDraftPendingWrites(private val maximumOwners: Int) {
     data class Write(
@@ -28,7 +28,7 @@ class DocumentDraftPendingWrites(private val maximumOwners: Int) {
     }
 
     fun take(): Write? = pending.entries.firstOrNull()?.let { entry ->
-        // Native map entries are invalidated by a structural change, including removing this key.
+        // Native 侧 map 条目在结构性变更（包括移除该 key）后即失效。
         val write = entry.value
         pending.remove(write.ownerKey)
         write
@@ -49,7 +49,7 @@ class DocumentDraftPendingWrites(private val maximumOwners: Int) {
 
     fun clear() { pending.clear(); generations.clear() }
 
-    /** Only call once the disk drain is idle; an in-flight generation must retain its fence. */
+    /** 只在磁盘排空已空闲时调用；在途的 generation 必须保留自己的围栏。 */
     fun forgetIdleOwnersExcept(owner: DocumentDraftOwnerKey? = null) {
         check(isEmpty)
         if (owner == null) generations.clear() else generations.keys.retainAll(setOf(owner))

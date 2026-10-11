@@ -572,7 +572,7 @@ fun ChatPanel(
             return@LaunchedEffect
         }
         if (recovered != null && recovered != restoredComposerContext) {
-            // Disk is authoritative after process death, including an empty consumed revision.
+            // 进程死亡后以磁盘为权威，包括已被消费的空 revision。
             resetChatComposerState(richState)
             sourceInput = TextFieldValue(recovered.markdown, TextRange(recovered.selectionStart, recovered.selectionEnd))
             embeddedAssetSnapshot = EmbeddedAssetImportSnapshot(assets = recovered.assets)
@@ -915,7 +915,7 @@ fun ChatPanel(
                                 resetComposer(committedSend = true)
                                 savedReplyTarget = SavedChatReplyTarget()
                             } else if (composerContextStore.revision(chatId) == revision) {
-                                // Input entered while SQLite was committing belongs to the next draft.
+                                // SQLite 提交期间输入的内容属于下一份草稿。
                                 persistComposerContext()
                             }
                         }
@@ -1059,7 +1059,7 @@ fun ChatPanel(
                     returnedToLatest = true
                     viewModel.returnToLatest {
                         uiResultHandoff.deliver(Unit, actionAdmission) {
-                            // A newer search intent may have arrived while this UI handoff waited.
+                            // 这次 UI 交接等待期间可能又到达了更新的搜索意图。
                             if (viewModel.messageFocusState.value == MessageFocusState.Idle) onLocalWindowReady()
                         }
                     }

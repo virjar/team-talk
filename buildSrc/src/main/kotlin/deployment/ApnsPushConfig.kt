@@ -6,7 +6,7 @@ import java.security.interfaces.ECPrivateKey
 import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Base64
 
-/** Only public Apple IDs and a local file path belong in Deployment.kt. Never embed the .p8 contents. */
+/** Deployment.kt 里只允许出现公开的 Apple ID 与本地文件路径；绝不内嵌 .p8 内容。 */
 data class ApnsPushDeployment(
     val teamId: String,
     val keyId: String,
@@ -21,7 +21,7 @@ data class ApnsPushDeployment(
         }
     }
 
-    /** Validate before acquiring a remote deployment lease; return a single-line env.sh secret. */
+    /** 在获取远程部署租约前完成校验；返回单行 env.sh 密钥。 */
     internal fun encodedPrivateKey(): String {
         require(privateKeyFile.isFile && privateKeyFile.length() in 1..16_384) { "APNs .p8 key file is missing or too large" }
         val pem = privateKeyFile.readText(Charsets.US_ASCII).trim()

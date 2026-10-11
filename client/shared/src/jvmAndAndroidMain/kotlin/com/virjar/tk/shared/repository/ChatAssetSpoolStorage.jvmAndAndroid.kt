@@ -12,7 +12,7 @@ import java.nio.file.StandardOpenOption.WRITE
 import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
 
-/** Existing Desktop/Android private-directory checks remain owned by those platforms. */
+/** 既有的 Desktop/Android 私有目录检查仍由各平台自己负责。 */
 internal interface NioChatAssetSpoolFiles {
     val directory: Path
     fun createFile(name: String): Path

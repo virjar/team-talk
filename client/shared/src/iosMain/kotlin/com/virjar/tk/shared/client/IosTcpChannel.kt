@@ -12,7 +12,7 @@ import platform.Security.*
 import platform.darwin.*
 import platform.posix.memcpy
 
-/** Network.framework supplies TCP, DNS and TLS; protocol framing stays in PacketFrames. */
+/** TCP、DNS 与 TLS 由 Network.framework 提供；协议分帧保留在 PacketFrames。 */
 internal class IosTcpChannel(
     private val executor: IosSerialExecutor,
     private val host: String,
@@ -42,8 +42,8 @@ internal class IosTcpChannel(
         require(port in 1..65535)
         require(certificatePem == null || certificatePem.isNotBlank()) { "Configured TCP TLS certificate must not be blank" }
         val useTls = certificatePem != null || requiresClientTransportTls(host)
-        // Parse before entering Network.framework's native configuration callback. A Kotlin
-        // validation failure must return to the connection owner, never unwind through C.
+        // 在进入 Network.framework 的原生配置回调之前先完成解析。Kotlin 的
+        // 校验失败必须返回给连接 owner，绝不能经 C 栈展开。
         val certificate = certificatePem?.let(::pemCertificate)
         val configureTls: nw_parameters_configure_protocol_block_t = { options ->
             if (useTls) {
@@ -63,8 +63,8 @@ internal class IosTcpChannel(
             nw_tcp_options_set_enable_keepalive(tcp, true)
         }
         if (!useTls) {
-            // Kotlin wraps C blocks, losing the identity of NW_PARAMETERS_DISABLE_PROTOCOL.
-            // Remove TLS explicitly for loopback; remote hosts still require TLS above.
+            // Kotlin 包装 C block 时丢失了 NW_PARAMETERS_DISABLE_PROTOCOL 的身份。
+            // 因此为 loopback 显式移除 TLS；远程主机仍要求上面的 TLS。
             nw_protocol_stack_clear_application_protocols(nw_parameters_copy_default_protocol_stack(parameters))
         }
         val created = checkNotNull(nw_connection_create(nw_endpoint_create_host(host, port.toString()), parameters)) { "Cannot create TCP connection" }
@@ -138,7 +138,7 @@ internal class IosTcpChannel(
         var length = 0
         for (index in 1..4) length = (length shl 8) or (header[index].toInt() and 255)
         val limit = if (authenticated) PacketFrames.AUTHED_LIMIT else PacketFrames.UNAUTHED_LIMIT
-        // The bound and direction are checked before allocating a peer-controlled payload.
+        // 在分配由对端控制的 payload 之前，先校验上限与方向。
         PacketFrames.validateHeader(typeCode, length, PacketInboundRole.CLIENT, limit)
         readExactly(length) { payload ->
             val packet = PacketFrames.decode(typeCode, payload, PacketInboundRole.CLIENT, limit)

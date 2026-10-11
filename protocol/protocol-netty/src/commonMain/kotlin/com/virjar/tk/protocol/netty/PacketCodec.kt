@@ -11,10 +11,10 @@ import io.netty.handler.codec.ByteToMessageCodec
 import io.netty.handler.codec.CorruptedFrameException
 import io.netty.handler.codec.TooLongFrameException
 
-/** JVM callers retain the same source name; the wire role belongs to the shared protocol. */
+/** JVM 调用方保留同一源码名称；wire 角色归属共享协议模块。 */
 typealias PacketInboundRole = com.virjar.tk.protocol.PacketInboundRole
 
-/** Netty stream adaptation for the shared `[TYPE(1B)][LENGTH(4B)][PAYLOAD]` contract. */
+/** 共享 `[TYPE(1B)][LENGTH(4B)][PAYLOAD]` 契约的 Netty 流式适配。 */
 class PacketCodec(
     @Volatile var maxPayloadLimit: Int = UNAUTHED_LIMIT,
     private val inboundRole: PacketInboundRole = PacketInboundRole.ANY,
@@ -52,7 +52,7 @@ class PacketCodec(
         } catch (failure: ProtocolCorruptionException) {
             throw CorruptedFrameException(failure.message, failure)
         }
-        // AUTH_RESP and a larger first sync frame can arrive in the same socket read.
+        // AUTH_RESP 与更大的首个同步帧可能出现在同一次 socket 读中。
         if (inboundRole == PacketInboundRole.CLIENT && decoded is AuthResponsePayload &&
             decoded.code == AuthResponsePayload.CODE_OK
         ) {

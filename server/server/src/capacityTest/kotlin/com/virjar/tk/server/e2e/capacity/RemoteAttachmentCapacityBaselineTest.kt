@@ -37,13 +37,13 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Test
 
 /**
- * Small-object attachment development baseline through the same SDK paths used by clients.
+ * 走客户端同一条 SDK 路径的小对象附件开发基线。
  *
- * Uploads use a repeatable file-backed [com.virjar.tk.shared.repository.UploadSource], then the same
- * authenticated uploader publishes the returned descriptor into a real group-file space. Every
- * object is subsequently downloaded by the other group member through [FileRepository]. There is
- * deliberately no raw HTTP shortcut and no retry after an ambiguous upload result. This test also
- * never changes host networking.
+ * 上传使用可重复、基于文件的 [com.virjar.tk.shared.repository.UploadSource]，随后由同一个
+ * 已认证的上传者把返回的描述符发布到真实的群文件空间。每个对象之后
+ * 都由另一名群成员通过 [FileRepository] 下载。本测试刻意不走裸 HTTP 捷径，
+ * 上传结果含糊时也不重试。此外，本测试从不改动宿主机
+ * 网络。
  */
 class RemoteAttachmentCapacityBaselineTest {
     @Test
@@ -445,9 +445,9 @@ class RemoteAttachmentCapacityBaselineTest {
         config: AttachmentRuntimeConfig,
         publishedReferences: PublishedReferenceTracker,
     ): UploadScenarioRun = coroutineScope {
-        // Payload generation is fixture setup, not upload admission. Pre-generating it keeps the
-        // configured permits around the actual HTTP upload only. The value remains a client-side
-        // concurrency ceiling; this test does not claim a server-observed peak of the same size.
+        // 载荷生成属于夹具准备，不算上传准入。预先生成让配置的并发许可
+        // 只覆盖真正的 HTTP 上传阶段。该值仍只是客户端侧的并发上限；本测试
+        // 并不宣称服务端观测到了同规模的峰值。
         val preparedUploads = plans.map { plan -> prepareUpload(plan, fixture, config) }
         val started = System.nanoTime()
         val global = Semaphore(config.burstConcurrency)
@@ -508,9 +508,9 @@ class RemoteAttachmentCapacityBaselineTest {
                         )
                         .getOrThrow()
                 }
-                // The command carries a client-generated entry id. Register it before the RPC so
-                // an ACK lost after a server commit can be recovered from the authoritative list;
-                // create itself is deliberately never retried by this capacity baseline.
+                // 该命令携带客户端生成的 entry id。在 RPC 之前先注册，这样服务端
+                // 提交后丢失 ACK 时仍可从权威列表恢复；本容量基线刻意
+                // 从不重试 create 本身。
                 publishedReferences.candidate(plan)
                 val published = fixture.groupFiles[plan.ownerIndex].createFile(
                     entryId = plan.entryId,

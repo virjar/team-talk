@@ -16,7 +16,7 @@ internal suspend fun OemPushSender.sendXiaomiPush(
     notification: OemPushNotification,
 ): OemPushDeliveryResult = sendXiaomiPushRequest(configuration, notification, xiaomiPushEndpoint)
 
-/** The endpoint is fixed in production; the argument permits a real local HTTP fixture. */
+/** 该端点在生产环境固定；参数用于注入真实的本地 HTTP fixture。 */
 internal suspend fun OemPushSender.sendXiaomiPushRequest(
     configuration: OemPushVendorConfiguration,
     notification: OemPushNotification,

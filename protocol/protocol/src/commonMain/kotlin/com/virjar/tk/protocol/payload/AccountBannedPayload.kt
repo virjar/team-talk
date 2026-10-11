@@ -7,9 +7,9 @@ import com.virjar.tk.protocol.ProtocolCorruptionException
 import com.virjar.tk.protocol.SinceProtocol
 
 /**
- * Server → client, only after password/refresh proof identifies the banned account.
- * This is an authentication terminal, not a successful session or a generic authorization error.
- * A distinct frame preserves AUTH_RESP's frozen rule that failures cannot carry datasetId.
+ * 服务端 → 客户端，仅在密码/刷新凭证确认被封禁账号后发送。
+ * 这是认证终态，不是成功会话，也不是通用授权错误。
+ * 独立帧保住了 AUTH_RESP 已冻结的规则：失败响应不能携带 datasetId。
  */
 @SinceProtocol(1)
 data class AccountBannedPayload(

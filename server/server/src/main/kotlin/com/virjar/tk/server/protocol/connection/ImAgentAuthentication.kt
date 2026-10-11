@@ -78,7 +78,7 @@ internal fun authenticationGuardDenialResponse() = AuthResponsePayload(
     reason = "Authentication temporarily unavailable",
 )
 
-/** Only negotiated clients can receive the new scoped terminal; old AUTH_RESP wire stays frozen. */
+/** 只有完成协议协商的客户端才能收到新的作用域终结响应；旧 AUTH_RESP 线上格式保持冻结。 */
 internal fun authenticationResponseForProtocol(
     response: AuthResponsePayload,
     version: ProtocolVersion,

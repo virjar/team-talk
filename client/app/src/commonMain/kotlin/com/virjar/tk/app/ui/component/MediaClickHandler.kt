@@ -100,11 +100,11 @@ fun rememberEmbeddedMediaClickHandler(
     }
 }
 
-/** The details page can outlive its pager row; its current message remains a valid media source. */
+/** 详情页可能比其 pager 行存活更久；它当前的消息仍是有效的媒体来源。 */
 internal fun mediaGalleryForMessage(messages: List<Message>, clicked: Message): List<GalleryItem> {
     val scoped = messages.filter { it.chatId == clicked.chatId }.distinctBy(Message::clientMsgId)
-    // Prefer a resident edit/revoke over a delayed click snapshot. Only an absent identity needs
-    // the details page's independently observed row; a missing asset must not revive old content.
+    // 常驻的编辑/撤销优先于迟到的点击快照。只有身份缺失时才需要
+    // 详情页独立观察的行；已缺失的附件不得复活旧内容。
     val sources = if (scoped.any { it.clientMsgId == clicked.clientMsgId }) scoped else scoped + clicked
     return buildMediaList(sources)
 }

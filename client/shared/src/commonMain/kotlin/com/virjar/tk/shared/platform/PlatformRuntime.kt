@@ -1,6 +1,6 @@
 package com.virjar.tk.shared.platform
 
-/** Reentrant synchronous lock. Never hold it across a suspension. */
+/** 可重入的同步锁。绝不在挂起期间持有。 */
 expect class PlatformLock() {
     fun lock()
     fun unlock()
@@ -62,7 +62,7 @@ fun platformBase64Decode(value: String): ByteArray = kotlin.io.encoding.Base64.D
 fun platformBase64Url(bytes: ByteArray): String = kotlin.io.encoding.Base64.UrlSafe.encode(bytes).trimEnd('=')
 fun platformBase64UrlDecode(value: String): ByteArray = kotlin.io.encoding.Base64.UrlSafe.decode(value.padEnd((value.length + 3) / 4 * 4, '='))
 
-/** Snapshot views keep callbacks out of the map lock; callers own mutation ordering. */
+/** 快照视图让回调发生在 map 锁之外；变更顺序归调用方负责。 */
 class PlatformConcurrentMap<K, V> {
     private val lock = PlatformLock()
     private val entries = mutableMapOf<K, V>()

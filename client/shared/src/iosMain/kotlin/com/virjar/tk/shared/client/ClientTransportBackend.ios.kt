@@ -10,7 +10,7 @@ import kotlinx.coroutines.launch
 internal actual fun createClientTransportBackend(tcpTlsCertificatePem: String?): ClientTransportBackend =
     IosClientTransportBackend(tcpTlsCertificatePem)
 
-/** The GCD queue and Network.framework channels have one platform owner, with no auth/retry policy. */
+/** GCD 队列与 Network.framework channel 只有一个平台 owner，不含任何认证/重试策略。 */
 private class IosClientTransportBackend(private val certificatePem: String?) : ClientTransportBackend {
     private val executor = IosSerialExecutor("teamtalk.tcp")
     private val timerScope = CoroutineScope(executor + SupervisorJob())
@@ -39,7 +39,7 @@ private class IosClientTransportBackend(private val certificatePem: String?) : C
         override val isActive: Boolean get() = channel.isActive
         override fun start() {
             try { channel.start() } catch (failure: Throwable) {
-                // Invalid TLS material must retire the connection after AUTH installation returns.
+                // 非法的 TLS 材料必须在 AUTH 安装返回之后再退役该连接。
                 executor.execute { channel.close(failure) }
             }
         }

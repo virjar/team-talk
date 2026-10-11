@@ -5,7 +5,7 @@ import deployment.localChecked
 import java.io.File
 import java.util.Properties
 
-/** A tag names this committed configuration; command-line properties cannot invent a release. */
+/** tag 为这份已提交的配置命名；命令行属性无法凭空造出 release。 */
 data class ReleaseVersion(
     val name: String,
     val buildNumber: Int,
@@ -49,7 +49,7 @@ class ReleaseMetadata(private val root: File) {
         return text
     }
 
-    /** Private delivery uses the same committed source boundary without claiming public release notes. */
+    /** 私有分发沿用同一套已提交源码边界，但不要求公开的发行说明。 */
     fun verifySource(version: ReleaseVersion, expectedRevision: String, requireClean: Boolean = true) {
         require(ReleaseVersion.read(root) == version) {
             "Release values must come from committed root gradle.properties; -P overrides are not release inputs"
@@ -60,7 +60,7 @@ class ReleaseMetadata(private val root: File) {
         }
     }
 
-    /** Used by CI before building: JVM flags or provisional protocol bumps alone are not releases. */
+    /** CI 在构建前使用：仅 JVM 标志或临时协议提升并不构成 release。 */
     fun releaseChangedSince(baseRevision: String): Boolean {
         require(baseRevision.matches(Regex("[0-9a-fA-F]{40}"))) { "releaseBase must be a full Git commit" }
         val previous = ReleaseVersion.parse(git("show", "$baseRevision:gradle.properties"))
@@ -75,13 +75,13 @@ class ReleaseMetadata(private val root: File) {
         return changed
     }
 
-    /** Internal Desktop installers need a newer revision; source history supplies it without editing versions. */
+    /** 内部 Desktop 安装器需要更新的修订号；由源码历史提供，无需改动版本号。 */
     fun snapshotDesktopRevision(version: ReleaseVersion, sourceCommit: String): Int {
         require(sourceCommit.matches(Regex("[0-9a-f]{40}"))) { "Snapshot source must be a full Git commit" }
         require(git("rev-parse", "--is-shallow-repository") == "false") {
             "Snapshot packaging requires a complete clone to calculate a stable Desktop revision"
         }
-        // Do not use tag distance: fetching tags later must not change the same source's installer identity.
+        // 不用 tag 距离：之后拉取 tag 不得改变同一源码的安装器身份。
         val commits = git("rev-list", "--count", "--first-parent", sourceCommit).toLong()
         val revision = version.buildNumber.toLong() + 1 + commits
         require(commits > 0 && revision in 1..65535) {
@@ -97,7 +97,7 @@ class ReleaseMetadata(private val root: File) {
         require(rewritten.isBlank()) { "Previously committed protocol release records must not be rewritten or removed:\n$rewritten" }
     }
 
-    /** Commit detail is a separate appendix; it never overwrites the maintainer's release text. */
+    /** 提交明细是独立附录；绝不覆盖维护者的发行说明正文。 */
     fun commitAppendix(version: ReleaseVersion, snapshot: Boolean = false): String {
         val ancestors = git("tag", "--merged", "HEAD").lineSequence()
             .filter { it.matches(Regex("v[0-9]+\\.[0-9]+\\.[0-9]+")) }
@@ -108,7 +108,7 @@ class ReleaseMetadata(private val root: File) {
         val scratch = File(root, "build/release-metadata").apply { mkdirs() }
         val log = File.createTempFile("commits-", ".txt", scratch)
         val commits = try {
-            // A long private history may have no tags. Do not truncate it through bounded console capture.
+            // 长私有历史可能没有任何 tag。不要因控制台捕获有上限而截断它。
             git("log", "--no-show-signature", "--format=- %s (%h)", "--output=${log.absolutePath}", range)
             log.readText().trimEnd()
         } finally {

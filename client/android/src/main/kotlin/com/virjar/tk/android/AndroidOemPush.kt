@@ -54,8 +54,8 @@ internal class AndroidOemPushSettings(private val context: Context) {
     val channel: OemPushChannel? = oemPushChannels.firstOrNull { it.available }
     val available = channel != null
     val enabled = MutableStateFlow(available && preferences.getBoolean("enabled", false))
-    // A non-empty registration may already be active even when its RPC response was lost.
-    // Older enabled installations conservatively keep the same ownership until a server response.
+    // 即使注册 RPC 的响应丢失，非空的注册也可能已经在服务端生效。
+    // 旧的已开启安装保守地维持同一通知归属，直到收到服务器响应。
     val pendingUnregister = MutableStateFlow(available && preferences.getBoolean("pending_unregister", enabled.value))
     val needsConsent: Boolean get() = available && !preferences.contains("enabled")
     val status = MutableStateFlow(if (!available) "此设备无可用厂商通道" else
@@ -78,7 +78,7 @@ internal class AndroidOemPushSettings(private val context: Context) {
         }
     }
 
-    /** Persist before admitting a registration RPC; a process restart must retain an unknown binding. */
+    /** 在放行注册 RPC 之前先持久化；进程重启后仍须保留未知绑定状态。 */
     fun serverRegistrationMayExist(value: Boolean): Boolean {
         if (pendingUnregister.value == value && preferences.contains("pending_unregister")) return true
         if (!preferences.edit().putBoolean("pending_unregister", value).commit()) {
@@ -114,7 +114,7 @@ internal class AndroidOemPushRegistration(
     foreground: StateFlow<Boolean>,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    // Unknown/active server bindings retain the sole notification owner until removal is confirmed.
+    // 未知/仍在生效的服务器绑定在确认解除之前，继续保持唯一的通知 owner。
     val usesVendorNotifications: StateFlow<Boolean> = settings.pendingUnregister
 
     init {
@@ -135,8 +135,8 @@ internal class AndroidOemPushRegistration(
                     val (enabled, allowed) = selection
                     if (enabled && failureCode != null) {
                         settings.status.value = "${channel.displayName}推送注册失败（错误码 $failureCode），请关闭后重新开启"
-                        // With no admitted server registration, the existing TCP observer remains usable.
-                        // A previous/unknown binding cannot safely switch notification owners here.
+                        // 没有已放行的服务器注册时，现有的 TCP 观察者仍可继续使用。
+                        // 既有的/未知绑定在这里不能安全地切换通知 owner。
                         return@collect
                     }
                     if (connection != ConnectionState.AUTHENTICATED) return@collect
@@ -148,8 +148,8 @@ internal class AndroidOemPushRegistration(
                     // RPC 响应丢失时服务端可能已经绑定成功，提前停止 TCP 本地提醒避免双响。
                     if (token.isNotEmpty() && !settings.serverRegistrationMayExist(true)) return@collect
                     while (true) {
-                        // Let an admitted RPC finish before applying a newer selection. Cancelling a bind
-                        // on a foreground/setting change could race its late server write with unbinding.
+                        // 先让已放行的 RPC 完成，再应用更新的选择。在前台/设置变化时取消
+                        // 绑定，可能让它迟到的服务端写入与解除绑定发生竞争。
                         if (session.connectionState.value != ConnectionState.AUTHENTICATED ||
                             settings.enabled.value != enabled || channel.registrationId.value != registration ||
                             channel.registrationFailureCode.value != failureCode ||

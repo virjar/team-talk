@@ -89,8 +89,8 @@ object DatabaseFactory {
         }
         try {
             val datasetId = transaction(
-                // Existing schemas serialize startup on schema_metadata; after waiting, each statement
-                // must see the preceding startup's committed migration receipts.
+                // 已存在的 schema 通过 schema_metadata 串行化启动；等待之后，每条语句
+                // 都必须能看到前一次启动已提交的迁移收据。
                 transactionIsolation = Connection.TRANSACTION_READ_COMMITTED,
                 db = database,
             ) { initializeOrValidateSchema() }

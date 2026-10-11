@@ -19,7 +19,7 @@ import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import kotlin.test.*
 
-/** Real APK signing, archive sealing and multipart HTTP share the producer's directory layout. */
+/** 真实的 APK 签名、归档密封与 multipart HTTP 上传共用生产方的目录布局。 */
 class ReleasePipelineIntegrationTest {
     @Test
     fun `assembled bundle can be verified reused and uploaded without changing payload paths`() {

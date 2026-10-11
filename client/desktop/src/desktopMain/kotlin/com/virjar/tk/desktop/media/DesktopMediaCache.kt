@@ -411,8 +411,8 @@ internal class DesktopMediaCache(
         }
 
         try {
-            // Credential admission can fail after the file and reservation already exist.
-            // Keep it inside their cleanup boundary, including a retirement during 401 handling.
+            // 凭据准入可能在临时文件与预留都已存在之后才失败。
+            // 必须让它留在二者的清理边界之内，包括 401 处理期间发生的退役。
             val request = DesktopMediaDownloadRequest(
                 resolvedUrl = FileOps.resolveUrl(serverBaseUrl, reference),
                 authorizationToken = credentialGate.requireAccessToken(),

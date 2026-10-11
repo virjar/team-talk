@@ -70,7 +70,7 @@ class AndroidDownloadIdentityTest {
             application { routing { clientDownloadRoutes(downloads) } }
             assertEquals("old-package", client.get("/downloads/$oldName").bodyAsText())
             publishFixture(downloads, "new-package")
-            // Even an unrelated leftover regular file must not turn this virtual identity path into a fallback.
+            // 即使是无关的残留普通文件，也不能让这个虚拟身份路径退化为兜底下载。
             downloads.resolve(oldName).writeText("untrusted leftover")
             assertEquals(HttpStatusCode.NotFound, client.get("/downloads/$oldName").status)
             assertEquals(HttpStatusCode.NotFound, client.head("/downloads/$oldName").status)
@@ -107,7 +107,7 @@ class AndroidDownloadIdentityTest {
                 { it.resolve(ANDROID_DOWNLOAD_ALIAS).writeText("different package") },
                 { it.resolve(ANDROID_DOWNLOAD_ALIAS).delete() },
                 {
-                    // Matching alias + receipt cannot claim another sealed manifest's app identity.
+                    // 匹配的别名 + 收据不能冒用另一个封存 manifest 的应用身份。
                     it.resolve(ANDROID_DOWNLOAD_ALIAS).writeText("other-application")
                     val receipt = it.resolve(".teamtalk-client-release.json")
                     receipt.writeText(receipt.readText().replace(hash("valid-package".toByteArray()),

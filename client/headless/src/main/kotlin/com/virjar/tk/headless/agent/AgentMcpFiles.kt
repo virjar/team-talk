@@ -14,7 +14,7 @@ import java.nio.file.StandardOpenOption.*
 import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 
-/** Fixed private files inside an already validated agent owner; no caller-provided filesystem paths. */
+/** 位于已校验 agent owner 内的固定私有文件；不接受任何调用方提供的文件系统路径。 */
 internal class AgentMcpFiles(private val directory: AgentDataDirectory) {
     fun read(name: String, maximum: Int): ByteArray? {
         val file = path(name)
@@ -96,7 +96,7 @@ internal class AgentMcpFiles(private val directory: AgentDataDirectory) {
     }
 }
 
-/** Two bounded segments; admission is fsynced before a tool can produce effects. */
+/** 两个有界分段；准入记录在工具产生效果之前已 fsync。 */
 internal class AgentMcpAudit(private val files: AgentMcpFiles, private val segmentBytes: Int = 2 * 1024 * 1024) {
     private var recovered = false
     init { require(segmentBytes in 1024..2 * 1024 * 1024) }

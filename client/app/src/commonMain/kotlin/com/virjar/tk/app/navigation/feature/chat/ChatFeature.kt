@@ -54,7 +54,7 @@ class ChatFeature(
         )
     }
 
-    /** Platform supplies its private storage root; the session owns the durable upload worker. */
+    /** 平台提供其私有存储根目录；持久上传 worker 由 session 拥有。 */
     fun chatAssetImports(createSpool: () -> ChatAssetSpool): ChatAssetImportDelegate =
         checkNotNull(destroyGate.readIfOpen {
             assetImports ?: DurableChatAssetImports(

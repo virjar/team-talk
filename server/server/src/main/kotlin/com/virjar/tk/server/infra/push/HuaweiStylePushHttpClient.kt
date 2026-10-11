@@ -49,7 +49,7 @@ internal suspend fun OemPushSender.sendHuaweiStylePushRequest(
     accessToken: suspend () -> String?,
 ): OemPushDeliveryResult {
     val token = accessToken() ?: return pushRejected("PROVIDER_AUTH_TOKEN_UNAVAILABLE")
-    // Huawei uses the snake_case field set; Honor mirrors the structure with camelCase names.
+    // 华为使用 snake_case 字段集；荣耀用 camelCase 命名镜像同一结构。
     val honor = configuration.vendor == OemPushVendors.HONOR
     val body = buildString {
         append("{\"message\":{")

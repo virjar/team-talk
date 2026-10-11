@@ -9,7 +9,7 @@ import com.virjar.tk.protocol.PacketBuffer
 data class Member(
     val uid: String,
     val chatId: String,
-    val role: Int,           // 0=member, 1=admin, 2=owner
+    val role: Int,           // 0=成员，1=管理员，2=群主
     val nickname: String? = null,
     val joinedAt: Long = 0,
     val user: User? = null,

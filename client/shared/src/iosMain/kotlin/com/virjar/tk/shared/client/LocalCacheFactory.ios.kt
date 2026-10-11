@@ -13,7 +13,7 @@ import cnames.structs.sqlite3
 import cnames.structs.sqlite3_stmt
 import platform.posix.*
 
-/** A sandbox database preserves the same schema migrations and account namespace as desktop. */
+/** 沙盒数据库保持与桌面端相同的 schema 迁移与账号命名空间。 */
 fun createIosLocalCache(
     deploymentIdentity: DeploymentIdentity,
     datasetId: String,
@@ -79,7 +79,7 @@ fun createIosLocalCache(
     }
 }
 
-/** Refuse unsupported or corrupt bytes before sqliter can create or migrate any schema. */
+/** 在 sqliter 创建或迁移任何 schema 之前，先拒绝不受支持或已损坏的字节。 */
 private fun preflightIosDatabase(file: PlatformFile) = memScoped {
     val holder = alloc<CPointerVar<sqlite3>>()
     val openResult = sqlite3_open_v2(file.path, holder.ptr, SQLITE_OPEN_READONLY, null)
@@ -115,7 +115,7 @@ private fun requireHealthySqliteResult(code: Int) {
     check(code in setOf(SQLITE_OK, SQLITE_ROW, SQLITE_DONE)) { "Local SQLite operation failed ($code); data retained" }
 }
 
-/** A durable two-phase journal prevents a crash while moving WAL files from mixing database families. */
+/** 持久的两阶段日志防止移动 WAL 文件途中崩溃导致混入另一个数据库家族。 */
 private fun beginIosCacheRecovery(directory: PlatformFile, databaseName: String): String {
     val id = platformRandomUuid()
     privateAtomicTextFileStore(directory, emptyList(), ".cache-recovery").replaceText("move:$id", 128)

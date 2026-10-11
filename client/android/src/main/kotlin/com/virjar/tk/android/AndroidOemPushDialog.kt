@@ -27,7 +27,7 @@ internal fun AndroidOemPushDialog(settings: AndroidOemPushSettings, onDismiss: (
     val pendingUnregister by settings.pendingUnregister.collectAsState()
     val status by settings.status.collectAsState()
     AlertDialog(
-        // AlertDialog owns a separate window; apply the same mapping as TestTagEnabler to its content root.
+        // AlertDialog 拥有独立窗口；对其内容根应用与 TestTagEnabler 相同的映射。
         modifier = Modifier.semantics { testTagsAsResourceId = true },
         onDismissRequest = {
             if (settings.needsConsent) settings.setEnabled(false)

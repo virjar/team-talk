@@ -6,8 +6,8 @@ plugins {
     alias(libs.plugins.node)
 }
 
-// Keep installed packages separate from the synced source tree: source deletions must
-// remove stale files without deleting node_modules or inheriting a developer's local dist.
+// 将已安装依赖与同步出的源码树隔离：源码同步删除过期文件时，
+// 不会误删 node_modules，也不会继承开发者本地的 dist。
 val npmWorkspace = layout.buildDirectory.dir("npm")
 val sourceWorkspace = npmWorkspace.map { it.dir("project") }
 val frontendDist = layout.buildDirectory.dir("dist")
@@ -75,8 +75,8 @@ val browserTest by tasks.registering(NpmTask::class) {
     args.set(listOf("exec", "--", "playwright", "test"))
 }
 
-// Server consumes this directory as a Gradle artifact. Resolving it also builds it,
-// so run, check and distributions cannot silently package a stale frontend.
+// 服务端将该目录作为 Gradle artifact 消费。解析它的同时就会触发构建，
+// 因此 run、check 与 distributions 不会悄悄打包过期的前端。
 val adminDist by configurations.creating {
     isCanBeConsumed = true
     isCanBeResolved = false

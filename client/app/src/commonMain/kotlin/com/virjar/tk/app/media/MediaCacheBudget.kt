@@ -7,7 +7,7 @@ import kotlinx.coroutines.sync.withLock
 
 data class MediaCacheEntry<T>(val key: String, val file: T, val bytes: Long, val lastUsed: Long)
 
-/** Shared capacity and pin accounting. Platform adapters enumerate only their own safe final files. */
+/** 共享的容量与 pin 记账。各平台适配器只枚举自己的安全最终文件。 */
 class MediaCacheBudget(
     val quotaBytes: Long,
     val maxEntries: Int = DEFAULT_MAX_ENTRIES,
@@ -24,7 +24,7 @@ class MediaCacheBudget(
 
     fun isPinned(key: String): Boolean = synchronized(lock) { key in pins }
 
-    /** Acquire under [lock] together with validating/installing the file, closing the eviction gap. */
+    /** 与校验/安装文件一并在 [lock] 下获取，封住被逐出的间隙。 */
     fun pin(key: String): AutoCloseable = synchronized(lock) {
         pins[key] = (pins[key] ?: 0) + 1
         var active = true
@@ -48,7 +48,7 @@ class MediaCacheBudget(
             Reservation(bytes)
         }
 
-    /** Optional byte hysteresis preserves Desktop's established 80% low-water mark. */
+    /** 可选的字节滞回保留 Desktop 既有的 80% 低水位线。 */
     fun <T> trim(files: List<MediaCacheEntry<T>>, delete: (T) -> Boolean, byteHysteresis: Double = 1.0) = synchronized(lock) {
         require(byteHysteresis in 0.0..1.0)
         val available = quotaBytes - reservedBytes
@@ -71,7 +71,7 @@ class MediaCacheBudget(
     inner class Reservation internal constructor(private val bytes: Long) : AutoCloseable {
         private var active = true
 
-        /** The install and optional pin run atomically with releasing the capacity reservation. */
+        /** 安装与可选的 pin 同释放容量预留原子地进行。 */
         fun <T> commit(install: () -> T): T = synchronized(lock) {
             check(active) { "媒体缓存容量预留已经释放" }
             try { install() } finally { close() }
@@ -90,7 +90,7 @@ class MediaCacheBudget(
     companion object { const val DEFAULT_MAX_ENTRIES = 4096 }
 }
 
-/** Only the same attachment waits for its writer; entries disappear with their final waiter. */
+/** 只有同一附件会等待其写入者；条目随最后一个等待者一起消失。 */
 class MediaCacheTargetCoordinator {
     private class Target(val mutex: Mutex = Mutex(), var users: Int = 0)
     private val lock = PlatformLock()

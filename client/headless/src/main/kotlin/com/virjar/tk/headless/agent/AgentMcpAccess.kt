@@ -33,7 +33,7 @@ internal sealed interface AgentApiPrincipal {
 internal data class AgentMcpCall(val requestId: String, val grantId: String, val tool: String, val chatId: String?, val waiting: Boolean)
 internal class AgentMcpAccessException(val status: Int, val safeMessage: String) : IllegalArgumentException(safeMessage)
 
-/** One local API boundary. Grants restrict an authenticated agent; they never grant server membership. */
+/** 单一的本地 API 边界。grant 只限制已认证的 agent，绝不授予服务器成员身份。 */
 internal class AgentMcpAccess(
     dataDir: File,
     private val owner: AgentMcpOwner,
@@ -114,7 +114,7 @@ internal class AgentMcpAccess(
         return buildJsonObject { put("records", JsonArray(audit.tail(limit))) }
     }
 
-    /** Never hold this monitor while executing SDK work or waiting for messages. */
+    /** 绝不在执行 SDK 工作或等待消息期间持有此监视器。 */
     @Synchronized fun begin(principal: AgentApiPrincipal, path: String, fields: Map<String, String>): AgentMcpCall? {
         requireOpen()
         if (principal == AgentApiPrincipal.Administrator) return null
@@ -177,7 +177,7 @@ internal class AgentMcpAccess(
         catch (_: Exception) { denied(503, "MCP audit storage unavailable") }
     }
     private fun auditResult(actor: String, tool: String, chat: String?, requestId: String, code: Int, state: String? = null, responseStatus: Int = code) {
-        // Admission is durable before effects. A late disk failure cannot turn a known successful enqueue into a retryable failure.
+        // 准入在产生效果之前已持久化。迟到的磁盘故障不能把已知的成功入队变成可重试的失败。
         runCatching { audit.append(record(actor, tool, chat, requestId, "result", code, state, responseStatus)) }
             .onFailure { com.virjar.tk.shared.log.PlatformOnlyTkLogger("AgentMcpAudit").fault("MCP audit result could not be persisted") }
     }

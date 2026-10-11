@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 
 internal data class GroupFileLocation(val chatId: String, val parentId: String?)
 
-/** Captured before opening a platform picker; navigation cannot retarget an accepted upload. */
+/** 在打开平台选择器之前捕获；导航不能把已受理的上传改投到其他目标。 */
 class GroupFileUploadTarget internal constructor(
     val chatId: String,
     val parentId: String?,

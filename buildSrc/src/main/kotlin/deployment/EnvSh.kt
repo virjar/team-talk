@@ -127,7 +127,7 @@ fun generateEnvShContent(
     return lines.joinToString("\n").trimEnd('\n') + "\n"
 }
 
-/** Only a single canonical assignment is accepted; absence keeps the target build's default. */
+/** 只接受单条规范赋值；缺失时保持目标构建的默认值。 */
 internal fun parseRemoteMinimumProtocolMinor(lines: String, target: ServerProtocolWindow): Int? {
     val assignments = lines.lineSequence().filter(String::isNotBlank).toList()
     if (assignments.isEmpty()) return null
@@ -142,7 +142,7 @@ internal fun parseRemoteMinimumProtocolMinor(lines: String, target: ServerProtoc
     return value
 }
 
-/** Never source env.sh or capture its secrets. Related noncanonical lines become a fixed error marker. */
+/** 绝不 source env.sh，也不捕获其密钥。相关的非规范行会输出为固定的错误标记。 */
 internal fun remoteMinimumProtocolMinorReadCommand(deployPath: String): String {
     requireCanonicalDeployPath(deployPath)
     val script = """

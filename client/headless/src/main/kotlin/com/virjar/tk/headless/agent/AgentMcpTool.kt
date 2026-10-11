@@ -8,7 +8,7 @@ import kotlinx.serialization.json.put
 internal enum class McpToolMethod { GET, POST }
 internal enum class McpToolScope { ACCOUNT, REQUIRED_CHAT, OPTIONAL_CHAT, ALL_CHATS }
 
-/** The MCP subset of agent REST. Names remain the persisted grant and wire identities. */
+/** agent REST 的 MCP 子集。名称保持为持久化 grant 与线上传输共用的身份标识。 */
 internal enum class AgentMcpTool(
     val wireName: String,
     val path: String,

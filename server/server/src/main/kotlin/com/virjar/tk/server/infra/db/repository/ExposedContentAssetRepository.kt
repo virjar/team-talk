@@ -41,7 +41,7 @@ class ExposedContentAssetRepository(private val database: Database) : ContentAss
     }
 
     override fun scan(kind: Int, afterId: String?, limit: Int): List<ContentAssetProjection> = transaction(database) {
-        // A document is at most 3 MB UTF-8. Eight current bodies keep rebuild pages below 24 MB.
+        // 单个文档的 UTF-8 编码至多 3 MB。八个当前正文使重建分页保持在 24 MB 以下。
         require(limit in 1..8)
         when (kind) {
             1 -> DocumentNodes.selectAll().where { if (afterId == null) Op.TRUE else DocumentNodes.nodeId greater afterId }

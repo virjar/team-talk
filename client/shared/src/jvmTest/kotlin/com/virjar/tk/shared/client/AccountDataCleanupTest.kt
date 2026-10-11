@@ -34,7 +34,7 @@ class AccountDataCleanupTest {
             assertFalse(account.exists())
             assertEquals("other account", other.readText())
 
-            // A fresh process can finish the credential step even after all content has gone.
+            // 即使全部内容都已删除，新进程仍能完成凭据步骤。
             val resumed = AccountDataCleanup(directory) {
                 listOf(AccountDataCleanupTarget.tree(directory, "users", it.uid))
             }

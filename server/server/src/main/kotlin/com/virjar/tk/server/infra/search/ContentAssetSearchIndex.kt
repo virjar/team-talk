@@ -14,7 +14,7 @@ import java.io.File
 import java.nio.file.Files
 import java.util.Locale
 
-/** A rebuildable asset projection. PostgreSQL remains the owner of content, ACL and pending work. */
+/** 可重建的资产投影。内容、ACL 与待处理工作的所有者仍是 PostgreSQL。 */
 class ContentAssetSearchIndex(
     private val path: File,
     private val datasetId: String,
@@ -40,8 +40,8 @@ class ContentAssetSearchIndex(
                 openMode = if (valid) IndexWriterConfig.OpenMode.APPEND else IndexWriterConfig.OpenMode.CREATE
             }).also { writer = it }
             if (!valid) {
-                // Search is unpublished during this scan. A failed build has no completed marker;
-                // the next startup rebuilds again from bounded pages of current PostgreSQL values.
+                // 扫描期间搜索不对外发布。失败的构建没有完成标记；
+                // 下次启动会再次从当前 PostgreSQL 值的有界分页重建。
                 for (kind in 1..2) {
                     var after: String? = null
                     while (true) {
@@ -73,7 +73,7 @@ class ContentAssetSearchIndex(
       catch (_: IndexFormatTooOldException) { false }
       catch (_: IndexFormatTooNewException) { false }
 
-    /** Compare bounded current PG pages with committed identities before reusing an index. */
+    /** 复用索引前，先将有界的当前 PG 分页与已提交的标识比对。 */
     private fun matchesAuthority(reader: DirectoryReader): Boolean {
         val searcher = IndexSearcher(reader)
         val fields = searcher.storedFields()
@@ -98,9 +98,9 @@ class ContentAssetSearchIndex(
         return reader.numDocs() == expectedCount
     }
 
-    /** Startup owns publication and may drain the complete backlog in bounded batches. */
+    /** 启动阶段负责发布，可以按有界批次清空全部积压。 */
     fun recoverBeforeServing() {
-        while (!drainPending(256)) { /* each batch commits and releases PostgreSQL resources */ }
+        while (!drainPending(256)) { /* 每个批次提交并释放 PostgreSQL 资源 */ }
     }
 
     override fun catchUp() {
@@ -125,14 +125,14 @@ class ContentAssetSearchIndex(
             resources.searchers.maybeRefreshBlocking()
             pending.forEach {
                 afterCommitBeforeAck(it)
-                // A newer committed mutation may have replaced this slot while Lucene was writing.
+                // Lucene 写入期间，更新的已提交变更可能已替换该槽位。
                 source.acknowledge(it)
             }
         }
         return source.pending(1).isEmpty()
     }
 
-    /** Used by recovery verification: a durable tombstone rejects older index operations. */
+    /** 供恢复校验使用：持久墓碑会拒绝更早的索引操作。 */
     @Synchronized
     internal fun applyProjection(value: ContentAssetProjection): Boolean {
         val resources = opened ?: throw ContentSearchUnavailableException()
@@ -148,8 +148,8 @@ class ContentAssetSearchIndex(
         require(request.kind in 1..2 && limit in 1..100 && scopes.size <= 10_000)
         if (scopes.isEmpty()) return emptyList()
         val resources = opened ?: throw ContentSearchUnavailableException()
-        // SearcherManager leases keep committed readers alive across refresh/close. Never take
-        // the projection monitor while the caller holds a PG snapshot: the projector uses PG too.
+        // SearcherManager 的租约让已提交的 reader 在 refresh/close 之后仍存活。
+        // 调用方持有 PG 快照时绝不要获取投影监视锁：投影器也使用 PG。
         val searcher = try { resources.searchers.acquire() }
             catch (_: org.apache.lucene.store.AlreadyClosedException) { throw ContentSearchUnavailableException() }
         return try {
@@ -187,7 +187,7 @@ class ContentAssetSearchIndex(
 
     private fun documentTextQuery(keyword: String): Query {
         val terms = linkedSetOf<String>()
-        // Each term contributes two leaves; leave room for scope and pagination filters.
+        // 每个 term 贡献两个叶子子句；为 scope 与分页过滤预留余量。
         val maxTerms = (IndexSearcher.getMaxClauseCount() - 8).coerceAtLeast(0) / 2
         IKAnalyzer(true).use { analyzer ->
             analyzer.tokenStream(TEXT, keyword).use { stream ->
@@ -201,7 +201,7 @@ class ContentAssetSearchIndex(
             }
         }
         if (terms.isEmpty()) return MatchNoDocsQuery()
-        // Plain text only: every analyzed term must occur in either title or body.
+        // 纯文本检索：每个分词出的 term 都必须出现在标题或正文中。
         return BooleanQuery.Builder().apply {
             terms.forEach { term ->
                 add(BooleanQuery.Builder()

@@ -6,7 +6,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
-/** Native and JVM must agree on the bytes before their socket adapters run. */
+/** Native 与 JVM 必须在各自 socket 适配器运行前对字节达成一致。 */
 class PacketFramesTest {
     @Test
     fun releasedSignalAndInvokeBytesStayIdenticalAcrossTransports() {

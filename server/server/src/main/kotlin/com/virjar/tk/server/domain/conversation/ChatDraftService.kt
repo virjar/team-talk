@@ -13,7 +13,7 @@ import com.virjar.tk.server.domain.command.*
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
 import com.virjar.tk.server.domain.transaction.PgWriteScope
 
-/** An account owns one versioned ready draft per chat. The legacy string is a compatibility projection. */
+/** 每个账号在每个会话拥有一个带版本的正式草稿。遗留字符串只是兼容性投影。 */
 class ChatDraftService(
     private val repository: ChatDraftRepository,
     private val conversations: ConversationRepository,
@@ -36,7 +36,7 @@ class ChatDraftService(
 
     suspend fun mutate(uid: String, command: ChatDraftCommand): ChatDraftMutationResult = lifecycle.withChat(command.chatId) {
         val fingerprint = reliableCommandFingerprint(uid, java.util.Base64.getEncoder().encodeToString(ProtoCodec.encode(command)))
-        // Exact retries and CAS conflicts never need a vanished old attachment to be available again.
+        // 精确重试与 CAS 冲突都不需要已消失的旧附件重新变为可用。
         val completed = unitOfWork.write { existingResult(uid, command, fingerprint) }
         if (completed != null) return@withChat completed
         val paths = command.content?.assets.orEmpty().flatMap { it.attachments() }.map { it.path }
@@ -64,7 +64,7 @@ class ChatDraftService(
                     val after = ChatDraftSnapshot(command.chatId, before.revision + 1,
                         maxOf(clock(), before.updatedAt), content)
                     repository.save(transaction, uid, after)
-                    // Old clients get only ordinary Markdown. Their later setDraft cannot alter this independent row.
+                    // 旧客户端只能拿到普通 Markdown。它们之后的 setDraft 无法改动这行独立数据。
                     val mirror = content?.takeIf { it.assets.isEmpty() }?.markdown?.takeIf { it.isNotEmpty() }
                     val member = try { repository.requireAccess(transaction, uid, command.chatId); true }
                         catch (_: ChatAccessDeniedException) { false }
@@ -81,7 +81,7 @@ class ChatDraftService(
         if (paths.isEmpty()) mutation() else attachmentLifecycle.withReferenceMutation(paths, mutation)
     }
 
-    /** Runs under the per-user capacity row, so operation identities and aggregate limits cannot race across chats. */
+    /** 在按用户的容量行之下运行，操作标识与总量限制不会跨会话产生竞争。 */
     private fun PgWriteScope.existingResult(uid: String, command: ChatDraftCommand, fingerprint: String): ChatDraftMutationResult? {
         ReliableCommandPolicy.requireActiveIssuedAt(command.issuedAt, clock(), "草稿同步")
         if (command.content != null) {
@@ -91,13 +91,13 @@ class ChatDraftService(
         val current = available(repository.get(transaction, uid, command.chatId))
         repository.receipt(transaction, uid, command.operationId)?.let { receipt ->
             if (receipt.fingerprint != fingerprint) throw ReliableCommandConflictException("草稿操作标识已用于不同请求")
-            // An owner may release a draft after leaving, but an old clear receipt is not a read capability.
+            // 所有者退出后可以释放草稿，但旧的清空收据不代表读取权限。
             if (current.content != null) repository.requireAccess(transaction, uid, command.chatId)
             return ChatDraftMutationResult(receipt.applied, receipt.revision, current)
         }
         repository.requireReceiptCapacity(transaction, uid, clock())
         if (current.revision != command.expectedRevision) {
-            // A deliberately wrong clear revision must not return the inaccessible body's CAS snapshot.
+            // 刻意使用错误的清空 revision 时，不得返回不可访问正文的 CAS 快照。
             if (current.content != null) repository.requireAccess(transaction, uid, command.chatId)
             repository.record(transaction, uid, command.operationId, command.issuedAt, ChatDraftReceipt(fingerprint, false, 0))
             return ChatDraftMutationResult(false, 0, current)

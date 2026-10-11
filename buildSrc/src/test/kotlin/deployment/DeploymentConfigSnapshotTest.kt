@@ -98,7 +98,7 @@ class DeploymentConfigSnapshotTest {
         assertEquals("内部版 \"研发\\测试\"", client.getValue("displayName").jsonPrimitive.content)
         assertEquals("TeamTalkInternal", client.getValue("desktopName").jsonPrimitive.content)
         assertEquals(publicCertificatePem, snapshot.getValue("tcpTlsCertificatePem").jsonPrimitive.content)
-        assertNull(config().tcpTlsCertificatePem) // Certificate preparation must be possible before a pin exists.
+        assertNull(config().tcpTlsCertificatePem) // 必须允许在 pin 尚不存在时先行准备证书。
     }
 
     @Test
@@ -115,7 +115,7 @@ class DeploymentConfigSnapshotTest {
     }
 
     companion object {
-        // Fresh test-only key material stays in memory; only the generated public certificate enters the fixture.
+        // 全新生成的仅测试用密钥材料只留在内存；只有生成的公开证书进入 fixture。
         private val publicCertificatePem: String by lazy {
             val keys = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
             val name = X500Name("CN=TeamTalk deployment fixture")

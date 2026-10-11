@@ -27,9 +27,9 @@ class LocalCacheStorageCompactionException(val reason: LocalCacheStorageCompacti
     IllegalStateException("Local cache storage compaction failed: ${reason.name}")
 
 /**
- * Physical maintenance of the factory-selected database, called only while its LocalCache gate is
- * held. Android's driver borrows a connection per statement, so do not change connection PRAGMAs or
- * rely on a BEGIN/COMMIT pair to keep one pooled connection locked. VACUUM owns its SQLite transaction.
+ * 工厂所选数据库的物理维护，只在其 LocalCache 门禁被持有时调用。Android 的 driver
+ * 按语句借用连接，因此不要修改连接级 PRAGMA，也不要依赖一对 BEGIN/COMMIT
+ * 来锁定某条池化连接。VACUUM 拥有自己的 SQLite 事务。
  */
 internal class LocalCacheStorageMaintenance(
     private val databaseFile: File,

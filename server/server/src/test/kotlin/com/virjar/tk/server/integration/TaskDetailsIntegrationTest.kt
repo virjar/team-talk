@@ -58,7 +58,7 @@ class TaskDetailsIntegrationTest {
         val command = TaskCommand(id(), now.get(), id(), 0, TaskCommand.CREATE,
             TaskDraft("旧正文", "*这是普通文本*", assignee, TaskPolicy.CONTEXT_GROUP, group.chatId, now.get() + 1000))
         val task = assertNotNull(service().mutate(owner, command).task)
-        // A released database has no extension row. No original deadline is inferred during migration.
+        // 已发布的数据库没有扩展行。迁移时不会推断出原始截止时间。
         transaction(ctx.database) { TaskExtensions.deleteWhere { TaskExtensions.taskId eq task.taskId } }
         val reopened = service(ExposedPgUnitOfWork(ctx.database, onEventsCommitted = {}))
         assertContentEquals(ProtoCodec.encode(task), ProtoCodec.encode(reopened.details(assignee, task.taskId).task))
@@ -72,7 +72,7 @@ class TaskDetailsIntegrationTest {
     @Test fun `group summary covers all shared rows and current members while edits stay owner controlled`() = runTest {
         val owner = user(); val assignee = user(); val member = user(); val outsider = user()
         val group = ctx.chatService.createGroup(id(), "群待办", null, owner, listOf(assignee, member))
-        create(owner, create(assignee, group = group.chatId)) // Private association never enters the card.
+        create(owner, create(assignee, group = group.chatId)) // 私有关联不会进入群卡片。
         val tasks = List(3) { index -> create(owner, create(assignee, TaskOptions(shareToGroup = true), group.chatId, now.get() + index - 1)) }
         val page = service().query(member, TaskQuery(TaskQuery.GROUP, group.chatId, openOnly = true), null, 1)
         assertEquals(1, page.items.size); assertEquals(3L, page.summary.openCount); assertEquals(1L, page.summary.overdueCount)
@@ -113,7 +113,7 @@ class TaskDetailsIntegrationTest {
         assertNull(service().modify(assignee, command).task)
         assertEquals(1, reassigned.metrics.deferralCount)
         assertEquals(TaskOptions.MARKDOWN, reassigned.options.descriptionFormat)
-        // Released EDIT changes only its own fields and keeps extension facts.
+        // 已发布的 EDIT 只修改自身字段，保留扩展行中的事实。
         val legacy = TaskCommand(id(), now.get(), reassigned.task.taskId, reassigned.task.revision, TaskCommand.EDIT,
             TaskDraft("旧端改标题", reassigned.task.description, next, dueAt = reassigned.task.dueAt))
         service().mutate(owner, legacy)
@@ -159,8 +159,8 @@ class TaskDetailsIntegrationTest {
         assertEquals(initialSeries.nextOccurrenceAt, resumedBeforeStart.nextOccurrenceAt)
         now.set(Instant.parse("2026-09-14T02:00:00Z").toEpochMilli()); service().generateRecurring()
         assertEquals(1L, service().query(assignee, TaskQuery(), null, 20).summary.totalCount)
-        // An unrelated user can claim client-selected UUIDs, including the old predictable occurrence
-        // formula. Generation is governed by the series lock/date, not that public ID namespace.
+        // 无关用户可以占用客户端自选的 UUID，包括旧的可预测 occurrence
+        // 公式。生成由系列锁/日期管束，与那个公开的 ID 命名空间无关。
         val outsider = user()
         val predicted = UUID.nameUUIDFromBytes("task-weekly:${initialSeries.seriesId}:2026-10-05".toByteArray(Charsets.UTF_8)).toString()
         create(outsider, create(outsider).copy(taskId = predicted))

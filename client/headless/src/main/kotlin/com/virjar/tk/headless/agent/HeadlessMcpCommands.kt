@@ -11,7 +11,7 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.security.SecureRandom
 import java.util.Base64
 
-/** The token is durable before the HTTP request, so an unknown response can be retried with the same grant. */
+/** token 在 HTTP 请求之前已持久化，因此对未知的响应可以用同一 grant 重试。 */
 internal object HeadlessTokenFile {
     fun createOrReuse(file: File, generate: () -> String = {
         Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also(SecureRandom()::nextBytes))

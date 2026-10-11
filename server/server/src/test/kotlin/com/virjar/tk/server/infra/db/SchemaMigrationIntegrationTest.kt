@@ -223,7 +223,7 @@ class SchemaMigrationIntegrationTest {
         PostgresSchemaLease.open().use { lease ->
             val datasetId = open(lease).use { it.datasetId }
             lease.openConnection().use { connection -> connection.createStatement().use { statement ->
-                // This isolated fixture emulates the immediately preceding schema, never a live instance.
+                // 这个隔离的夹具模拟的是紧邻前一版的 schema，绝不是线上实例。
                 statement.execute(
                     "DROP TABLE admin_security_audits, admin_security_credentials, document_comments, " +
                         "content_search_pending, task_commands, task_audits, task_extensions, task_attachment_paths, " +
@@ -390,7 +390,7 @@ class SchemaMigrationIntegrationTest {
         maxPoolSize = 1,
     )
 
-    /** Reproduce the deployed epoch-1 layout and a real row, without changing its dataset metadata. */
+    /** 复现已部署的 epoch-1 布局与一条真实数据行，但不改动其 dataset 元数据。 */
     private fun restoreLegacyTelemetryLayout(connection: Connection, removeLedger: Boolean) {
         connection.createStatement().use { statement ->
             statement.execute(if (removeLedger) "DROP TABLE schema_migrations" else "DELETE FROM schema_migrations")

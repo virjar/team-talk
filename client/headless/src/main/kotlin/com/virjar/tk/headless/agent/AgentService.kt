@@ -46,7 +46,7 @@ object AgentService {
         val dataDirectory = AgentDataDirectoryPolicy.openPreparedForService(File(request.dataDirectory), identity)
         val managed = HeadlessBundleInstaller.managedPrefix(File(home))
         managed?.let { validateManagedServiceOwner(it, identity) }
-        // The prepared data owner has been checked before reading settings, even when the installer is root.
+        // 读取设置之前就已校验准备好的数据目录 owner，即使安装器本身是 root。
         val plan = buildInstallPlan(args, home, HeadlessConfiguration.load(dataDirectory.root.toFile()), managed?.path)
         AgentCredentials.requireActiveForInstall(dataDirectory, plan.deploymentIdentity)
         writeUnitAtomically(plan.unit)
@@ -115,7 +115,7 @@ object AgentService {
 
         val executableArguments = buildList {
             if (stableHome != null) {
-                // This wrapper resolves current to the immutable physical bundle and acquires its runtime lease.
+                // 这个包装脚本把 current 解析到不可变的物理 bundle 并获取其运行时租约。
                 add("$stableHome/bin/tt-agent")
             } else {
                 add("/usr/bin/java")
@@ -136,7 +136,7 @@ object AgentService {
             add("--server-url")
             add(settings.serverUrl)
         }.joinToString(" ", transform = ::systemdQuote)
-        // Only an explicit JVM certificate override is frozen here. Saved certificates are read from the dataDir.
+        // 只有显式的 JVM 证书覆盖会固化在这里；已保存的证书从 dataDir 读取。
         val certificateEnvironment = if (stableHome != null && explicitCertificate != null) {
             "Environment=${systemdQuote("JAVA_TOOL_OPTIONS=-Dteamtalk.tcp.certificate.base64=$explicitCertificate")}"
         } else ""
@@ -229,7 +229,7 @@ WantedBy=multi-user.target
         return resolved
     }
 
-    /** Portable installations are private to their owner; systemd must run as that same non-root account. */
+    /** 便携式安装对其 owner 私有；systemd 必须以同一个非 root 账号运行。 */
     internal fun validateManagedServiceOwner(prefix: File, identity: AgentUnixIdentity) {
         val path = prefix.toPath()
         require(Files.isDirectory(path, NOFOLLOW_LINKS) && !Files.isSymbolicLink(path)) { "Invalid managed service prefix" }

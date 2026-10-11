@@ -208,7 +208,7 @@ class ClientReleasePublisher(
 
     private fun upload(uploadZip: File, label: String): String {
         val boundary = "teamtalk-${UUID.randomUUID()}"
-        // Keep large desktop runtimes on disk throughout ZIP assembly and HTTP upload.
+        // 大体积桌面运行时在 ZIP 组装与 HTTP 上传全程保持磁盘直读，不整读进内存。
         val prefix = "--$boundary\r\n" +
             "Content-Disposition: form-data; name=\"release\"; filename=\"release.zip\"\r\n" +
             "Content-Type: application/zip\r\n\r\n"

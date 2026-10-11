@@ -6,7 +6,7 @@ import deployment.runCheckedProcess
 import java.io.File
 import java.nio.file.Files
 
-/** Tiny real binary manifest/resources APKs; no application compilation, signing or network required. */
+/** 极小的真实二进制 manifest/resources APK；无需应用编译、签名或网络。 */
 internal fun writeAndroidApkFixture(
     target: File,
     producer: BundleIdentity,

@@ -8,7 +8,7 @@ internal actual fun platformSqliteBusy(failure: Throwable): Boolean =
 internal actual fun platformExceptionClassName(failure: Throwable): String = failure::class.simpleName ?: "Throwable"
 internal actual fun platformTelemetryStackFrames(failure: Throwable, limit: Int): List<TelemetryStackFrame> =
     failure.stackTraceToString().lineSequence().drop(1).mapNotNull { line ->
-        // Native symbol lines carry a kfun symbol. Never retain exception text or arbitrary paths.
+        // 原生符号行携带 kfun 符号。绝不保留异常文本或任意路径。
         val symbol = line.substringAfter("kfun:", "").substringBefore(" + ").takeIf { it.isNotBlank() }
             ?: return@mapNotNull null
         TelemetryStackFrame(

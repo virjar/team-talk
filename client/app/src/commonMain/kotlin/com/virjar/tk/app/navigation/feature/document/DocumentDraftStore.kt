@@ -72,7 +72,7 @@ interface DocumentDraftPersistence {
     fun write(ownerKey: DocumentDraftOwnerKey, payload: () -> DocumentDraftPayload): Boolean
     /** 等待本次调用之前的每一个已接受的修改都持久化或终止性失败。 */
     fun flush(): Boolean
-    /** UI workflows await durability without selecting a platform worker or blocking Main. */
+    /** UI 工作流直接等待落盘，无需选择平台 worker 或阻塞 Main。 */
     suspend fun awaitDurability(): Boolean = withContext(Dispatchers.Default) { flush() }
     /**
      * 恰好当每一个被请求的身份都被持久地退役时返回 true。在那个不可逆点之后，

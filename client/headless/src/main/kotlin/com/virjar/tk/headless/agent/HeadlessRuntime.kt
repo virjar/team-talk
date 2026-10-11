@@ -6,7 +6,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.io.File
 
-/** The launcher passes its physical bundle root; source/IDE runs have no bundle lease. */
+/** 启动器传入其物理 bundle 根目录；源码/IDE 运行没有 bundle 租约。 */
 internal object HeadlessRuntime {
     fun currentBundle(): File? = System.getProperty("teamtalk.headless.bundle")
         ?.takeIf(String::isNotBlank)?.let(::File)

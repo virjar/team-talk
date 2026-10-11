@@ -21,7 +21,7 @@ application {
 }
 
 tasks.named<Jar>("jar") {
-    // Deployment requires lib/server.jar; release identity remains in the generated manifests.
+    // 部署要求 lib/server.jar；发布身份仍保留在生成的 manifest 中。
     archiveFileName.set("server.jar")
 }
 
@@ -37,7 +37,7 @@ val serverProtocolWindow = deployment.ServerProtocolWindow(
     minimumMinor = rootProject.extra.get("minimumProtocolMinor") as Int,
     currentMinor = rootProject.extra.get("protocolMinor") as Int,
 )
-// Admin owns its toolchain and producer tasks; Server consumes only its built artifact.
+// Admin 自带工具链与产出任务；Server 只消费其构建产物。
 val adminDist by configurations.creating {
     isCanBeResolved = true
     isCanBeConsumed = false
@@ -119,7 +119,7 @@ tasks.register("buildServerDist") {
 
 dependencies {
     add(adminDist.name, project(path = ":server:admin", configuration = "adminDist"))
-    // Koin contributes ktor-server-di; it must use the same Ktor release as our HTTP engine.
+    // Koin 会传递 ktor-server-di；它必须与我们的 HTTP 引擎使用同一 Ktor 版本。
     implementation(platform(libs.ktor.bom))
     // 媒体缩略图：图片纯 Java2D；视频 javacv JNI（native 内嵌 jar，平台裁剪：服务器 linux + 开发 mac 双架构）
     implementation(libs.javacv)
@@ -163,9 +163,9 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-// Remote capacity baselines are intentionally isolated from the ordinary test source set. The
-// capacity code may reuse deterministic statistics and RemoteAcceptanceSupport from test output,
-// but `server:test` never compiles or discovers the remote scenario itself.
+// 远程容量基线刻意与普通 test 源集隔离。
+// 容量代码可以复用 test 输出中的确定性统计与 RemoteAcceptanceSupport，
+// 但 `server:test` 永远不会编译或发现远程场景本身。
 val capacityTestSourceSet = sourceSets.create("capacityTest") {
     compileClasspath += sourceSets["main"].output + sourceSets["test"].output
     runtimeClasspath += sourceSets["main"].output + sourceSets["test"].output
@@ -205,17 +205,17 @@ tasks.test {
         // 协程测试的简略栈经常只剩 runBlocking/runTest 声明行，必须保留实际断言及 expected/actual。
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
-    // Runtime containers bind independent Database/pool instances and isolation is covered with two simultaneous
-    // TestEnvironments. Keep one fork to bound PostgreSQL connections and native RocksDB/Lucene resources for the
-    // complete suite; this is a resource policy, not a database-ownership correctness requirement.
+    // 运行时容器会绑定各自独立的 Database/连接池实例，隔离性已由两个同时运行的
+    // TestEnvironment 覆盖。整套测试保持单 fork，以约束 PostgreSQL 连接与本地
+    // RocksDB/Lucene 资源；这是资源策略，不是数据库所有权正确性的要求。
     maxParallelForks = 1
     systemProperty("junit.jupiter.execution.parallel.enabled", "false")
     // 服务端测试会间接加载 :client:app 的 JVM 类和 Java2D 缩略图，但不应注册 macOS GUI 应用。
     // JBR 17 在新版 macOS 上尝试初始化 AppKit 会直接 SIGABRT（exit 134）；headless
     // 仍保留 BufferedImage/ImageIO 能力，并让服务端测试符合真实无界面运行形态。
     systemProperty("java.awt.headless", "true")
-    // Thumbnail decoding runs in a helper JVM. Gradle test workers expose only their bootstrap jar
-    // through java.class.path, so provide the real test runtime path explicitly to child helpers.
+    // 缩略图解码运行在辅助 JVM 中。Gradle test worker 通过 java.class.path 只暴露自身
+    // 的 bootstrap jar，因此要把真实的 test 运行时类路径显式传给子辅助进程。
     doFirst {
         systemProperty("teamtalk.thumbnail.helper.classpath", sourceSets["test"].runtimeClasspath.asPath)
         val headlessDist = project(":client:headless").tasks.named<org.gradle.api.tasks.Sync>("headlessDist").get()
@@ -268,8 +268,8 @@ tasks.register<Test>("acceptanceTest") {
     systemProperty("tk.e2e.deploy.path", deploymentConfig.deployPath)
 }
 
-// Reuse the ordinary business scenarios, excluding process kills, service restarts,
-// admin fixtures and capacity runs. This is a preview smoke, not a release certificate.
+// 复用普通业务场景，排除进程击杀、服务重启、admin 夹具与容量运行。
+// 这是预览冒烟验证，不是发布认证。
 tasks.register<Test>("previewSmokeTest") {
     description = "Run the bounded developer-preview business smoke against the configured deployment"
     configureRemoteBusinessTests()
@@ -277,8 +277,8 @@ tasks.register<Test>("previewSmokeTest") {
 }
 
 /**
- * Explicit, bounded remote message capacity baseline. This is development evidence, not a
- * production benchmark or product capacity promise, and never participates in ordinary test.
+ * 显式、有界的远程消息容量基线。这是研发证据，不是生产基准测试或产品容量承诺，
+ * 也绝不参与普通 test。
  */
 tasks.register<Test>("capacityTest") {
     group = "verification"
@@ -330,8 +330,8 @@ tasks.register<Test>("capacityTest") {
 }
 
 /**
- * Real-client connection/authentication baseline. Kept separate from message capacity so a run
- * has one load shape, one report, and an unambiguous failure boundary.
+ * 真实客户端的连接/认证基线。与消息容量基线分开，保证一次运行只有一种负载形态、
+ * 一份报告和明确的失败边界。
  */
 tasks.register<Test>("connectionCapacityTest") {
     group = "verification"
@@ -394,8 +394,8 @@ tasks.register<Test>("connectionCapacityTest") {
 }
 
 /**
- * Real-client first-page search baseline. Message and user requests use their production binary
- * RPCs and distinct user command lanes; no in-process search shortcut participates in the run.
+ * 真实客户端的第一页搜索基线。消息与用户请求使用生产环境的二进制 RPC 与各自独立的
+ * 用户命令通道；运行中没有进程内搜索捷径参与。
  */
 val searchCapacityReportOutput = providers.systemProperty("tk.searchCapacity.report")
     .orElse(providers.gradleProperty("searchCapacityReport"))
@@ -454,8 +454,8 @@ val searchCapacityTestTask = tasks.register<Test>("searchCapacityTest") {
     outputs.upToDateWhen { false }
 }
 
-// Task actions start after their compile dependencies. Clear stale evidence as soon as this task
-// graph is accepted so a compilation failure cannot leave a previous successful report behind.
+// 任务动作在其编译依赖之后才开始执行。任务图一旦接受就立即清理过期证据，使编译
+// 失败时不可能残留上一次成功的报告。
 gradle.taskGraph.whenReady {
     if (!gradle.startParameter.isDryRun && hasTask(searchCapacityTestTask.get())) {
         val staleReport = file(searchCapacityReportOutput.get())
@@ -468,9 +468,9 @@ gradle.taskGraph.whenReady {
 }
 
 /**
- * Real SDK attachment upload, group-file publication, and authenticated peer-download baseline.
- * Capacity samples use ordinary one-shot upload identities; explicit same-identity recovery after
- * an unknown response is covered by the deployment acceptance suite instead of skewing throughput.
+ * 真实 SDK 的附件上传、群文件发布与带认证的对端下载基线。容量采样使用普通的一次性
+ * 上传身份；未知响应后的显式同身份恢复
+ * 由部署验收套件覆盖，以免在此干扰吞吐测量。
  */
 val attachmentCapacityReportOutput = providers.systemProperty("tk.attachmentCapacity.report")
     .orElse(providers.gradleProperty("attachmentCapacityReport"))
@@ -547,8 +547,8 @@ gradle.taskGraph.whenReady {
 }
 
 /**
- * One isolated >32 MiB FileStore filesystem-tier gate. The scenario performs exactly one bounded
- * TeamTalk unit restart and never changes host networking or stops the service directly.
+ * 单次隔离的 >32 MiB FileStore 文件系统层门禁。该场景只执行一次有界的 TeamTalk 单元
+ * 重启，绝不修改宿主机网络，也不直接停止服务。
  */
 val filesystemTierCapacityReportOutput = providers
     .systemProperty("tk.filesystemTierCapacity.report")
@@ -610,12 +610,12 @@ gradle.taskGraph.whenReady {
 }
 
 /**
- * Reusable real-client document fixture driver for Desktop/Android UI acceptance.
+ * 面向 Desktop/Android UI 验收、可复用的真实客户端文档夹具驱动。
  *
- * The implementation lives on the test runtime classpath so it can reuse the public client SDK
- * and the remote-acceptance transport without entering the production server distribution. The
- * main program admits credentials only from its private state directory; this task injects only
- * the non-secret deployment identity selected by the compiled buildSrc deployment configuration.
+ * 实现放在 test 运行时 classpath 上，以便复用公开客户端 SDK
+ * 与远程验收传输层，而不进入生产服务端分发包。
+ * 主程序只从其私有状态目录接受凭据；本任务只注入由编译期
+ * buildSrc 部署配置选出的非机密部署身份。
  */
 tasks.register<JavaExec>("documentFixture") {
     group = "verification"

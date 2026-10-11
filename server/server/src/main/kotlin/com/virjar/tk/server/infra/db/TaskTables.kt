@@ -15,7 +15,7 @@ object WorkTasks : Table("work_tasks") {
     val contextId = varchar("context_id", 36)
     val dueAt = long("due_at").nullable()
     val remindedAt = long("reminded_at").nullable()
-    /** Retained across reschedule/reopen so an equal or rolled-back wall clock cannot reuse an alert identity. */
+    /** 跨改期/重开保留，使相等或回拨的墙上时钟无法复用同一提醒身份。 */
     val lastReminderAt = long("last_reminder_at").nullable()
     val revision = long("revision")
     val createdAt = long("created_at")

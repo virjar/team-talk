@@ -42,7 +42,7 @@ class IosTelemetryNamespaceLifecycleTest {
         assertEquals(listOf(identities.first()), readRegistry(root).identities)
         assertNull(readRegistry(root).cycleDeadlineEpochMs)
 
-        // A still-live owner can publish again after another owner has retired its old namespace.
+        // 仍存活的 owner 可在另一个 owner 退役其旧命名空间后再次发布。
         val revived = segmentName(NOW, "revived")
         stores[1].writeNew(revived, "revived")
         assertEquals("revived", stores[1].read(revived))

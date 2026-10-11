@@ -3,7 +3,7 @@ plugins {
     alias(libs.plugins.android.library)
 }
 
-/** Netty framing adapter. The wire contract and payload codecs remain pure in :protocol:protocol. */
+/** Netty 帧适配器。wire 契约与 payload 编解码保持纯净，位于 :protocol:protocol。 */
 kotlin {
     // T011：Gradle 运行 JDK 21；JVM 产物显式钉 21，Android 字节码保持 17（设备兼容基线）。
     jvm() {
@@ -20,7 +20,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             api(project(":protocol:protocol"))
-            // Keep direct IM transport and Ktor's transitive Netty modules on one patch level.
+            // 让直接 IM 传输与 Ktor 传递引入的 Netty 模块保持同一补丁版本。
             api(project.dependencies.platform(libs.netty.bom))
             api(libs.netty.handler)
         }

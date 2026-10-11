@@ -8,7 +8,7 @@ import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** One Application owns its provider credentials, token caches and outbound connection pool. */
+/** 单个 Application 持有其 provider 凭据、token 缓存与出站连接池。 */
 internal class OemPushSender(
     configuration: OemPushConfiguration,
     shutdownTimeoutMillis: Long = 5_000L,
@@ -61,7 +61,7 @@ internal class OemPushSender(
 
     internal fun startRequest(request: HttpRequest): CompletableFuture<HttpResponse<ByteArray>> {
         check(!closing.get()) { "OEM push sender is closed" }
-        // shutdownNow also rejects a request racing the close check.
+        // shutdownNow 也会拒绝与关闭检查竞态中的请求。
         return httpClient.sendAsync(request) { BoundedPushResponse() }
     }
 

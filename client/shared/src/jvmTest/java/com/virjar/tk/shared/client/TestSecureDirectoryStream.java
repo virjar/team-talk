@@ -16,7 +16,7 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.Set;
 
-/** Path-backed SecureDirectoryStream test double; production never uses this fallback. */
+/** 基于 Path 的 SecureDirectoryStream 测试替身；生产环境绝不使用此回退。 */
 public final class TestSecureDirectoryStream implements SecureDirectoryStream<Path> {
     private final Path directory;
     private final DirectoryStream<Path> delegate;

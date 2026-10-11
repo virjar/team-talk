@@ -33,7 +33,7 @@ class DesktopDistributionIsolationTest {
         val rootKey = Files.readAttributes(root, java.nio.file.attribute.BasicFileAttributes::class.java).fileKey()
         Files.setPosixFilePermissions(root, PosixFilePermissions.fromString("rwxr-xr-x"))
 
-        // SDK / headless callers remain strict; only Desktop admission performs this migration.
+        // SDK / headless 调用方仍保持严格；只有 Desktop 准入执行这项迁移。
         assertFailsWith<IllegalArgumentException> { JvmPrivateDataDirectory.openExisting(root.toFile()) }
         assertEquals(root.toFile(), DesktopDataDirectoryAdmission.prepare(plan))
         assertEquals(PosixFilePermissions.fromString("rwx------"), Files.getPosixFilePermissions(root))
@@ -86,7 +86,7 @@ class DesktopDistributionIsolationTest {
     )
 
     private fun withPosixDesktopHome(action: (Path) -> Unit) {
-        // Standard temp parents can be world-writable; exercise the actual Desktop safe-parent admission.
+        // 标准临时父目录可能是全局可写的；这里实际走一遍 Desktop 的安全父目录准入。
         val home = Files.createTempDirectory(Files.createDirectories(Path.of("build")), "desktop-permissions-")
             .toRealPath(LinkOption.NOFOLLOW_LINKS)
         try {
@@ -145,7 +145,7 @@ class DesktopDistributionIsolationTest {
             assertTrue(privateLock.tryLock())
             assertFalse(duplicatePrivateLock.tryLock())
 
-            // Even the same account and server must not share refresh credentials across installs.
+            // 即使同一账号和服务器，跨安装也不得共享刷新凭据。
             val deployment = DeploymentIdentity.from("127.0.0.1", 5100, "http://127.0.0.1:8080")
             val publicStore = DesktopTokenStore(publicRoot, deployment)
             val privateStore = DesktopTokenStore(privateRoot, deployment)

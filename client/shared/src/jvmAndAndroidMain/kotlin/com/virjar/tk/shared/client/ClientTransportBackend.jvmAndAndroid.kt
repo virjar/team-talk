@@ -24,7 +24,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 internal actual fun createClientTransportBackend(tcpTlsCertificatePem: String?): ClientTransportBackend =
     NettyClientTransportBackend(ClientTransportTls(tcpTlsCertificatePem))
 
-/** Netty owns socket/TLS/idle handling; logical ownership and retries live in common code. */
+/** Netty 负责 socket/TLS/空闲检测；逻辑归属与重试都在公共代码中。 */
 internal class NettyClientTransportBackend(
     private val transportTls: ClientTransportTls = ClientTransportTls(),
 ) : ClientTransportBackend {
@@ -82,8 +82,8 @@ internal class NettyClientTransportBackend(
                 channel = future.channel()
                 future.addListener { completed ->
                     val result = completed as ChannelFuture
-                    // A failed bootstrap can complete inline while common code installs its AUTH lease.
-                    // Neither ready nor failure may retire that lease before installation returns.
+                    // 失败的 bootstrap 可能在公共代码安装 AUTH 租约期间内联完成。
+                    // ready 与失败都不得在安装返回之前撤销该租约。
                     if (!enqueue { completeConnect(result) }) result.channel().close()
                 }
             } catch (failure: Throwable) {
@@ -126,7 +126,7 @@ internal class NettyClientTransportBackend(
             checkNotNull(channel).writeAndFlush(proto)
         }
         override fun onAuthenticationAccepted() {
-            // PacketCodec raises its bound while decoding AUTH_RESP, before a coalesced sync frame.
+            // PacketCodec 在解码 AUTH_RESP 时、在合并的 sync 帧之前提升其上限。
         }
         override fun close() {
             closed = true

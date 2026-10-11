@@ -26,7 +26,7 @@ class ExposedAdminSecurityStore(private val database: Database) : AdminSecurityS
     }
 
     override fun saveCredential(credential: AdminCredential, action: String, now: Long) = transaction(database) {
-        // The application owns one administrator service. The credential and its audit commit together.
+        // 应用只有一个管理员服务。凭据与其审计记录一并提交。
         AdminSecurityCredentials.deleteWhere { singleton eq 1 }
         AdminSecurityCredentials.insert {
             it[singleton] = 1
@@ -80,7 +80,7 @@ class ExposedAdminSecurityStore(private val database: Database) : AdminSecurityS
             it[AdminSecurityAudits.result] = result
             it[httpStatus] = status
         }[AdminSecurityAudits.id]
-        // Monotonic ids provide a bounded, keyset-paged local history, including interrupted attempts.
+        // 单调递增的 id 提供有界、按 keyset 分页的本地历史，包括被中断的尝试。
         AdminSecurityAudits.deleteWhere { AdminSecurityAudits.id lessEq (id - MAX_AUDIT_RECORDS) }
         return id
     }

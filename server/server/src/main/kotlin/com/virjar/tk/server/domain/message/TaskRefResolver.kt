@@ -4,7 +4,7 @@ import com.virjar.tk.protocol.body.TaskRefBody
 import com.virjar.tk.protocol.model.TaskPolicy
 import com.virjar.tk.server.domain.task.TaskService
 
-/** Sending freezes a participant-authorized preview; receiving or forwarding does not grant task access. */
+/** 发送会冻结一份经参与者授权的预览；接收或转发不会授予任务访问权。 */
 class TaskRefResolver(private val tasks: TaskService) {
     suspend fun resolve(uid: String, body: TaskRefBody): TaskRefBody {
         val task = tasks.get(uid, body.taskId)

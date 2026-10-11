@@ -67,7 +67,7 @@ class WireSchemaTest {
             assertEquals(current, reconcileWireSchema(first, published, current, 0, emptySet(), errors::add))
             assertTrue(errors.isEmpty(), errors.toString())
         }
-        // After publication, the same modification is a compatibility violation.
+        // 发布之后，同样的修改就构成兼容性违规。
         val errors = mutableListOf<String>()
         reconcileWireSchema(first, first, changed, 0, emptySet(), errors::add)
         assertTrue(errors.any { "Existing wire signature cannot change" in it })
@@ -82,7 +82,7 @@ class WireSchemaTest {
         val errors = mutableListOf<String>()
         assertEquals(compacted, reconcileWireSchema(development, published, compacted, 0, emptySet(), errors::add))
         assertTrue(errors.isEmpty(), errors.toString())
-        // The generator still rejects an unregistered TSV mismatch until writeProtocolBaseline.
+        // 在执行 writeProtocolBaseline 之前，生成器仍拒绝未登记的 TSV 差异。
         assertTrue(compacted.text() != development.text())
     }
 

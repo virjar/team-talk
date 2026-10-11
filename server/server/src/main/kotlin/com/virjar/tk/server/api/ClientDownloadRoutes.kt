@@ -227,7 +227,7 @@ private fun clientDownloadContentType(file: File): ContentType = when (file.exte
     else -> ContentType.defaultForFile(file)
 }
 
-/** Only direct regular package files under the trusted downloads root are publicly exposed. */
+/** 只公开暴露受信下载根目录下的直接普通制品文件。 */
 internal fun resolveDirectDownload(downloadsDir: File, filename: String): File? {
     if (
         filename.length !in 1..255 ||

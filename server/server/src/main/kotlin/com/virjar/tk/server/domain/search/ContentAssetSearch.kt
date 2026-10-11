@@ -20,7 +20,7 @@ data class ContentAssetPending(val key: ContentAssetKey, val revision: Long)
 data class ContentAssetAnchor(val updatedAt: Long, val id: String)
 data class ContentAssetMatch(val key: ContentAssetKey, val scopeId: String, val revision: Long, val updatedAt: Long)
 
-/** PostgreSQL owns current objects and a coalesced, same-transaction projection queue. */
+/** PostgreSQL 持有当前对象以及合并进同一事务的投影队列。 */
 interface ContentAssetRepository {
     fun pending(limit: Int): List<ContentAssetPending>
     fun acknowledge(pending: ContentAssetPending)
@@ -28,11 +28,11 @@ interface ContentAssetRepository {
     fun scan(kind: Int, afterId: String?, limit: Int): List<ContentAssetProjection>
     fun documentScopes(transaction: PgReadTransactionContext, uid: String, scopeId: String): Set<String>
     fun documentAccess(transaction: PgReadTransactionContext, uid: String, spaceIds: Set<String>): DocumentReadAccessSnapshot
-    /** Joins the caller's current PostgreSQL read snapshot. Never returns content bodies or paths. */
+    /** 加入调用方当前的 PostgreSQL 读快照。绝不返回内容正文或路径。 */
     fun currentHits(kind: Int, ids: Set<String>): Map<String, ContentSearchHit>
 }
 
-/** No Lucene state or PostgreSQL implementation escapes these ports. */
+/** 任何 Lucene 状态或 PostgreSQL 实现都不会逃出这些端口。 */
 interface ContentAssetIndex {
     fun search(request: ContentSearchRequest, scopes: Set<String>, after: ContentAssetAnchor?, limit: Int): List<ContentAssetMatch>
 }

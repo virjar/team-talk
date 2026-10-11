@@ -88,8 +88,8 @@ private class IosClientTelemetrySegmentStore(
         require(nowEpochMs >= 0L && cutoffEpochMs >= 0L && retentionMillis > 0L)
         require(maxVisitedNodes >= 2 * MAX_NAMESPACE_INSPECTION_NODES && maxDeletes > 0)
         val registry = loadRegistry()
-        // Reserve a complete scan and a deletion recheck for each identity. The persisted identity-key
-        // cursor survives reopening the store and deletion; POSIX directory cookies do neither.
+        // 为每个 identity 预留一次完整扫描和一次删除复查。持久化的 identity 键
+        // 游标在重开 store 与执行删除后仍然有效；POSIX 目录 cookie 两者都做不到。
         val page = registry.page(maxVisitedNodes / (2 * MAX_NAMESPACE_INSPECTION_NODES))
         var updatedRegistry = page.registry
         val candidates = mutableListOf<StoredTelemetryNamespace>()
@@ -149,7 +149,7 @@ private class IosClientTelemetrySegmentStore(
     private fun resolveLeaf(identity: List<String>): PlatformFile? = try {
         iosPrivateDirectory(dataDir, listOf(CLIENT_TELEMETRY_ROOT_DIRECTORY) + identity, create = false)
     } catch (_: IllegalArgumentException) {
-        // A replaced ancestor or symlink is not a missing namespace and must remain registered.
+        // 祖先被替换或存在符号链接并不等于命名空间缺失，必须保留在注册表中。
         null
     }
 
@@ -168,8 +168,8 @@ private class IosClientTelemetrySegmentStore(
         val committed = files.filter { it.name != CLIENT_TELEMETRY_ATOMIC_PENDING_FILE }
         if (committed.isNotEmpty() && committed.none { it.name == CLIENT_TELEMETRY_MARKER_FILE }) return null to files.size
         if (committed.count { CLIENT_TELEMETRY_SEGMENT_FILE_REGEX.matches(it.name) } > MAX_TELEMETRY_NAMESPACE_SEGMENTS) return null to files.size
-        // Only the exact, regular, bounded pending file is owned. Validate the entire leaf first so
-        // malformed/unknown contents remain untouched, including their potential recovery evidence.
+        // 只拥有那个精确、常规且有界的 pending 文件。先校验整个 leaf，让
+        // 畸形/未知内容保持原样，包括它们潜在的恢复证据。
         files.firstOrNull { it.name == CLIENT_TELEMETRY_ATOMIC_PENDING_FILE }?.let { pending ->
             check(pending.delete())
             leaf.syncToDisk()
@@ -184,7 +184,7 @@ private class IosClientTelemetrySegmentStore(
 }
 
 private const val MAX_MARKER_BYTES = 32L
-private const val MAX_NAMESPACE_ENTRIES = MAX_TELEMETRY_NAMESPACE_SEGMENTS + 2 // marker + fixed pending
+private const val MAX_NAMESPACE_ENTRIES = MAX_TELEMETRY_NAMESPACE_SEGMENTS + 2 // marker 文件 + 固定 pending 文件
 private const val NAMESPACE_DIRECTORY_NODES = 4 // root + deployment/dataset/uid
 private const val MAX_NAMESPACE_INSPECTION_NODES = NAMESPACE_DIRECTORY_NODES + MAX_NAMESPACE_ENTRIES + 1
 

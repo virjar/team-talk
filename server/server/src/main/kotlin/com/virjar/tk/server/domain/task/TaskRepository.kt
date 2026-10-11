@@ -4,9 +4,9 @@ import com.virjar.tk.protocol.model.*
 import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 
-/** PostgreSQL owns task participants, command receipts, audit history and reminder delivery markers. */
+/** PostgreSQL 持有任务参与者、命令回执、审计历史与提醒投递标记。 */
 interface TaskRepository {
-    /** Sorted user locks precede task locks; this also serializes command identities per actor. */
+    /** 先按排序获取用户锁再获取任务锁；这同时也让每个操作者的命令标识串行化。 */
     fun lockUsers(transaction: PgWriteTransactionContext, uids: Set<String>): Set<String>
     fun find(transaction: PgReadTransactionContext, taskId: String): WorkTask?
     fun lockTask(transaction: PgWriteTransactionContext, taskId: String): WorkTask?
@@ -20,7 +20,7 @@ interface TaskRepository {
     fun requireReceiptCapacity(transaction: PgWriteTransactionContext, actorUid: String, now: Long)
     fun appendReceipt(transaction: PgWriteTransactionContext, receipt: TaskCommandReceipt)
     fun dueCandidates(transaction: PgReadTransactionContext, now: Long, limit: Int): List<String>
-    /** Caller holds the task lock. The returned delivery timestamp is unique across reminder resets. */
+    /** 调用方已持有任务锁。返回的投递时间戳在多次提醒重置之间保持唯一。 */
     fun markReminded(transaction: PgWriteTransactionContext, taskId: String, now: Long): Long
     fun cleanupReceipts(transaction: PgWriteTransactionContext, now: Long, limit: Int): Int
     fun extension(transaction: PgReadTransactionContext, taskId: String): TaskExtension

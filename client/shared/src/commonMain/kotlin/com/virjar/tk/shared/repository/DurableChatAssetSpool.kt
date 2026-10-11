@@ -10,7 +10,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
-/** Fixed shards bound coordination memory while reopened stores share reservations and read leases. */
+/** 固定分片只绑定协调内存；同一目录重新打开的存储共享其中的预留与读租约。 */
 private object SpoolCoordination {
     data class Key(val directory: String, val name: String)
     class Shard {
@@ -23,7 +23,7 @@ private object SpoolCoordination {
     fun forDirectory(directory: String): Shard = shards[(directory.hashCode() and Int.MAX_VALUE) % shards.size]
 }
 
-/** Account namespace, immutable file format and publication/read ownership are identical on every OS. */
+/** 账号命名空间、不可变文件格式与发布/读取归属在每个 OS 上完全一致。 */
 internal class DurableChatAssetSpool(
     private val files: ChatAssetSpoolStorage,
     private val quotaBytes: Long,
@@ -116,7 +116,7 @@ internal class DurableChatAssetSpool(
                     val before = files.inspect(name)
                     files.openReader(name).use { reader ->
                         val bytes = ByteArray(DEFAULT_UPLOAD_CHUNK_BYTES)
-                        // Digest verification must finish before even the first byte reaches a caller.
+                        // 摘要校验必须在第一个字节到达调用方之前完成。
                         createChatAssetDigest().use { digest ->
                             consume(reader, bytes, staged.length) { count -> digest.update(bytes, 0, count) }
                             check(digest.finish() == staged.sha256) { "附件源文件校验失败，请重新选择" }

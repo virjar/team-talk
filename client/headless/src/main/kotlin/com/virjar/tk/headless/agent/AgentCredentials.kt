@@ -88,7 +88,7 @@ object AgentCredentials {
 
     internal data class Diagnostics(val state: String?, val uid: String?, val deploymentFingerprint: String?)
 
-    /** Read-only: diagnostics must not migrate or invalidate credentials for a guessed endpoint. */
+    /** 只读：诊断不得为猜测的端点迁移或作废凭据。 */
     @Synchronized
     internal fun diagnostics(dataDir: File): Diagnostics? {
         val directory = AgentDataDirectoryPolicy.openRuntime(dataDir)

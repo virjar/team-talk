@@ -37,7 +37,7 @@ class PacketCodecSecurityTest {
             assertEquals(response, client.readInbound())
             assertEquals(PacketCodec.UNAUTHED_LIMIT, codec.maxPayloadLimit)
             assertCorrupted { server.writeInbound(Unpooled.wrappedBuffer(frame.copyOf(PacketCodec.HEADER_SIZE))) }
-            // The historical failed AUTH_RESP wire rule remains unchanged.
+            // 历史上失败 AUTH_RESP 的 wire 规则保持不变。
             assertFailsWith<ProtocolEncodingException> {
                 ProtoCodec.encode(AuthResponsePayload(
                     code = AuthResponsePayload.CODE_ACCOUNT_BANNED,

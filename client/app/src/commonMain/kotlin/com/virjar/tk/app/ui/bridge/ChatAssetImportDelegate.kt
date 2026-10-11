@@ -2,14 +2,14 @@ package com.virjar.tk.app.ui.bridge
 
 import com.virjar.tk.shared.repository.UploadSource
 
-/** Optional durable chat path. Document imports and message edits keep their existing owner. */
+/** 可选的聊天持久化通道。文档导入与消息编辑保留其既有 owner。 */
 interface ChatAssetImportDelegate {
     fun handles(ownerKey: String): Boolean
 
-    /** Replay persisted jobs to this editor; must not insert a second Markdown placement. */
+    /** 向该编辑器重放持久化的任务；不得插入第二个 Markdown placement。 */
     fun bind(ownerKey: String, sink: EmbeddedAssetImportEventSink): EmbeddedAssetImportRegistration
 
-    /** Return only after immutable source bytes and the upload command have both been persisted. */
+    /** 只有在不可变源字节与上传命令都已持久化之后才返回。 */
     suspend fun prepare(
         ownerKey: String,
         assetId: String,
@@ -20,6 +20,6 @@ interface ChatAssetImportDelegate {
     fun cancel(assetId: String): Boolean
     fun retry(assetId: String): Boolean
 
-    /** Preparation failed before a recoverable Markdown node could be admitted. */
+    /** 准备失败时还未准入任何可恢复的 Markdown 节点。 */
     fun preparationFailed(ownerKey: String)
 }

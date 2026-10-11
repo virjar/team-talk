@@ -47,7 +47,7 @@ class ExposedChatDraftRepository(private val maxActiveDrafts: Int = 1_000) : Cha
         val row = ChatDrafts.selectAll().where { (ChatDrafts.uid eq uid) and (ChatDrafts.chatId eq chatId) }.singleOrNull()
         if (row != null) return ChatDraftSnapshot(chatId, row[ChatDrafts.revision], row[ChatDrafts.updatedAt],
             row[ChatDrafts.payload]?.let { ProtoCodec.decode(ChatDraftContent, it) })
-        // First use may adopt an existing plain mirror. Once a draft row exists, legacy writes cannot replace it.
+        // 首次使用可采纳既有的普通字符串镜像。一旦草稿行存在，旧版写入就无法替换它。
         val legacy = Conversations.select(Conversations.draft).where {
             (Conversations.uid eq uid) and (Conversations.chatId eq chatId)
         }.singleOrNull()?.get(Conversations.draft)

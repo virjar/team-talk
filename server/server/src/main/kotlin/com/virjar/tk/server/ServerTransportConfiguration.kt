@@ -21,7 +21,7 @@ internal data class ServerTcpTransportConfiguration(
     val health: TcpHealthProbeConfiguration,
 )
 
-/** Loaded once by the production composition root and shared by HTTPS, IM TCP, and self-health. */
+/** 由生产组合根加载一次，供 HTTPS、IM TCP 与自检健康探测共享。 */
 internal class ServerTlsMaterial private constructor(
     val keyStore: KeyStore,
     val keyAlias: String,
@@ -50,14 +50,14 @@ internal class ServerTlsMaterial private constructor(
                 init(keyStore, privateKeyPassword)
             }
             val tcpServerContext = SslContextBuilder.forServer(keyManagers)
-                // JDK engines are channel-owned and need no separate native reference-count release.
+                // JDK 引擎由 channel 持有，无需单独释放 native 引用计数。
                 .sslProvider(SslProvider.JDK)
                 .protocols("TLSv1.3", "TLSv1.2")
                 .build()
 
             val trustStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null, null) }
-            // Self-health pins only the configured leaf. Trusting the supplied chain would turn a
-            // public intermediate/root into a broad trust anchor and let a different leaf pass.
+            // 自检健康探测只固定配置的叶证书。信任传入的整条链会把
+            // 公共中间/根证书变成宽泛的信任锚，从而放行另一张叶证书。
             trustStore.setCertificateEntry(
                 "teamtalk-tcp-leaf",
                 requireNotNull(keyStore.getCertificate(alias)) {

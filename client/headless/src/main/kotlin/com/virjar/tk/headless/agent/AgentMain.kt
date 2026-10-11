@@ -522,7 +522,7 @@ class AgentRuntime(
 
     fun startHttp(bind: String) {
         check(server == null) { "HTTP server is already started" }
-        mcpAccess // Validate persistent grants before opening the local API.
+        mcpAccess // 在打开本地 API 之前先校验持久化的 grant。
         val endpoint = AgentBindPolicy.parse(bind)
         val s = HttpServer.create(endpoint.socketAddress(), 0)
         val executor = createAgentHttpExecutor()

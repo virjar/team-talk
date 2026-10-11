@@ -58,7 +58,7 @@ class AgentApi internal constructor(private val agent: AgentRuntime, private val
                 }
             }
             executed = result
-            // Especially important for recv-wait: the grant may have been revoked during its wait.
+            // 对 recv-wait 尤其重要：grant 可能在等待期间已被撤销。
             access.recheck(admitted)
             result
         } catch (failure: AgentMcpAccessException) {
@@ -75,8 +75,8 @@ class AgentApi internal constructor(private val agent: AgentRuntime, private val
             runCatching { agentApiLogger.fault("Agent API request failed at the internal boundary") }
             agentInternalErrorResponse()
         }
-        // A grant revoked after admission cannot undo a completed enqueue. Preserve its actual result
-        // in the audit even when the response body must be suppressed for the revoked caller.
+        // 准入之后被撤销的 grant 无法撤销已完成的入队。即使必须对被撤销的
+        // 调用方隐藏响应体，也要在审计中保留其实际结果。
         val actual = executed ?: response
         val state = (actual.second["data"] as? JsonObject)?.get("state")?.jsonPrimitive?.content
         access.finish(admitted, actual.first, state, response.first)

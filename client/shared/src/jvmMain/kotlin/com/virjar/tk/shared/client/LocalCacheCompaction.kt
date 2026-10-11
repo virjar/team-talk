@@ -17,7 +17,7 @@ data class LocalCacheCompactionReport(
     val path: String,
     val owner: LocalCacheDiagnosticOwner,
     val schemaVersion: Long,
-    /** Main database plus WAL, SHM and rollback journal, measured outside the maintenance connection. */
+    /** 主数据库加上 WAL、SHM 与回滚 journal，在维护连接之外计量。 */
     val bytesBefore: Long,
     val bytesAfter: Long,
     val pagesBefore: Long,
@@ -29,9 +29,9 @@ data class LocalCacheCompactionReport(
 private class LocalCacheCompactionFailure(reason: String) : IllegalStateException("Local cache compaction failed: $reason")
 
 /**
- * Explicit offline maintenance of one current JVM account database. The installation lease and a
- * dedicated SQLite exclusive lock remain held until VACUUM, checkpoint and connection close finish.
- * SQLite owns the transactional rewrite; no cache factory, migration, file replacement or cleanup runs.
+ * 针对单个当前 JVM 账号数据库的显式离线维护。安装租约与专用的 SQLite
+ * 排他锁会一直保持到 VACUUM、checkpoint 与连接关闭完成。事务性重写由
+ * SQLite 负责；不运行任何 cache factory、迁移、文件替换或清理。
  */
 object LocalCacheCompaction {
     const val MAX_DATABASE_BYTES = 512L * 1024 * 1024
@@ -48,7 +48,7 @@ object LocalCacheCompaction {
         try {
             val privateData = JvmPrivateDataDirectory.openExisting(root)
             val directories = components.dropLast(1)
-            // Validate without creating an absent namespace or database, including every parent component.
+            // 校验但不创建缺失的命名空间或数据库，包括每一个父级组件。
             privateData.requirePrivateFile(directories, components.last())
             val lease = try { JvmClientDataLease.acquire(root) }
                 catch (_: Exception) { fail("CLIENT_LOCK_UNAVAILABLE") }
@@ -66,8 +66,8 @@ object LocalCacheCompaction {
                     connection.executeMaintenance("PRAGMA fullfsync = ON")
                     connection.executeMaintenance("PRAGMA journal_size_limit = 0")
                     if (connection.maintenanceText("PRAGMA locking_mode = EXCLUSIVE") != "exclusive") fail("EXCLUSIVE_LOCK_UNAVAILABLE")
-                    // The root lease excludes TeamTalk clients. This also rejects an outstanding SQLite
-                    // transaction from an SDK caller or a client whose UI lock was just released.
+                    // 根租约已排除 TeamTalk 客户端。这同样拒绝来自 SDK 调用方、或 UI 锁
+                    // 刚被释放的客户端的未完成 SQLite 事务。
                     connection.executeMaintenance("BEGIN EXCLUSIVE")
                     connection.executeMaintenance("COMMIT")
                     val schema = connection.maintenanceLong("PRAGMA user_version")
@@ -80,8 +80,8 @@ object LocalCacheCompaction {
                     val pageSize = connection.maintenanceLong("PRAGMA page_size")
                     val logicalBytes = Math.multiplyExact(pagesBefore, pageSize)
                     if (logicalBytes > MAX_DATABASE_BYTES) fail("DATABASE_SIZE_LIMIT")
-                    // SQLite may need two database sizes of additional disk space. This is a preflight,
-                    // not a reservation; runtime I/O/full errors still fail through SQLite's transaction.
+                    // SQLite 可能需要两倍数据库大小的额外磁盘空间。这只是预检而非预留；
+                    // 运行期 I/O/磁盘满错误仍会经 SQLite 的事务失败。
                     val requiredSpace = 2 * maxOf(bytesBefore, logicalBytes) + SPACE_RESERVE_BYTES
                     if (Files.getFileStore(database).usableSpace < requiredSpace) fail("INSUFFICIENT_FREE_SPACE")
                     connection.executeMaintenance("VACUUM")
@@ -96,7 +96,7 @@ object LocalCacheCompaction {
                         bytesBefore, 0, pagesBefore, connection.maintenanceLong("PRAGMA page_count"),
                         freePagesBefore, connection.maintenanceLong("PRAGMA freelist_count"))
                 }
-                // Only SQLite retires its sidecars. Never delete a leftover WAL/journal to report savings.
+                // 只有 SQLite 自己收尾 sidecar。绝不为了上报节省空间而删除遗留的 WAL/journal。
                 privateData.requirePrivateFile(directories, components.last())
                 return result.copy(bytesAfter = familyBytes(database))
             }
@@ -110,7 +110,7 @@ object LocalCacheCompaction {
                 else -> "SQLITE_MAINTENANCE_FAILED"
             })
         } catch (_: Exception) {
-            // Paths/SQL exceptions can include stored text. The CLI only emits fixed classifications.
+            // 路径/SQL 异常可能包含存储的文本。CLI 只输出固定的分类。
             fail("PATH_STATE_OR_IO_FAILURE")
         }
     }
@@ -123,8 +123,8 @@ object LocalCacheCompaction {
                 val attributes = basicAttributes(path)
                 requireRealFile(attributes, "SQLite database family")
                 requireSameOwner(path, owner, "SQLite database family")
-                // Sidecars may use SQLite's mode, but their namespace is private. A hard link must not
-                // allow SQLite to modify a file with another owner outside that namespace.
+                // sidecar 可以沿用 SQLite 的 mode，但其命名空间是私有的。硬链接不得
+                // 让 SQLite 修改该命名空间之外、属于其他 owner 的文件。
                 if (Files.getFileStore(path).supportsFileAttributeView("unix")) {
                     check((Files.getAttribute(path, "unix:nlink", NOFOLLOW_LINKS) as Number).toInt() == 1)
                 }

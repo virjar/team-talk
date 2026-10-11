@@ -20,7 +20,7 @@ internal const val ANDROID_DOWNLOAD_ALIAS = "TeamTalk-android.apk"
 private const val RECEIPT_NAME = ".teamtalk-client-release.json"
 private const val MAX_METADATA_BYTES = 1024 * 1024
 
-/** The descriptor pins the verified bytes even when publication atomically replaces the APK pathname. */
+/** 即使发布流程原子替换了 APK 路径名，该描述符仍锁定已校验的字节。 */
 internal class AndroidDownloadSnapshot(
     val channel: FileChannel,
     val size: Long,
@@ -35,7 +35,7 @@ internal class AndroidDownloadSnapshot(
     override fun close() = channel.close()
 }
 
-/** Receipts already published by the release task remain the authority; no new server-side receipt is written. */
+/** 发布任务已写出的收据仍是权威来源；服务端不会再写新的收据。 */
 internal fun openAndroidDownload(downloads: File): AndroidDownloadSnapshot? {
     val receiptFile = File(downloads, RECEIPT_NAME)
     val receiptBytes = if (Files.exists(receiptFile.toPath(), NOFOLLOW_LINKS)) readDownloadMetadata(receiptFile) else null

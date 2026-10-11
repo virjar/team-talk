@@ -113,8 +113,8 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             ),
         )
 
-        // Source ownership exists even when a platform target (notably iOS) is disabled in Gradle.
-        // Keep one module inventory; discover every checked-in main source set, never test sources.
+        // 即使某平台目标（尤其是 iOS）在 Gradle 中被禁用，源码归属关系依然存在。
+        // 只维护一份模块清单；发现所有已入库的 main 源集，绝不包含 test 源码。
         val productModules = listOf(
             "protocol/protocol", "protocol/protocol-netty", "protocol/rpc-processor",
             "client/shared", "client/richeditor", "client/app", "client/android",

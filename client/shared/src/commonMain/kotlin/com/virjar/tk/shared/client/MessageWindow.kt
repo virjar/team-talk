@@ -60,12 +60,12 @@ internal class MessageWindow(
         reloadLatest()
     }
 
-    /** Caller also owns the cache state lock, keeping the SQL read and window replacement atomic. */
+    /** 调用方同时持有缓存状态锁，使 SQL 读取与窗口替换保持原子。 */
     fun reloadLatest() = cacheUseGate.use {
         synchronized(stateLock) {
             val resident = _messages.value.associateBy(Message::clientMsgId)
             val msgs = loadBoundedInitialMessages(queries, chatId, windowSize, toModelFn).map { stored ->
-                // Keep a resident optimistic edit until its existing commit/rollback owner settles.
+                // 保留常驻乐观编辑，直到其既有的 commit/rollback owner 落定。
                 resident[stored.clientMsgId]?.takeIf { it.serverSeq == stored.serverSeq } ?: stored
             }
             serverPageAnchored = false

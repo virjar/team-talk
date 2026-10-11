@@ -26,7 +26,7 @@ internal actual fun nioChatAssetSpoolFiles(dataDir: File, directories: List<Stri
                     Files.createDirectory(current, PosixFilePermissions.asFileAttribute(directoryPermissions))
                     FileChannel.open(current.parent, READ).use { it.force(true) }
                 } catch (_: java.nio.file.FileAlreadyExistsException) {
-                    // A competing creator must still pass the exact owner/type/mode checks below.
+                    // 竞争的创建者仍必须通过下方严格的属主/类型/权限检查。
                 }
             }
             val attributes = Files.readAttributes(current, BasicFileAttributes::class.java, NOFOLLOW_LINKS)

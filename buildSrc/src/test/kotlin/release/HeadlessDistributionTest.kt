@@ -77,7 +77,7 @@ class HeadlessDistributionTest {
             assertEquals(0b111101101, zip.getEntry("tt-headless/bin/tt").unixMode and 0x1FF)
             assertEquals(0b110100100, zip.getEntry("tt-headless/bin/tt.bat").unixMode and 0x1FF)
         }
-        // Verification uses the archive, even when its original directory has disappeared.
+        // 校验只依赖归档本身，即使其原始目录已删除。
         directory.deleteRecursively()
         HeadlessDistribution.verifyArchive(archive, version, buildIdentity)
         assertFailsWith<IllegalArgumentException> {
@@ -99,7 +99,7 @@ class HeadlessDistributionTest {
 
     @Test
     fun `symlinks cannot silently import files outside the distribution`() = temporary { root ->
-        if (isWindows()) return@temporary // Creating symbolic links requires an explicit Windows host privilege.
+        if (isWindows()) return@temporary // 创建符号链接需要 Windows 宿主的显式特权。
         val directory = File(root, "bundle")
         writeHeadlessDistributionFixture(directory, version, buildIdentity)
         val foreign = File(root, "foreign").apply { writeText("outside") }
@@ -197,7 +197,7 @@ class HeadlessDistributionTest {
         }
         val output = log.readText()
         val diagnostics = "${context}exit=${process.exitValue()}\nstdout/stderr:\n$output"
-        println(diagnostics) // JUnit captures every launcher; assertions still inspect only its raw output.
+        println(diagnostics) // JUnit 会捕获每个 launcher 的输出；断言仍只检查其原始输出。
         return LauncherResult(process.exitValue(), output, diagnostics)
     }
 
@@ -241,7 +241,7 @@ class HeadlessDistributionTest {
     }
 }
 
-/** Structural fixture; executable-launcher tests replace these class entries with javac output. */
+/** 结构性 fixture；可执行 launcher 测试会用 javac 产物替换这些类条目。 */
 internal fun writeHeadlessDistributionFixture(directory: File, version: ReleaseVersion, buildIdentity: String) {
     File(directory, "lib").mkdirs()
     File(directory, "LICENSE").writeText("fixture license\n")

@@ -104,7 +104,7 @@ class DocumentWorkspaceOfflineRestartTest {
             assertEquals(1, rewriteCount, "Recovery compacts the tombstoned tab before retirement completes")
             assertEquals(listOf(retained), DocumentDraftStore(disk).restore(owner)?.tabs)
 
-            assertTrue(disk.delete(owner)) // The account cleanup barrier now permits deleting its directory.
+            assertTrue(disk.delete(owner)) // 账号清理屏障现在允许删除其目录。
             assertNull(oldSession.restore(owner))
             assertFalse(oldSession.save(owner, listOf(retained), DOCUMENT_ID, SPACE_ID))
             assertFalse(oldSession.tombstone(owner, setOf(retained.draftRecoveryKey())))
@@ -159,8 +159,8 @@ class DocumentWorkspaceOfflineRestartTest {
             val successors = lineage.map { it.copy(draftTitle = "", draftMarkdown = "后继正文 B ${it.instanceId}", editGeneration = 4L) }
             val ordinary = admitted(OPERATION_ID, 24L, DOCUMENT_ID, childAncestors + DOCUMENT_ID)
                 .copy(draftTitle = "未提交草稿", draftMarkdown = "没有创建命令", editGeneration = 0L)
-            // Both record and command order oppose dependency order. No request may rely on
-            // LinkedHashMap insertion order, nor acquire a new command for the ordinary draft.
+            // 记录顺序与命令顺序都与依赖顺序相反。任何请求不得依赖 LinkedHashMap
+            // 的插入顺序，也不得为普通草稿获取新命令。
             assertTrue(DocumentDraftStore(persistence).save(owner, successors.reversed() + ordinary,
                 ROOT_ID, SPACE_ID, pendingDocumentCreates = commands.reversed()))
             val committed = linkedMapOf<String, Document>()
@@ -224,8 +224,8 @@ class DocumentWorkspaceOfflineRestartTest {
                                 revision = 1L, assets = command.assets)
                             committed[command.documentId] = remote
                             if (throughExistingParent && command.documentId == ROOT_ID) {
-                                // The remote parent is present before P's first successful reply
-                                // reaches this client. It has no local create command or draft.
+                                // 远端父文档在 P 的第一个成功响应到达本客户端之前就已存在。
+                                // 它没有本地创建命令，也没有草稿。
                                 committed[existingParentId] = document().copy(documentId = existingParentId,
                                     parentId = ROOT_ID, ancestorIds = listOf(ROOT_ID), title = "已有远端父文档",
                                     markdown = "独立远端内容", revision = 1L)
@@ -371,8 +371,8 @@ class DocumentWorkspaceOfflineRestartTest {
                     val opening = featureScope.async { feature.open() }
                     advanceUntilIdle()
                     if (restart == 0) {
-                        // The create owns the repository's existing request gate. Bootstrap may
-                        // still be waiting to read home, so release the RPC before awaiting open.
+                        // 创建占用了仓储既有的请求闸门。Bootstrap 可能仍在等待读取首页，
+                        // 所以在等待 open 之前先释放 RPC。
                         spaceRequested.await()
                         assertEquals(0, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_CREATE_DOCUMENT })
                         feature.showHome()
@@ -382,7 +382,7 @@ class DocumentWorkspaceOfflineRestartTest {
                             DocumentSpaceCreateResult(SPACE_ID, createdSpace.takeIf { availableProjection }))))
                     }
                     opening.await()
-                    // The space continuation launches a child save on the same existing scope.
+                    // 空间续体在同一个既有 scope 上启动一个子保存。
                     while (true) {
                         val work = featureScope.coroutineContext[Job]!!.children.filterNot { it in observers }.toList()
                         if (work.isEmpty()) break
@@ -400,8 +400,8 @@ class DocumentWorkspaceOfflineRestartTest {
                         assertNull(feature.selectedSpaceId, "a late space or child ACK must retain the user's home navigation")
                         assertEquals(DOCUMENT_ID, feature.activeTabId, "home retains the last tab without displaying its space")
                     } else {
-                        // Home retains the last tab identity. A new process deliberately reveals
-                        // that recoverable draft; this is separate from a late ACK navigating.
+                        // 首页保留最后一个 tab 身份。新进程会刻意展示那个可恢复草稿；
+                        // 这与迟到的 ACK 触发导航是两回事。
                         assertEquals(SPACE_ID, feature.selectedSpaceId)
                         assertEquals(DOCUMENT_ID, feature.activeTabId)
                     }
@@ -512,7 +512,7 @@ class DocumentWorkspaceOfflineRestartTest {
                 val opening = featureScope.async { feature.open() }
                 advanceUntilIdle()
                 opening.await()
-                // Bootstrap launches the save separately; wait for its persistence barriers too.
+                // Bootstrap 会单独启动保存；也要等待它的持久化屏障。
                 featureScope.coroutineContext[Job]!!.children.filterNot { it in observers }.toList().joinAll()
 
                 val restored = requireNotNull(feature.activeTab)

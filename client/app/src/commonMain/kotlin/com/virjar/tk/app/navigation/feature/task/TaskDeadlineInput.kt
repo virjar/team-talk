@@ -16,8 +16,8 @@ internal data class TaskDeadlineInput(val date: String = "", val time: String = 
         } catch (_: Exception) {
             throw IllegalArgumentException("日期或时间无效，请检查后重试")
         }
-        // kotlinx-datetime resolves an overlap to its first instant. Reject gaps by checking
-        // the resolved local time rather than silently moving a user's deadline forward.
+        // kotlinx-datetime 把重叠时间解析为其第一个时刻。通过校验解析后的
+        // 本地时间来拒绝间隙，而不是悄悄把用户的截止时间前移。
         val instant = local.toInstant(zone)
         require(instant.toLocalDateTime(zone) == local) { "该本地时间因夏令时调整不存在，请选择其他时间" }
         return instant.toEpochMilliseconds().also {

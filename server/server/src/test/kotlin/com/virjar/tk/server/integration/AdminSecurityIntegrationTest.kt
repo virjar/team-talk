@@ -48,7 +48,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** Real PostgreSQL, BCrypt and the published Ktor management routes share these credential/audit checks. */
+/** 真实 PostgreSQL、BCrypt 与已发布的 Ktor 管理路由共享这些凭据/审计校验。 */
 class AdminSecurityIntegrationTest {
     companion object { @JvmField @RegisterExtension val ext = IntegrationTestExtension() }
     private val ctx get() = ext.env

@@ -7,7 +7,7 @@ import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.update
 
-/** Ordered, data-preserving changes within the existing storage epoch; version numbering starts at 0. */
+/** 现有存储纪元内有序且保数据的变更；版本编号从 0 开始。 */
 internal object SchemaMigrations : Table("schema_migrations") {
     val version = integer("version")
     val name = varchar("name", 100)
@@ -18,12 +18,12 @@ internal object SchemaMigrations : Table("schema_migrations") {
 
 private class SchemaMigration(val name: String, val apply: Transaction.() -> Unit)
 
-// Append only. Retain the order, name and SQL of already released migrations.
+// 只追加。已发布迁移的顺序、名称与 SQL 必须保持不变。
 // v0.0.2 开发期的全部表结构增量按发布批次收敛为一条：未发行中间态（含小米单厂商表）不再保留账目。
 private val schemaMigrations = listOf(
     SchemaMigration("expand_client_telemetry_protocol_id") {
-        // PostgreSQL INTEGER already has Int.MAX_VALUE as its upper bound. Keep rejecting negatives.
-        // Dropping a missing constraint deliberately fails: this migration only supports the known layout.
+        // PostgreSQL INTEGER 的上限本来就是 Int.MAX_VALUE。继续拒绝负数。
+        // 约束不存在时 DROP 刻意失败：本迁移只支持已知的表结构布局。
         exec("ALTER TABLE client_telemetry_devices DROP CONSTRAINT ck_client_telemetry_device_protocol_version")
         exec(
             "ALTER TABLE client_telemetry_devices ADD CONSTRAINT ck_client_telemetry_device_protocol_version " +
@@ -71,8 +71,8 @@ private val schemaMigrations = listOf(
         exec("DELETE FROM conversation_usages WHERE uid IN ('sys_assistant', 'sys_service')")
     },
     SchemaMigration("create_task_details_and_weekly_series") {
-        // Missing extension rows deliberately mean private/plain-text/unknown historical metrics.
-        // SchemaUtils.create commits internally; these DDL statements must share the receipt transaction.
+        // 扩展行缺失有意表示私密/纯文本/未知的历史指标。
+        // SchemaUtils.create 内部会自行提交；这些 DDL 语句必须共用收据事务。
         SchemaUtils.createStatements(TaskExtensions, TaskAttachmentPaths, TaskDeferrals, TaskSeriesTemplates, TaskSeriesAttachmentPaths)
             .forEach { exec(it) }
     },
@@ -107,9 +107,9 @@ private val schemaMigrations = listOf(
     },
 )
 
-/** Caller owns the schema_metadata lock; new migrations must not commit before their completion receipt. */
+/** 调用方持有 schema_metadata 锁；新迁移在写入完成收据之前不得提交。 */
 internal fun Transaction.applySchemaMigrations() {
-    // Preserve the caller's schema_metadata lock, even when the ledger already exists.
+    // 即使迁移台账已存在，也保持由调用方持有的 schema_metadata 锁。
     SchemaUtils.createStatements(SchemaMigrations).forEach { exec(it) }
     val applied = SchemaMigrations.selectAll().orderBy(SchemaMigrations.version)
         .limit(schemaMigrations.size + 1).toList()

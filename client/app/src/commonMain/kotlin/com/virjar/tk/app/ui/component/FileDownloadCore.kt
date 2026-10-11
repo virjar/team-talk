@@ -55,7 +55,7 @@ class FileDownloadCore<L>(
         val onAbandoned: () -> Unit,
     )
 
-    /** Keep the first standard action; preserve independent platform actions sharing one download. */
+    /** 只保留第一个标准动作；共享同一次下载的各独立平台动作均予保留。 */
     private class PendingDownloadActions<L> {
         var standard: PendingDownloadAction<L>? = null
             private set
@@ -469,7 +469,7 @@ class FileDownloadCore<L>(
         try {
             pendingAction.onAbandoned()
         } catch (_: Exception) {
-            // Completion callbacks are best effort and must not strand a cache lease or state admission.
+            // 完成回调尽力而为，不得因此滞留缓存租约或状态准入。
         }
     }
 
@@ -706,7 +706,7 @@ interface FileDownloadCoreAdapter<L> {
 
     fun isOwnerThread(): Boolean
 
-    /** Deterministic seam before an operation claims the per-attachment publication generation. */
+    /** 在操作认领按附件划分的发布 generation 之前插入的确定性接缝。 */
     fun beforeOwnerGenerationClaim() {}
 
     /** 当前会话仍是权威所有者；入口与终态裁决使用。 */

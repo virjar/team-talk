@@ -19,7 +19,7 @@ class ServerTransportConfigurationTest {
         assertEquals(15100, configured.server.port)
         assertEquals(15100, configured.health.port)
         assertEquals(DEFAULT_TCP_BIND_HOST, configured.server.bindHost)
-        assertEquals("127.0.0.1", configured.health.connectHost) // 0.0.0.0 binds all, health probe connects to loopback
+        assertEquals("127.0.0.1", configured.health.connectHost) // 0.0.0.0 绑定所有地址，健康探针连接回环地址
 
         listOf("", "0", "05100", "+5100", "5100 ", " 5100", "65536", "not-a-port").forEach { invalid ->
             assertFailsWith<IllegalArgumentException>(invalid) { parseTcpPort(invalid) }

@@ -172,7 +172,7 @@ internal class DocumentDurableCreateOutbox(
         documentsById.values.toList()
     }
 
-    /** A local ancestor may still be an unsent draft, so an absent command does not make it ready. */
+    /** 本地祖先可能仍是未发送的草稿，因此挂起命令缺失并不代表它已就绪。 */
     fun hasPendingAncestor(tab: DocumentTabState, tabs: List<DocumentTabState>): Boolean = synchronized(lock) {
         hasPendingAncestorLocked(tab, tabs)
     }
@@ -180,7 +180,7 @@ internal class DocumentDurableCreateOutbox(
     fun replayableDocuments(
         tabs: List<DocumentTabState>,
         availableSpaceIds: Set<String>,
-        /** A completed ancestor wakes only dependent commands, without retrying unrelated failures. */
+        /** 已完成的祖先只唤醒依赖它的命令，不重试无关的失败。 */
         completedAncestorId: String? = null,
     ): List<PendingDocumentCreateReplay> = synchronized(lock) {
         documentsById.values.mapNotNull { command ->

@@ -12,7 +12,7 @@ data class ContactApply(
     val toUid: String,
     val token: String? = null,
     val remark: String? = null,
-    val status: Int = 0,     // 0=pending, 1=accepted, 2=rejected
+    val status: Int = 0,     // 0=待处理，1=已接受，2=已拒绝
     val createdAt: Long = 0,
     val fromUser: User? = null,
 ) : IProto {

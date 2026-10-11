@@ -30,7 +30,7 @@ import java.nio.file.Files
 import java.util.UUID
 import kotlin.test.*
 
-/** Current PG authorization, durable projection recovery and bounded Lucene pagination together. */
+/** 同时覆盖当前的 PG 鉴权、持久投影恢复与有界的 Lucene 分页。 */
 class ContentAssetSearchIntegrationTest {
     companion object { @JvmField @RegisterExtension val ext = IntegrationTestExtension() }
     private val ctx get() = ext.env

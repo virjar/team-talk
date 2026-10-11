@@ -25,7 +25,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** Real HTTP sockets exercise the same static-file pipeline used by installer downloads. */
+/** 用真实 HTTP socket 走安装包下载所用的同一条静态文件管线。 */
 @Timeout(20)
 class ProtectedHttpIdleTimeoutTest {
     @TempDir
@@ -53,7 +53,7 @@ class ProtectedHttpIdleTimeoutTest {
                     val count = input.read(buffer)
                     if (count < 0) break
                     received.write(buffer, 0, count)
-                    // Socket buffers are small on both sides, so this throttles actual server writes.
+                    // 两侧 socket 缓冲都很小，因此这里会节流服务端的实际写入。
                     Thread.sleep(40)
                 }
                 assertTrue(System.nanoTime() - started > TimeUnit.SECONDS.toNanos(2))

@@ -4,7 +4,7 @@ import com.virjar.tk.protocol.ProtocolRange
 import com.virjar.tk.protocol.ProtocolVersions
 import com.virjar.tk.server.infra.health.ServerBuildIdentity
 
-/** One startup policy shared by every connection; operators may only tighten the build's window. */
+/** 每个连接共享同一份启动策略；运维只能收紧构建内置的协议窗口。 */
 data class ServerProtocolConfiguration(
     val supported: ProtocolRange = ProtocolVersions.SUPPORTED,
     val serverReleaseVersion: String = ServerBuildIdentity.current.version,

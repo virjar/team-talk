@@ -14,7 +14,7 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
 import java.util.Properties
 
-/** User-owned portable installation. Agent credentials and data directories are never installation payload. */
+/** 用户所有的便携式安装。Agent 凭据与数据目录绝不是安装负载的一部分。 */
 object HeadlessBundleInstaller {
     data class BundleFacts(
         val directory: File,
@@ -44,7 +44,7 @@ object HeadlessBundleInstaller {
         return manageInstallation(command, prefix, source)
     }
 
-    /** Online upgrades already verified the downloaded bundle and matched it to the selected release. */
+    /** 在线升级路径已校验下载的 bundle 并匹配到选定的发布版本。 */
     internal fun upgrade(prefix: File, source: BundleFacts): Result =
         manageInstallation("upgrade-bundle", installPrefix(prefix.toPath()), source)
 
@@ -70,7 +70,7 @@ object HeadlessBundleInstaller {
                     val leases = mutableListOf<AutoCloseable>()
                     try {
                         installed.forEach { leases += lock(it.directory.toPath().parent.resolve(RUNTIME_LOCK), shared = false) }
-                        // Revalidate before deleting: no unknown files, changed wrappers or modified payload are removed.
+                        // 删除前重新校验：存在未知文件、被改动的包装脚本或被修改的负载时一律不删除。
                         inspectInstallation(prefix, requireCurrent = true)
                         deleteInstallation(prefix)
                     } finally { leases.asReversed().forEach(AutoCloseable::close) }
@@ -98,7 +98,7 @@ object HeadlessBundleInstaller {
         }
     }
 
-    /** Also used by offline doctor. Checks every byte and rejects unlisted files and symlinks. */
+    /** 同时供离线 doctor 使用。逐字节校验，并拒绝清单之外的文件与符号链接。 */
     fun verifyBundle(bundle: File): BundleFacts {
         val root = bundle.toPath().toAbsolutePath().normalize()
         require(Files.isDirectory(root, NOFOLLOW_LINKS) && !Files.isSymbolicLink(root)) { "Bundle root must be a real directory" }
@@ -125,7 +125,7 @@ object HeadlessBundleInstaller {
             properties.getProperty("channel") ?: "stable")
     }
 
-    /** Resolves a verified managed installation for a stable service launcher; unpacked bundles return null. */
+    /** 为稳定的服务启动器解析已校验的受管安装；解包运行时返回 null。 */
     fun managedPrefix(currentBundle: File): File? {
         val bundle = currentBundle.toPath().toRealPath()
         val prefix = installedPrefix(bundle) ?: return null
@@ -134,13 +134,13 @@ object HeadlessBundleInstaller {
         return prefix.toFile()
     }
 
-    /** Business entry points hold this shared version lease until agent/CLI/MCP termination. */
+    /** 业务入口持有这份共享版本租约，直到 agent/CLI/MCP 终止。 */
     fun acquireRuntimeLease(currentBundle: File?): AutoCloseable {
         if (currentBundle == null) return AutoCloseable { }
         val bundle = currentBundle.toPath().toRealPath()
         val prefix = installedPrefix(bundle) ?: return AutoCloseable { }
         requireMarker(prefix)
-        // An uninstall cannot pass the version-lock check while a new process is acquiring its lease.
+        // 新进程正在获取租约时，卸载无法通过版本锁检查。
         return lock(prefix.resolve(MUTATION_LOCK), shared = true).use {
             require(Files.isDirectory(bundle, NOFOLLOW_LINKS)) { "The installed bundle no longer exists" }
             lock(bundle.parent.resolve(RUNTIME_LOCK), shared = true)
@@ -238,7 +238,7 @@ object HeadlessBundleInstaller {
         forceDirectory(destination.parent)
     }
 
-    /** Only a managed staging plan may be discarded; published immutable versions are never upgrade garbage. */
+    /** 只有受管 staging 计划可以被丢弃；已发布的不可变版本绝不是升级垃圾。 */
     private fun recoverStaging(prefix: Path) {
         val stage = prefix.resolve(STAGING)
         if (!Files.exists(stage, NOFOLLOW_LINKS)) return
@@ -348,7 +348,7 @@ object HeadlessBundleInstaller {
         return AutoCloseable { try { acquired.release() } finally { channel.close() } }
     }
     private fun deleteInstallation(prefix: Path) {
-        // Marker remains until all managed payload has gone, so a concurrent launcher cannot mistake it for an unpacked bundle.
+        // Marker 保留到所有受管负载消失为止，并发启动器才不会把它误认成解包 bundle。
         for (name in listOf("current", NEXT_CURRENT, "bin", "versions", MUTATION_LOCK)) {
             val path = prefix.resolve(name)
             if (Files.exists(path, NOFOLLOW_LINKS)) deleteTree(path)

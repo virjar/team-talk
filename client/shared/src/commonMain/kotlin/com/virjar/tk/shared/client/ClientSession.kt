@@ -289,7 +289,7 @@ class ClientSession internal constructor(
                 "send queue" to { ownedSendQueue.close(reason.outgoingDisposition()) },
                 "friend presence" to ownedFriendPresenceRepository::close,
                 "event processor" to ownedEventProcessor::stop,
-                // Checkpoint bootstrap owns a second RpcClient in addition to `ownedRpcClient`.
+                // Checkpoint bootstrap 除 `ownedRpcClient` 外还持有第二个 RpcClient。
                 "checkpoint RPC" to ownedCheckpointBootstrap::close,
                 "pending mirror wake" to ownedPendingMirrorWake::close,
                 "HTTP auth expiry router" to ownedHttpAuthExpiredRouter::close,

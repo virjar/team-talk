@@ -29,7 +29,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.*
 
-/** Real PostgreSQL, durable events, FileStore retention and the normal message acceptance path. */
+/** 真实 PostgreSQL、持久事件、FileStore 保留策略与正常消息受理路径。 */
 class ChatDraftIntegrationTest {
     companion object { @JvmField @RegisterExtension val ext = IntegrationTestExtension() }
     private val ctx get() = ext.env

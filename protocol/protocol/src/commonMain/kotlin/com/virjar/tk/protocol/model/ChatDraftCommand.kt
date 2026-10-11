@@ -12,7 +12,7 @@ data class ChatDraftCommand(
     val operationId: String,
     val issuedAt: Long,
     val content: ChatDraftContent? = null,
-    /** A send-consume may clear only after this exact message is authoritatively accepted. */
+    /** 发送消费只有在这条消息被权威接受后才允许清除。 */
     val consumedClientMsgId: String? = null,
 ) : IProto {
     init {

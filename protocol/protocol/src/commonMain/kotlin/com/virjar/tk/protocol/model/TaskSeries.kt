@@ -51,7 +51,7 @@ data class TaskRecurrenceRule(
     }
 }
 
-/** The template is fixed. Changes to an occurrence do not alter future occurrences. */
+/** 模板固定不变；对某一期的修改不会影响后续各期。 */
 @SinceProtocol(3)
 @Serializable
 data class TaskSeries(val seriesId: String, val creatorUid: String, val revision: Long, val enabled: Boolean,

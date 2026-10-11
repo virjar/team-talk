@@ -83,7 +83,7 @@ class AgentMcpAccessTest {
             failure(400) { access.create(ADMIN, all + mapOf("allChats" to "false", "chatIds" to "chat-a")) }
             access.create(ADMIN, all)
         }
-        // Existing grant files persist wire strings, never enum names or ordinals.
+        // 已存在的 grant 文件持久化的是线上传输字符串，绝不是枚举名或序号。
         AgentMcpAccess(data, OWNER, MASTER).use { access ->
             val principal = access.authenticate("Bearer $TOKEN")
             for (path in listOf("/v1/status", "/v1/messages", "/v1/recv-wait", "/v1/chat-personal")) {

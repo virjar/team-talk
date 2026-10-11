@@ -171,7 +171,7 @@ class ClientDownloadRoutesTest {
                 application {
                     routing {
                         clientDownloadRoutes(downloads)
-                        // A sibling response demonstrates plugin scope without introducing database/auth fixtures.
+                        // 相邻路由的响应用于验证插件作用域，无需引入数据库/鉴权 fixture。
                         get("/api/v1/files/fixture") { call.respondFile(businessFile) }
                     }
                 }

@@ -4,7 +4,7 @@ import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
 
-/** Target receipt; the caller persists this next to the sealed local release bundle. */
+/** 目标回执；调用方将其持久化在密封的本地 release bundle 旁边。 */
 data class PublicationResult(
     val target: String,
     val version: String,

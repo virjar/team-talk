@@ -66,7 +66,7 @@ class ChatDraftLifecycleBridge {
         true
     }
 
-    /** Suspend/background boundaries capture the latest frame without retiring the editor. */
+    /** 挂起/后台边界在不退役编辑器的情况下捕获最新帧。 */
     fun captureLatest() = synchronized(lock) {
         if (phase != ChatDraftLifecyclePhase.OPEN) return@synchronized
         var failure: Throwable? = null
@@ -155,7 +155,7 @@ class ChatComposerContextStore {
 
     internal val hasPersistence: Boolean get() = persistence != null
 
-    /** Main retains only hot editor frames. The session writer owns all SQLite mutations. */
+    /** Main 线程只保留编辑器热帧；所有 SQLite 变更由会话写者拥有。 */
     fun bindPersistence(
         localCache: LocalCache,
         localMutations: SessionLocalMutationWriter,
@@ -166,7 +166,7 @@ class ChatComposerContextStore {
         chats.values.forEach { it.hydrated = false }
     }
 
-    /** Called before the editor accepts input or imports, so an empty first frame cannot overwrite recovery. */
+    /** 在编辑器接受输入或导入之前调用，避免空的首帧覆盖恢复结果。 */
     internal suspend fun hydrate(chatId: String): ChatComposerContext? {
         val owner = persistence ?: return restore(chatId)
         val submission = chats[chatId]?.submission
@@ -174,9 +174,9 @@ class ChatComposerContextStore {
         if (chats[chatId]?.hydrated == true && submission == null) return restore(chatId)
         val (snapshot, ordinaryMirror) = owner.localData.run {
             val saved = owner.localCache.chatDrafts.get(chatId)
-            // The conversation projection already merges unacknowledged local mirror writes with
-            // remote updates. Read that merged value, never an unqualified RPC response. null means
-            // there is no known conversation; an existing conversation with no draft is explicit "".
+            // 会话投影已经把未确认的本地镜像写入与远端更新合并。读那个合并值，
+            // 绝不读未经限定的 RPC 响应。null 表示没有已知会话；已存在但无草稿的
+            // 会话是明确的 ""。
             val mirror = owner.localCache.getPendingConversationDraft(chatId)?.let { it.draft.orEmpty() }
                 ?: owner.localCache.getConversations().firstOrNull { it.chatId == chatId }?.let { it.draft.orEmpty() }
             saved to mirror
@@ -194,8 +194,8 @@ class ChatComposerContextStore {
                 mergePersisted(chatId, snapshot, hot)
             } else {
                 if (snapshot.revision >= (state.durableSnapshot?.revision ?: 0L)) state.durableSnapshot = snapshot
-                // Before the structured contract takes ownership, a plain composer follows its legacy mirror.
-                // Keep the raw baseline so alignment still receives a fresh local revision on save.
+                // 在结构化契约接管之前，普通编辑器跟随其旧有镜像。
+                // 保留原始 baseline，让对齐在保存时仍能获得新的本地 revision。
                 if (hot == null) {
                     val recovered = if (snapshot.sharedRevision == null && ordinaryMirror != null && snapshot.canFollowOrdinaryMirror() &&
                         durableChatDraftMirrorPayload(ordinaryMirror) == ordinaryMirror) {
@@ -231,7 +231,7 @@ class ChatComposerContextStore {
 
     internal suspend fun awaitSaved(chatId: String, revision: Long): Long = commitBarrier(chatId, revision).await()
 
-    /** A remote installation may race the editor's debounce; capture that older-base frame before following it. */
+    /** 远端安装可能与编辑器的防抖竞争；先捕获那个基于旧基准的帧，再跟随它。 */
     internal suspend fun receivePersisted(chatId: String, captureCurrent: () -> ChatComposerContext): ChatComposerContext? {
         val owner = persistence ?: return null
         val incoming = owner.localData.run { owner.localCache.chatDrafts.get(chatId) } ?: return null
@@ -246,13 +246,13 @@ class ChatComposerContextStore {
         val frame = current.toDraftSnapshot(chatId)
         fun ChatDraftSnapshot.contentOnly() = copy(revision = 0L, sharedRevision = null, selectionStart = 0, selectionEnd = 0)
         if (previous != null && incoming.contentOnly() == previous.contentOnly()) {
-            // Our own ACK changes the shared base without moving the caret or replacing unsaved typing.
+            // 自己的 ACK 只改变共享基准，不移动光标，也不覆盖未保存的输入。
             state.durableSnapshot = incoming
             retain(chatId, current.copy(draftRevision = incoming.revision, sharedRevision = incoming.sharedRevision))
             return null
         }
         if (previous != null && frame.contentOnly() != previous.contentOnly()) {
-            // Keep the frame's shared revision so storage exposes a conflict rather than rebasing stale text.
+            // 保留该帧的 sharedRevision，让存储暴露冲突，而不是把陈旧正文变基。
             save(chatId, current)
             return null
         }
@@ -314,7 +314,7 @@ class ChatComposerContextStore {
         return revision
     }
 
-    /** Only the exact committed send consumes its hot frame; a newer draft remains available. */
+    /** 只有恰好提交的那次发送才消费其热帧；更新的草稿仍然可用。 */
     internal fun acceptSent(chatId: String, expectedRevision: Long): Boolean {
         val existing = chats[chatId]
         val previous = existing?.durableSnapshot
@@ -401,7 +401,7 @@ class ChatComposerContextStore {
     )
 }
 
-/** Only a local commit barrier; it never initiates sending while a recovered attachment is uploading. */
+/** 只是本地提交屏障；恢复附件上传期间绝不主动发起发送。 */
 internal class ChatComposerSubmission(val revision: Long) {
     val completion = CompletableDeferred<Boolean>()
 }
@@ -414,7 +414,7 @@ internal enum class RetainedTextSlot {
 
 /** 不可变快照；绝不保留 Message、RichTextState 或其他平台对象。 */
 internal data class ChatComposerContext(
-    /** A persisted empty snapshot is a clear tombstone, not permission to restore an older mirror. */
+    /** 持久化的空快照是明确的墓碑，不是恢复更旧镜像的许可。 */
     val draftRevision: Long = 0L,
     val sharedRevision: Long? = null,
     val replyTarget: SavedChatReplyTarget = SavedChatReplyTarget(),

@@ -76,7 +76,7 @@ internal class DesktopSessionResources(
     val videoSender: DesktopVideoSender
     val voiceRecorder: DesktopVoiceRecorder
 
-    /** Called on IO by the chat session; source files outlive these platform media resources. */
+    /** 由聊天会话在 IO 上调用；源文件比这些平台媒体资源存活更久。 */
     fun createChatAssetSpool() = com.virjar.tk.shared.repository.createChatAssetSpool(
         dataDir,
         com.virjar.tk.shared.client.AccountDataOwner(serverFingerprint, datasetId, ownerUid),

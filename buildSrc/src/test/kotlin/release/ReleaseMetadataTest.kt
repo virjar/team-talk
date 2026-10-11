@@ -9,7 +9,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** Real Git fixtures exercise the same source-of-truth boundary used on private Windows workstations and in CI. */
+/** 用真实 Git fixture 验证与私有 Windows 工作站及 CI 相同的事实源边界。 */
 class ReleaseMetadataTest {
     @Test
     fun `private source verification retains clean HEAD and root checks without public release notes`() = repository { repo ->
@@ -227,7 +227,7 @@ class ReleaseMetadataTest {
         repo.writeNotes("0.0.1", notes)
         val current = repo.commit("Prepare the next preview and upgrade guidance")
         repo.git("tag", "v0.0.1")
-        // Unrelated tags should not change the selected release range.
+        // 无关的 tag 不应改变选定的发布范围。
         repo.git("tag", "development-checkpoint")
 
         val metadata = ReleaseMetadata(repo.root)

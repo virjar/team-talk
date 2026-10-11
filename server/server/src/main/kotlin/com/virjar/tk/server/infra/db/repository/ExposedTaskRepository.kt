@@ -37,8 +37,8 @@ class ExposedTaskRepository : TaskRepository {
 
     override fun contextVisible(transaction: PgReadTransactionContext, actorUid: String, kind: Int, contextId: String): Boolean {
         transaction.requireExposedReadTransaction()
-        // Context is metadata, never task authorization. Each check uses one statement's current
-        // snapshot; leaving a group after this decision cannot revoke an independently owned task.
+        // 上下文只是元数据，绝不是任务授权。每次检查使用单条语句的当前
+        // 快照；判定之后退出群组无法撤销独立持有的任务。
         return when (kind) {
             0 -> contextId.isEmpty()
             1 -> {

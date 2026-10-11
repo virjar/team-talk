@@ -202,8 +202,8 @@ internal class DocumentWorkspaceSpaceActions(
                 created.spaceId,
             )
             if (!published) return
-            // Bootstrap may have observed an empty space page before this acknowledgement.
-            // Resume only already admitted children after their space is durable and authoritative.
+            // Bootstrap 可能在这份确认之前观察到过一个空的空间页。
+            // 只在空间已持久且权威之后，才恢复已准入的子项。
             onCreatedSpacePublished(created)
             operation.navigationGeneration?.let { generation ->
                 if (isCurrentNavigation(generation)) selectSpace(created.spaceId, generation)

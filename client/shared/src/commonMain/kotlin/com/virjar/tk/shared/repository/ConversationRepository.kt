@@ -53,7 +53,7 @@ class ConversationRepository internal constructor(
                 val remote = collectSnapshotPages()
                 val messageHeads = validateLegacyReadRanges(remote)
                 if (localCache.applyConversationSnapshot(snapshotGeneration, remote, messageHeads)) {
-                    // A previously rejected high cursor may now retain a lower valid intent.
+                    // 之前被拒绝的高水位现在可能保留一个更低的合法意图。
                     if (messageHeads.isNotEmpty()) onPendingMirrorCommitted()
                     // 调用方必须看到收敛后的本地投影，不能把原始 RPC 响应直接渲染出去。
                     return@outcome localCache.getConversations()
@@ -65,12 +65,12 @@ class ConversationRepository internal constructor(
         }
     }
 
-    /** Only legacy reads without local proof need this extra lookup; the same snapshot owns it. */
+    /** 只有缺少本地证明的遗留读取才需要这次额外查询；它归属同一个快照。 */
     private suspend fun validateLegacyReadRanges(remote: List<Conversation>): Map<String, Long> {
         val heads = linkedMapOf<String, Long>()
         for (chatId in localCache.conversationReadValidationCandidates(remote)) {
             currentCoroutineContext().ensureActive()
-            // History reads the message store directly; a PG conversation page can lag behind it.
+            // History 直接读消息存储；PG 的 conversation 页可能落后于它。
             val page = messageRpc.getHistory(chatId, 0L, 1)
             currentCoroutineContext().ensureActive()
             check(page.size <= 1 && page.all { it.chatId == chatId && it.serverSeq > 0L }) {

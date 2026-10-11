@@ -2,7 +2,7 @@ package com.virjar.tk.server.infra.db
 
 import org.jetbrains.exposed.sql.Table
 
-/** Optional extension rows leave all released task facts and wire records intact. */
+/** 可选的扩展行保持所有已发布的任务事实与线上记录不变。 */
 object TaskExtensions : Table("task_extensions") {
     val taskId = varchar("task_id", 36).references(WorkTasks.taskId)
     val options = text("options")
@@ -40,7 +40,7 @@ object TaskDeferrals : Table("task_deferrals") {
     override val primaryKey = PrimaryKey(taskId, revision)
 }
 
-/** The first task is also the stable receipt/locking anchor for the series. */
+/** 首个任务同时也是整个系列的稳定回执/加锁锚点。 */
 object TaskSeriesTemplates : Table("task_series") {
     val seriesId = varchar("series_id", 36).references(WorkTasks.taskId)
     val payload = text("payload")

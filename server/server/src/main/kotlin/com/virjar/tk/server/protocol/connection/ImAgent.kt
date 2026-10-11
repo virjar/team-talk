@@ -78,7 +78,7 @@ class ImAgent internal constructor(
     private val registryUnregisterRequested = AtomicBoolean(false)
     /** 同一连接的分页 cursor 必须严格前进；InvalidCursor 后显式恢复为可接收 0。 */
     private val admittedSyncCursor = ImAgentSyncCursor()
-    /** Chosen once before authentication; business tasks copy this immutable connection fact. */
+    /** 在认证之前一次性选定；业务任务复制这一不可变的连接事实。 */
     @Volatile
     var negotiatedProtocolVersion: ProtocolVersion? = null
         private set
@@ -302,7 +302,7 @@ class ImAgent internal constructor(
 
     private fun handleAuth(payload: AuthRequestPayload) {
         if (negotiatedProtocolVersion == null) {
-            // The last preview client can still decode AUTH_RESP, even though it cannot negotiate.
+            // 最后一个 preview 客户端虽然无法协商，但仍然能解码 AUTH_RESP。
             writeAndClose(
                 AuthResponsePayload(
                     code = AuthResponsePayload.CODE_VERSION_UNSUPPORTED,

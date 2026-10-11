@@ -91,7 +91,7 @@ class ImBot private constructor(
 
     /** 当前用户 uid（认证成功后有效）。 */
     val uid: String get() = userSession.uid
-    /** Current authenticated dataset identity, without exposing the session or credentials. */
+    /** 当前已认证的 dataset 身份，不暴露 session 或凭据。 */
     val datasetId: String get() = session.datasetId
     /** 当前认证用户名的只读快照。 */
     val username: String? get() = userSession.username

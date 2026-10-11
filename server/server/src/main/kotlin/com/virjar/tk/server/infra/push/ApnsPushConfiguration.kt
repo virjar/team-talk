@@ -7,7 +7,7 @@ import java.security.interfaces.ECPrivateKey
 import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Base64
 
-/** Environment is part of a token's identity; sandbox tokens must never reach the production endpoint. */
+/** 环境是 token 身份的一部分；sandbox token 绝不能到达生产 endpoint。 */
 internal enum class ApnsEnvironment(val wireName: String, val endpoint: URI) {
     SANDBOX("sandbox", URI("https://api.sandbox.push.apple.com")),
     PRODUCTION("production", URI("https://api.push.apple.com"));
@@ -20,7 +20,7 @@ internal enum class ApnsEnvironment(val wireName: String, val endpoint: URI) {
     }
 }
 
-/** Server-only key material. Neither the key nor a provider JWT participates in logs or snapshots. */
+/** 仅服务端持有的密钥材料。密钥与 provider JWT 都不进入日志或快照。 */
 internal class ApnsPushConfiguration(
     val teamId: String,
     val keyId: String,

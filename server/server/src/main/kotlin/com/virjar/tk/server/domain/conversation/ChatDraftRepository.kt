@@ -9,7 +9,7 @@ data class ChatDraftReceipt(val fingerprint: String, val applied: Boolean, val r
 
 interface ChatDraftRepository {
     fun requireAccess(transaction: PgReadTransactionContext, uid: String, chatId: String)
-    /** Chat row, then the existing per-user conversation capacity row, then the draft row. */
+    /** 先锁 Chat 行，再锁每用户会话容量行，最后锁草稿行。 */
     fun lock(transaction: PgWriteTransactionContext, uid: String, chatId: String, ownerClear: Boolean = false)
     fun get(transaction: PgReadTransactionContext, uid: String, chatId: String): ChatDraftSnapshot
     fun receipt(transaction: PgReadTransactionContext, uid: String, operationId: String): ChatDraftReceipt?
@@ -18,7 +18,7 @@ interface ChatDraftRepository {
     fun save(transaction: PgWriteTransactionContext, uid: String, snapshot: ChatDraftSnapshot)
 }
 
-/** Exact accepted message lookup; never scans chat history or trusts client-declared sequence numbers. */
+/** 精确查找已接收的消息；绝不扫描聊天历史，也不信任客户端声明的序列号。 */
 fun interface ChatDraftMessageLookup {
     fun find(chatId: String, clientMsgId: String): Message?
 }

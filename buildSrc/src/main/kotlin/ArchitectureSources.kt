@@ -2,7 +2,7 @@ import java.io.File
 
 internal fun isArchitectureMainSourceSet(name: String): Boolean = name == "main" || name.endsWith("Main")
 
-/** Inspect checked-in source ownership independently of the targets enabled on the current host. */
+/** 与当前宿主启用的编译目标无关，独立检查已入库源码的归属。 */
 internal fun architectureMainSourceRoots(root: File, modules: List<String>): List<String> = modules.flatMap { module ->
     val sourceDirectory = root.resolve("$module/src")
     check(sourceDirectory.isDirectory) { "Architecture source inventory is missing $module/src" }

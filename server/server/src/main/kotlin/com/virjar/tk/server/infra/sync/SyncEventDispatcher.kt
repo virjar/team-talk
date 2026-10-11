@@ -27,7 +27,7 @@ class SyncEventDispatcher(
     private val sink: LiveEventSink,
     private val clock: () -> Long = System::currentTimeMillis,
     private val scanIntervalMillis: Long = DEFAULT_SCAN_INTERVAL_MILLIS,
-    /** Optional OEM queue append; it commits atomically with dispatched_at and performs no network IO. */
+    /** 可选的 OEM 队列追加；与 dispatched_at 原子提交，且不执行任何网络 IO。 */
     private val onDispatched: (String, Long, Int, ByteArray) -> Unit = { _, _, _, _ -> },
 ) : AutoCloseable {
     private val logger = LoggerFactory.getLogger(SyncEventDispatcher::class.java)

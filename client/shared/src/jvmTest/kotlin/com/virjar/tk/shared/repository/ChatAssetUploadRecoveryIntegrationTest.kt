@@ -60,7 +60,7 @@ class ChatAssetUploadRecoveryIntegrationTest {
             try {
                 assertTrue(replacement.chatAssetUploads.jobs().isEmpty(), "quarantine must not be replayed into the replacement")
                 assertNull(replacement.chatDrafts.get("chat"))
-                uploads.remove(ID) // Await a cleanup attempt; the orphaned source is no longer referenced.
+                uploads.remove(ID) // 等待一次清理尝试；孤儿源文件已不再被引用。
                 assertTrue(retained.list().isEmpty(), "orphaned source of the deleted corrupt family is collected")
             } finally { uploads.close(); replacement.close() }
             database.parentFile.parentFile.listFiles().orEmpty()

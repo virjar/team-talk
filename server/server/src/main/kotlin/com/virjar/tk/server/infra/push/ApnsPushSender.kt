@@ -7,7 +7,7 @@ import java.security.Signature
 import java.time.Duration
 import java.util.Base64
 
-/** ES256 uses the JOSE 64-byte R || S signature, not ASN.1 DER. One owner caches each key's JWT. */
+/** ES256 使用 JOSE 的 64 字节 R || S 签名，而非 ASN.1 DER。每个密钥的 JWT 由单一持有者缓存。 */
 internal class ApnsProviderToken(private val configuration: ApnsPushConfiguration) {
     private var cached: String? = null
     private var issuedAt: Long = 0
@@ -35,7 +35,7 @@ internal class ApnsProviderToken(private val configuration: ApnsPushConfiguratio
     private fun encode(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 }
 
-/** APNs shares the Application-owned HTTP/2 pool, bounded body subscriber, timeout and cancellation. */
+/** APNs 复用 Application 持有的 HTTP/2 连接池、有界 body 订阅者、超时与取消机制。 */
 internal suspend fun OemPushSender.sendApnsPush(
     notification: OemPushNotification,
     clock: () -> Long = System::currentTimeMillis,

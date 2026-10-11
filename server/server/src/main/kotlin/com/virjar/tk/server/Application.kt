@@ -182,10 +182,10 @@ private fun applicationResources(logger: org.slf4j.Logger): ServerResourceOwner 
     }
 
 /**
- * Ktor configures an Application before Netty binds its connectors. A bind failure therefore
- * happens after TeamTalk has already opened TCP, database, native stores, and background workers.
- * Ktor's start failure path does not destroy that successfully configured Application, so this
- * outer owner must stop the engine and explicitly replay the application's resource terminal.
+ * Ktor 在 Netty 绑定 connector 之前先完成 Application 的配置，因此绑定失败发生时，
+ * TeamTalk 已经打开了 TCP、数据库、本地存储和后台 worker。Ktor 的启动失败路径不会
+ * 销毁这个配置成功的 Application，所以外层 owner 必须停止引擎，并显式重放该
+ * Application 的资源终结动作。
  */
 internal fun <TEngine : ApplicationEngine, TConfiguration : ApplicationEngine.Configuration>
 startAndWaitForManagedServer(
@@ -201,8 +201,8 @@ startAndWaitForManagedServer(
 
     val cleanupFailures = RuntimeFailureCollector()
     cleanupFailures.capture { server.stop(gracePeriodMillis = 0, timeoutMillis = 30_000) }
-    // ApplicationStopping listeners are deliberately isolated by Ktor. Closing again is how the
-    // process observes and replays the exact terminal failure retained by ServerResourceOwner.
+    // ApplicationStopping 监听器被 Ktor 刻意隔离；再次 close 才能让进程观察并重放
+    // ServerResourceOwner 保留的确切终结失败。
     cleanupFailures.capture { resources.close() }
     cleanupFailures.failureOrNull()?.let { cleanupFailure ->
         terminalFailure = mergeRuntimeFailure(terminalFailure, cleanupFailure)
@@ -219,16 +219,16 @@ internal fun Application.module(
         val protocolConfiguration = com.virjar.tk.server.protocol.ServerProtocolConfiguration
             .fromEnvironment(System.getenv())
         logger.info("Protocol compatibility window: {}", protocolConfiguration.supported)
-        // Storage compatibility is independent of network negotiation. Preserve existing data on
-        // a mismatch and fail before opening a JDBC pool or starting dependent resources.
+        // 存储兼容性与网络协商无关。不匹配时保留既有数据，并在打开 JDBC 连接池或
+        // 启动依赖资源之前先失败退出。
         val dataRoot = com.virjar.tk.server.env.Environment.dataRoot
         ServerDataEpoch.initializeOrValidate(dataRoot)
 
-        // 1. Database ownership precedes DI: this Application binds exactly one Exposed Database,
-        // and the resource owner closes only the matching pool after all dependent services stop.
+        // 1. 数据库所有权先于 DI：本 Application 只绑定一个 Exposed Database，
+        // 资源 owner 在所有依赖服务停止后只关闭与之匹配的连接池。
         val postgres = resources.own("PostgreSQL pool", DatabaseFactory.create()) { it.close() }
-        // The relational schema and every local durable byte belong to one cursor namespace.
-        // Validate that pairing before Koin can construct/open RocksDB, Lucene, or FileStore.
+        // 关系库 schema 与本地所有持久字节属于同一个 cursor 命名空间。
+        // 必须在 Koin 构建/打开 RocksDB、Lucene 或 FileStore 之前先校验这组配对。
         ServerDataEpoch.bindOrValidateDataset(dataRoot, postgres.datasetId)
 
         // 内嵌 TURN/STUN（协议 minor 0.5 通话 NAT 兜底）：未配置 TURN_ENABLED 时不启动
@@ -267,12 +267,12 @@ internal fun Application.module(
         }
         installSafeErrorHandling()
 
-        // 4. Storage. Register each instance before init so partial native initialization is unwindable.
-        // Resolve from this Application's Ktor-owned container. Process-global Koin lookup makes
-        // two embedded server instances steal each other's resources and breaks parallel tests.
+        // 4. 存储。先注册各实例再 init，使部分完成的原生初始化可以回退清理。
+        // 从本 Application 关联的 Ktor 容器解析。进程级全局 Koin 查找会让两个
+        // 内嵌 server 实例互相抢占资源，破坏并行测试。
         val koin = getKoin()
-        // Register before resolving the dispatcher, which also resolves OEM notifications.
-        // Reverse shutdown stops maintenance before its outbound pool and token owner.
+        // 在解析 dispatcher 之前注册，因为解析 dispatcher 时也会连带解析 OEM 通知。
+        // 逆序关闭时，维护任务先于其外发连接池与 token 持有者停止。
         resources.own("OEM push sender", koin.get<com.virjar.tk.server.infra.push.OemPushSender>()) { it.close() }
         resources.own(
             "password hashing executor",
@@ -284,8 +284,8 @@ internal fun Application.module(
         val fileStore = resources.own("file store", koin.get<FileStore>()) { it.close() }
         fileStore.init()
 
-        // 5. Search Index (Lucene + IK). Its production binding owns the MessageStore archive
-        // reader, so start performs the full bounded audit/rebuild before publishing a writer.
+        // 5. 搜索索引（Lucene + IK）。其生产绑定持有 MessageStore 归档 reader，
+        // 因此 start 会在发布 writer 之前先完成完整的受控审计/重建。
         val searchIndex = resources.own("search index", koin.get<SearchIndex>()) { it.stop() }
         searchIndex.start()
         val contentSearch = resources.own("content asset index", koin.get<com.virjar.tk.server.infra.search.ContentAssetSearchIndex>()) { it.close() }
@@ -308,15 +308,15 @@ internal fun Application.module(
             logger.warn("Connection trace diagnostics failed to start; core messaging remains available")
         }
 
-        // ClientRegistry starts its looper in the constructor. Own it before resolving services that use it.
+        // ClientRegistry 在构造函数中就会启动自身 looper；须在解析使用它的服务之前先接管所有权。
         val clientRegistry = resources.own("client registry", koin.get<ClientRegistry>()) { it.stop() }
         val syncEventDispatcher = resources.own(
             "sync event dispatcher",
             koin.get<com.virjar.tk.server.infra.sync.SyncEventDispatcher>(),
         ) { it.close() }
         syncEventDispatcher.start()
-        // PostgreSQL commit may precede the process-local wake. Do not recover projections, open
-        // TCP, or install health routes until the mandatory durable fallback scan has succeeded.
+        // PostgreSQL 提交可能早于进程内唤醒。在强制的持久兜底扫描成功之前，不得恢复
+        // 投影、打开 TCP 或注册健康检查路由。
         runBlocking(Dispatchers.IO) { syncEventDispatcher.awaitStartupScan() }
         val systemCommandRouter = koin.get<SystemCommandRouter>()
         // 回复晚于原消息提交，必须在 TCP 关闭后、同步/存储关闭前实际排空。
@@ -363,7 +363,7 @@ internal fun Application.module(
             logger.info("Resumed {} unfinished service broadcasts", resumedBroadcasts.size)
         }
 
-        // CallService must outlive the coordinator's observer lease, but close before its dependencies.
+        // CallService 必须比 coordinator 的 observer 租约存活更久，但要先于其依赖项关闭。
         val calls = resources.ownDependencyBarrier(
             name = "call service",
             resource = koin.get<com.virjar.tk.server.domain.call.CallService>(),
@@ -380,7 +380,7 @@ internal fun Application.module(
         ) { it.close() }
         presenceCoordinator.start()
 
-        // TCP is acquired after the registry so reverse-order shutdown always closes all channels first.
+        // TCP 在 registry 之后接管，保证逆序关闭时总是先关闭所有 channel。
         val tcpServer = resources.own("TCP server", koin.get<TcpServer>()) { it.stop() }
         tcpServer.start { channel, recorder, ioExecutor ->
             ImAgent(
@@ -390,7 +390,7 @@ internal fun Application.module(
             )
         }
 
-        // 7. Health Checker
+        // 7. 健康检查器（HealthChecker）
         val healthChecker = koin.get<HealthChecker>()
         val attachmentRetention = koin.get<AttachmentRetentionService>()
         val tasks = koin.get<com.virjar.tk.server.domain.task.TaskService>()
@@ -398,9 +398,9 @@ internal fun Application.module(
         val reliableCommandReceiptMaintenance = ReliableCommandReceiptMaintenance(koin.get())
         var reliableCommandReceiptBacklogReported = false
 
-        // 7.5 Bounded retention maintenance. Durable sync events are removed only after checkpoint
-        // bootstrap can rebuild their current projections. Disposable client telemetry events use
-        // an independent receivedAt-based 168-hour Lucene authority; PostgreSQL owns only control facts.
+        // 7.5 有界保留维护。持久 sync 事件只有在 checkpoint 引导能重建其当前投影之后
+        // 才会删除。一次性的客户端遥测事件使用独立的、基于 receivedAt 的 168 小时
+        // Lucene 权威存储；PostgreSQL 只持有控制事实。
         val maintenance = resources.ownDependencyBarrier(
             name = "server maintenance",
             resource = koin.get<MaintenanceRuntime>(),
@@ -428,7 +428,7 @@ internal fun Application.module(
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (_: Exception) {
-                            // Provider responses and registration credentials never enter logs.
+                            // Provider 响应与注册凭据绝不写入日志。
                             logger.warn("OEM push maintenance remains pending")
                         }
                         delay(1_000L)
@@ -617,9 +617,9 @@ internal fun Application.module(
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (failure: Exception) {
-                            // Keep retry ownership outside request traffic. While the poison operation is
-                            // still failing, readiness remains DOWN and this worker retries on the next
-                            // bounded interval without spawning another job or retaining per-key state.
+                            // 重试所有权保持在请求流量之外。当毒化操作仍在失败期间，readiness 保持
+                            // DOWN，本 worker 按下一个有界间隔重试，不额外派生任务，也不保留
+                            // 按 key 的状态。
                             logger.warn("Message projection runtime drain failed", failure)
                         }
                     }
@@ -627,8 +627,8 @@ internal fun Application.module(
             ),
         )
 
-        // 8. HTTP Routes. This resource is acquired last so reverse shutdown closes HTTP
-        // admission before the stores and services used by already-drained calls.
+        // 8. HTTP 路由。该资源最后接管，使逆序关闭时先关闭 HTTP 准入，再关闭已排空
+        // 调用所使用的存储与服务。
         val httpBlockingExecutor = resources.ownDependencyBarrier(
             "HTTP blocking executor",
             HttpBlockingExecutor(),
@@ -695,9 +695,9 @@ internal fun Application.module(
             )
         }
 
-        // 9. Graceful shutdown. ResourceOwner enforces maintenance -> TCP/connections ->
-        // presence -> dispatcher -> registry -> durable stores -> PostgreSQL. If maintenance does
-        // not actually quiesce, its dependency barrier fails the process close before that chain.
+        // 9. 优雅停机。ResourceOwner 保证关闭顺序：maintenance -> TCP/connections ->
+        // presence -> dispatcher -> registry -> 持久存储 -> PostgreSQL。若 maintenance 并未
+        // 真正静默，其依赖屏障会在该链条之前使进程关闭失败。
         monitor.subscribe(ApplicationStopping) {
             resources.close()
             logger.info("TeamTalk Server stopped")
@@ -716,8 +716,8 @@ internal fun Application.module(
 }
 
 /**
- * Keep every unexpected HTTP failure detail on the server side. Route-local handlers still own
- * their documented 4xx/5xx contracts; this is the final privacy boundary for unknown failures.
+ * 将所有未预期的 HTTP 失败细节保留在服务端。路由内处理器仍各自负责其文档约定的
+ * 4xx/5xx 契约；这里是未知失败的最后一道隐私边界。
  */
 internal fun Application.installSafeErrorHandling() {
     install(StatusPages) {
@@ -729,9 +729,9 @@ internal fun Application.installSafeErrorHandling() {
                 .joinToString(" <- ") { frame ->
                     "${frame.className}.${frame.methodName}:${frame.lineNumber}"
                 }
-            // Throwable.message is intentionally excluded: adapter failures can carry request
-            // material. The error id, exception type, and bounded code-only stack retain enough
-            // context to correlate the fixed public response with server diagnostics.
+            // 刻意排除 Throwable.message：适配器失败可能携带请求内容。error id、异常
+            // 类型与有界的纯代码调用栈保留了足够上下文，可将固定的公开响应与服务端
+            // 诊断关联起来。
             call.application.log.error(
                 "Unhandled HTTP request failure errorId={} type={} frames={}",
                 errorId,
@@ -751,10 +751,10 @@ internal fun Application.installSafeErrorHandling() {
 private const val MAX_PUBLIC_ERROR_LOG_FRAMES = 12
 
 /**
- * Converge every PostgreSQL membership authority before replaying the external message outbox.
- * Organization runs first because Bot recovery enters its managed-authority fence; Bot then repairs
- * grant/member/Conversation projections so message replay cannot deliver to an orphan or skip a
- * still-authorized service member.
+ * 在重放外部消息发件箱之前，先收敛所有 PostgreSQL 成员权威。
+ * Organization 先行，因为 Bot 恢复要进入其受管权威围栏；随后 Bot 修复
+ * grant/member/Conversation 投影，确保消息重放既不会向孤儿目标投递，
+ * 也不会漏掉仍被授权的服务号成员。
  */
 internal suspend fun recoverStartupProjections(
     organizationService: OrganizationService,
@@ -773,11 +773,11 @@ internal suspend fun recoverStartupProjections(
 }
 
 /**
- * Runtime liveness edge for the external message projection outbox.
+ * 外部消息投影发件箱的运行时存活兜底。
  *
- * A load balancer is expected to stop sending traffic while readiness is DOWN. This explicit
- * maintenance owner therefore checks the readiness fact and drains independently of a later
- * message command; a healthy system performs no RocksDB scan on each poll.
+ * 预期负载均衡器在 readiness 为 DOWN 时停止发送流量。因此这个显式维护 owner 会检查
+ * readiness 事实并独立排空，不依赖后续消息命令；健康系统在每次轮询时不会触发
+ * RocksDB 扫描。
  */
 internal suspend fun recoverRuntimeMessageProjections(messageProjector: MessageProjector): Int =
     if (messageProjector.hasBlockedProjection()) messageProjector.recoverPendingProjections() else 0

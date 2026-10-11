@@ -98,7 +98,7 @@ kotlin {
     if (gradle.extra["enableIos"] as Boolean) {
         iosArm64()
         iosSimulatorArm64()
-        // The protocol/SDK can still be tested on Intel simulators; Compose UI targets arm64 only.
+        // protocol/SDK 仍可在 Intel 模拟器上测试；Compose UI 目标仅 arm64。
         iosX64()
     }
     // T011：Gradle 运行 JDK 21；JVM 产物显式钉 21，Android 字节码保持 17（设备兼容基线）。
@@ -148,13 +148,13 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinNativeCompile>().configureEach {
     dependsOn("kspCommonMainKotlinMetadata")
 }
-// KSP 2 uses its own task type. Platform processors also read the generated common sources.
+// KSP 2 使用独立的任务类型；平台侧处理器同样会读取生成的公共源码。
 tasks.withType<com.google.devtools.ksp.gradle.KspAATask>().configureEach {
     if (name != "kspCommonMainKotlinMetadata") {
         dependsOn("kspCommonMainKotlinMetadata")
     }
 }
-// Metadata-only consumers must verify and generate the same common contract as JVM/Android builds.
+// 仅消费 metadata 的构建也必须与 JVM/Android 构建校验并生成同一份公共契约。
 tasks.matching { it.name == "compileCommonMainKotlinMetadata" }.configureEach {
     dependsOn("kspCommonMainKotlinMetadata")
 }

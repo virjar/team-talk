@@ -11,7 +11,7 @@ import com.virjar.tk.server.domain.message.MessageService
 import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
 
-/** Bounded aggregation entry point; each selected domain owns authorization and its search projection. */
+/** 有界的聚合入口；每个被选中的域自行负责授权与各自的搜索投影。 */
 class ContentSearchService(
     private val source: ContentAssetRepository,
     private val index: ContentAssetIndex,
@@ -24,7 +24,7 @@ class ContentSearchService(
         if (request.kind == ContentSearchRequest.KIND_CHAT_ATTACHMENT) return messages.searchAttachments(uid, request)
         val fingerprint = reliableCommandFingerprint("asset-search", uid, request.kind.toString(), request.keyword, request.scopeId, request.fileType.toString())
         val after = decodeCursor(request.cursor, fingerprint)
-        // Drain before opening the read snapshot: no authoritative write waits for Lucene under its lock.
+        // 打开读快照前先补齐积压：不让任何权威写在它的锁下等待 Lucene。
         recovery.catchUp()
         return if (request.kind == ContentSearchRequest.KIND_DOCUMENT) {
             unitOfWork.read {
@@ -79,8 +79,8 @@ class ContentSearchService(
             }
             if (candidates.size < 64) return ContentSearchPage(result, null)
         }
-        // Continuous mutations can leave sparse index candidates. Preserve a continuation instead
-        // of scanning an unbounded index or claiming a partial empty page is the end of the search.
+        // 持续变更可能让索引候选变得稀疏。此时保留续读游标，而不是
+        // 无界扫描索引，也不把部分为空的页宣称成搜索终点。
         return ContentSearchPage(result, anchor?.let { encodeCursor(fingerprint, it) })
     }
 

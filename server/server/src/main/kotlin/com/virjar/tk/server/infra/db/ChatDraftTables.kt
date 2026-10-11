@@ -3,7 +3,7 @@ package com.virjar.tk.server.infra.db
 import org.jetbrains.exposed.sql.Table
 
 object ChatDrafts : Table("chat_drafts") {
-    // Conversation writes lock Chat before the per-user ledger; a User FK would invert auth's User -> Chat order.
+    // 会话写入先锁 Chat 再锁每用户账本；User 外键会反转鉴权的 User -> Chat 顺序。
     val uid = varchar("uid", 36)
     val chatId = varchar("chat_id", 36).references(Chats.chatId)
     val revision = long("revision")
@@ -14,7 +14,7 @@ object ChatDrafts : Table("chat_drafts") {
     init { check("ck_chat_draft_revision") { revision greater 0L } }
 }
 
-/** Private account references, deliberately excluded from chat-member attachment ACLs. */
+/** 私有账号引用，刻意排除在聊天成员附件 ACL 之外。 */
 object ChatDraftAssets : Table("chat_draft_assets") {
     val uid = varchar("uid", 36)
     val chatId = varchar("chat_id", 36).references(Chats.chatId)

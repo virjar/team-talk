@@ -22,14 +22,14 @@ data class GitHubPublication(
     val repository: String,
     val version: String,
     val sourceCommit: String,
-    /** The checked-in release notes, copied without generating or rewriting prose. */
+    /** 已提交入库的发行说明，原样复制，不生成或改写文字。 */
     val notes: String,
     val assets: List<File>,
     val createTag: Boolean = false,
     val prerelease: Boolean = true,
 )
 
-/** GitHub is one optional destination. All requests and uploads use the JDK, including on Windows. */
+/** GitHub 只是可选的发布目标之一。所有请求与上传都走 JDK，Windows 上也不例外。 */
 class GitHubPublisher(
     private val apiBase: URI = URI("https://api.github.com"),
     private val uploadsBase: URI = URI("https://uploads.github.com"),
@@ -66,7 +66,7 @@ class GitHubPublisher(
         val draft = release.getValue("draft").jsonPrimitive.boolean
         val existing = api.listAssets(releaseId).associateBy { it.getValue("name").jsonPrimitive.content }.toMutableMap()
         require(existing.keys.all(hashes::containsKey)) { "GitHub release contains assets outside this sealed bundle" }
-        // Check every existing asset before writing anything. An interrupted upload leaves a draft that can be resumed.
+        // 写入任何内容前先核对全部既有资产。中断的上传会留下可续传的 draft。
         val incomplete = existing.filterValues { it["state"]?.jsonPrimitive?.contentOrNull == "starter" }
         require(incomplete.isEmpty() || draft) { "Published GitHub release contains incomplete assets; refusing to modify it" }
         existing.filterKeys { it !in incomplete }.forEach { (name, asset) ->
@@ -81,8 +81,8 @@ class GitHubPublisher(
             }
             return PublicationResult("github:${publication.repository}", publication.version, true)
         }
-        // GitHub may leave a zero-byte starter after an interrupted upload. It is an unpublished placeholder,
-        // not a conflicting artifact; delete only this bundle's named placeholders before retrying them.
+        // 中断的上传可能在 GitHub 留下零字节 starter。它是未发布的占位资产，
+        // 不是冲突制品；重试前只删除本 bundle 同名的占位资产。
         incomplete.forEach { (name, asset) ->
             api.removeIncompleteAsset(asset)
             existing.remove(name)
@@ -92,7 +92,7 @@ class GitHubPublisher(
             val asset = api.upload(releaseId, file)
             require(api.assetHash(asset) == hashes.getValue(file.name)) { "GitHub upload checksum mismatch: ${file.name}" }
         }
-        // Re-read after upload: do not publish a draft with missing, extra or concurrently changed assets.
+        // 上传后重读资产列表：不发布存在缺失、多余或被并发修改资产的 draft。
         val complete = api.listAssets(releaseId).associateBy { it.getValue("name").jsonPrimitive.content }
         require(complete.keys == hashes.keys) { "GitHub draft assets changed during publication" }
         complete.forEach { (name, asset) -> require(api.assetHash(asset) == hashes.getValue(name)) { "GitHub draft asset changed: $name" } }
@@ -132,7 +132,7 @@ class GitHubPublisher(
 
         fun findRelease(tag: String): JsonObject? {
             optional("/releases/tags/$tag")?.let { return it }
-            // Authenticated release listings include drafts, also on Enterprise versions whose by-tag API omits them.
+            // 带认证的 release 列表接口包含 draft，在 by-tag API 会漏掉 draft 的 Enterprise 版本上同样如此。
             return pages("/releases").singleOrNull { it.getValue("tag_name").jsonPrimitive.content == tag }
         }
 
@@ -172,7 +172,7 @@ class GitHubPublisher(
             require(state == null || state == "uploaded") { "GitHub contains an incomplete asset; delete that failed draft asset before retrying" }
             val digest = asset["digest"]?.jsonPrimitive?.contentOrNull
             if (digest != null && digest.matches(Regex("sha256:[a-fA-F0-9]{64}"))) return digest.substringAfter(':').lowercase()
-            // Older Enterprise versions do not expose digest. Download through the authenticated asset API.
+            // 较老的 Enterprise 版本不提供 digest。改经带认证的资产 API 下载。
             val id = asset.getValue("id").jsonPrimitive.long
             var request = request("/releases/assets/$id").header("Accept", "application/octet-stream").GET().build()
             var response = http.send(request, HttpResponse.BodyHandlers.ofInputStream())
@@ -180,7 +180,7 @@ class GitHubPublisher(
                 response.body().close()
                 val location = URI(response.headers().firstValue("Location").orElseThrow())
                 require(location.scheme == "https" || isLoopback(location)) { "GitHub asset redirect must use HTTPS" }
-                // Signed CDN URLs must never receive the repository token.
+                // 带签名的 CDN URL 绝不能携带仓库 token。
                 request = HttpRequest.newBuilder(location).timeout(Duration.ofMinutes(20)).GET().build()
                 response = http.send(request, HttpResponse.BodyHandlers.ofInputStream())
             }

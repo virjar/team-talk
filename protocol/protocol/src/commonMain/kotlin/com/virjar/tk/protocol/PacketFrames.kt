@@ -62,7 +62,7 @@ enum class PacketInboundRole {
     }
 }
 
-/** Shared wire framing rules. Transports validate the header before allocating the payload. */
+/** 共享的 wire 帧规则。传输层在分配 payload 之前先校验头部。 */
 object PacketFrames {
     const val HEADER_SIZE = 5
     const val MAX_PAYLOAD_SIZE = ProtocolLimits.MAX_PAYLOAD_SIZE

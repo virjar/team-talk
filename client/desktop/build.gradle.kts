@@ -21,10 +21,10 @@ val tcpTlsCertificateBase64 = deploymentConfig.tcpTlsCertificatePem
     ?.let { Base64.getEncoder().encodeToString(it.toByteArray(Charsets.UTF_8)) }
     .orEmpty()
 
-// ComposeMediaPlayer 0.9.0's macOS backend retains local video descriptors after dispose.
-// TeamTalk ships a narrow, source-auditable local-file replacement at the exact resource
-// paths its existing NativeLibraryLoader resolves. The checked-in binaries keep cross-builds
-// cross-builds independent of Xcode; rebuildMacVideoPlayerOverride is an explicit macOS task.
+// ComposeMediaPlayer 0.9.0 的 macOS 后端在 dispose 后仍保留本地视频描述符。
+// TeamTalk 提供窄范围、可源码审计的本地文件替换实现，放在其现有
+// NativeLibraryLoader 解析的确切资源路径上。签入仓库的二进制让交叉构建
+// 不依赖 Xcode；rebuildMacVideoPlayerOverride 是显式的 macOS 专用任务。
 val macVideoPlayerOverrideSourceDir =
     layout.projectDirectory.dir("src/desktopMain/native/macos/teamtalk-player")
 val macVideoPlayerOverrideResourceDir =
@@ -37,7 +37,7 @@ val macVideoPlayerOverrideManifest =
     macVideoPlayerOverrideResourceDir.file("teamtalk-local-player.properties")
 val macVideoPlayerOverrideLicense =
     layout.projectDirectory.file("src/desktopMain/resources/META-INF/licenses/composemediaplayer-local-macos-MIT.txt")
-// Matches the shell's LSMinimumSystemVersion baseline and the upstream 0.9 dylibs.
+// 与壳的 LSMinimumSystemVersion 基线及上游 0.9 的 dylibs 保持一致。
 val macVideoPlayerOverrideMinimumMacOs = "14.0"
 val macVideoPlayerOverrideUpstreamVersion = "0.9.0"
 
@@ -281,8 +281,8 @@ DesktopTarget.values().forEach { target ->
     dependencies.add(target.configurationName, target.composeDependency(libs.versions.compose.asProvider().get()))
 }
 
-// Keep ordinary Desktop builds and cross-platform packaging on the audited resource set.
-// Rebuilding remains explicit so non-macOS release hosts can consume the checked-in pair.
+// 普通 Desktop 构建与跨平台打包保持使用经过审计的资源集。
+// 重建保持显式触发，非 macOS 的发布宿主可直接使用签入的那一对 dylib。
 tasks.matching { it.name == "desktopProcessResources" }.configureEach {
     dependsOn(verifyMacVideoPlayerOverride)
 }
@@ -362,9 +362,9 @@ tasks.withType<JavaExec>().configureEach {
         // Compose Desktop 1.10 的 run 默认从 desktopJar 启动，而生产 jar 会物理排除 test 包。
         // Compose 插件会在配置后期重写 classpath 和 JVM 参数，因此必须在执行前最后注入。
         doFirst {
-            // Main classes and resources must precede dependency jars. Besides exposing the
-            // development TestHttpServer, this makes the TeamTalk native resource win over
-            // ComposeMediaPlayer's same-path macOS payload deterministically during `run`.
+            // 主 classes 与资源必须排在依赖 jar 之前。除了暴露开发用的
+            // TestHttpServer，这还让 TeamTalk 的原生资源在 `run` 期间确定性地压过
+            // ComposeMediaPlayer 同路径的 macOS 负载。
             classpath =
                 files(
                     layout.buildDirectory.dir("classes/kotlin/desktop/main"),
@@ -372,8 +372,8 @@ tasks.withType<JavaExec>().configureEach {
                 ) + classpath
 
             val developmentDataDirectory = System.getProperty("teamtalk.data.dir") ?: run {
-                // Development must not lock or write an installed client's account directory.
-                // Keep checkout data outside build/ so clean and rebuilds preserve local drafts.
+                // 开发运行不得锁定或写入已安装客户端的账号目录。
+                // checkout 数据放在 build/ 之外，clean 与重建时才能保留本地草稿。
                 val checkout = MessageDigest.getInstance("SHA-256")
                     .digest(rootProject.rootDir.canonicalPath.toByteArray(Charsets.UTF_8))
                     .joinToString("") { "%02x".format(it) }.take(24)
@@ -382,7 +382,7 @@ tasks.withType<JavaExec>().configureEach {
                     ".teamtalk/desktop-development/${clientIdentity.applicationId}",
                 )
                 check(parent.isDirectory || parent.mkdirs()) { "Cannot create Desktop development data parent: $parent" }
-                // The application owns final-root admission, permissions, markers and locking.
+                // 最终根目录的准入、权限、标记与锁定由应用自己负责。
                 File(parent, checkout).absolutePath
             }
             val dataDirectoryArgs = listOf("-Dteamtalk.data.dir=$developmentDataDirectory")

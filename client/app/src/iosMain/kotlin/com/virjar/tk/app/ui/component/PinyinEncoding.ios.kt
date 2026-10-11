@@ -7,7 +7,7 @@ import platform.Foundation.*
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 internal actual fun gbkDoubleByteCode(ch: Char): Int? {
-    // GB18030 preserves the two-byte GBK/GB2312 code points used by the common partition table.
+    // GB18030 保留了常用分区表所用的双字节 GBK/GB2312 码位。
     val bytes = NSString.create(string = ch.toString()).dataUsingEncoding(
         CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingGB_18030_2000.toUInt()),
         allowLossyConversion = false,

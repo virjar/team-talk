@@ -6,7 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 
-/** The iOS navigation host asks this registry before popping its visible screen. */
+/** iOS 导航宿主在弹出可见屏幕前会先询问这个注册表。 */
 class IosBackDispatcher {
     private val handlers = mutableListOf<() -> Boolean>()
     fun onBack(): Boolean = handlers.toList().asReversed().any { it() }

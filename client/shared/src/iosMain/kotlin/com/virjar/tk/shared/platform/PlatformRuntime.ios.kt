@@ -44,7 +44,7 @@ internal actual fun platformDrainJob(job: Job) {
     runBlocking { job.join() }
 }
 
-/** RFC 1952 gzip with bounded, uncompressed DEFLATE blocks; no native compression lifetime. */
+/** RFC 1952 gzip，使用有界的未压缩 DEFLATE 块；不引入原生压缩生命周期。 */
 internal actual fun platformGzip(bytes: ByteArray): ByteArray {
     val blocks = maxOf(1, (bytes.size + 65534) / 65535)
     val output = ByteArray(10 + bytes.size + blocks * 5 + 8)

@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.*
 
-/** Real isolated PostgreSQL, durable user streams and Rocks/Lucene message adapters. */
+/** 真实隔离的 PostgreSQL、持久用户流与 Rocks/Lucene 消息适配器。 */
 class TaskIntegrationTest {
     companion object { @JvmField @RegisterExtension val ext = IntegrationTestExtension() }
     private val ctx get() = ext.env
@@ -184,7 +184,7 @@ class TaskIntegrationTest {
         service().remindDue(); assertEquals(1, events(next, NotifyType.TASK_DUE).size)
         val open = apply(next, status(done, TaskPolicy.TODO))
         service().remindDue(); assertEquals(2, events(next, NotifyType.TASK_DUE).size)
-        // The wall clock has not advanced. A new reminder still needs a distinct persistent identity.
+        // 挂钟时间并未前进。新的提醒仍需要互不相同的持久身份。
         val markers = events(next, NotifyType.TASK_DUE).map { ProtoCodec.decode(TaskDuePayload, it).remindedAt }
         assertTrue(markers[1] > markers[0])
         val postponed = apply(owner, edit(open, dueAt = now.get() + 1_000))
@@ -226,8 +226,8 @@ class TaskIntegrationTest {
         val stale = status(task, TaskPolicy.IN_PROGRESS)
         apply(peer, stale)
         assertEquals(409, invoke(owner, TaskRpcContract.M_MUTATE, TaskRpcContract.encodeMutate(status(task, TaskPolicy.DONE))).status)
-        // The real DI/RPC service uses wall time, not this fixture's injected clock. Commit an
-        // older command using the fixture clock, then replay its actual receipt through real RPC.
+        // 真实 DI/RPC 服务使用挂钟时间，而不是本夹具注入的时钟。先以夹具时钟
+        // 提交一条较旧的命令，再经真实 RPC 重放它的实际收据。
         now.set(System.currentTimeMillis() - ReliableCommandPolicy.RETRY_HORIZON_MILLIS - 60_000L)
         val historical = apply(owner, create(peer))
         val expired = status(historical, TaskPolicy.IN_PROGRESS)

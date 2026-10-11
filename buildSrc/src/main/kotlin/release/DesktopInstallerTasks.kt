@@ -359,7 +359,7 @@ internal fun copyDirectory(source: File, target: File, filter: (String) -> Boole
                 Files.createDirectories(to)
             } else {
                 Files.createDirectories(to.parent)
-                // NOFOLLOW_LINKS preserves signed JBR symlinks; copying their targets invalidates macOS signatures.
+                // NOFOLLOW_LINKS 保留已签名的 JBR 符号链接；改为复制其目标会使 macOS 签名失效。
                 Files.copy(path, to, NOFOLLOW_LINKS, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES)
             }
         }
@@ -407,10 +407,10 @@ internal fun archiveDirectoryZip(source: File, destination: File, entries: List<
                         val entry = ZipArchiveEntry(relative + if (directory) "/" else "").apply {
                             time = 0
                             unixMode = when {
-                                link -> 0xA1FF // symlink 0777
-                                directory -> 0x41ED // directory 0755
-                                Files.isExecutable(path) -> 0x81ED // file 0755
-                                else -> 0x81A4 // file 0644
+                                link -> 0xA1FF // 符号链接 0777
+                                directory -> 0x41ED // 目录 0755
+                                Files.isExecutable(path) -> 0x81ED // 可执行文件 0755
+                                else -> 0x81A4 // 普通文件 0644
                             }
                         }
                         output.putArchiveEntry(entry)

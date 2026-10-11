@@ -20,7 +20,7 @@ internal const val IOS_HTTP_CHUNK_BYTES = 64 * 1024
 
 internal data class FoundationHttpResponse(val status: Int, val contentLength: Long)
 
-/** Each repository owns its NSURLSession. No cookies, disk cache, redirects or global credential store. */
+/** 每个 repository 拥有自己的 NSURLSession。不带 cookie、磁盘缓存、重定向或全局凭据存储。 */
 internal class FoundationHttpClient : AutoCloseable {
     private val lock = PlatformLock()
     private var closed = false
@@ -56,7 +56,7 @@ internal class FoundationHttpClient : AutoCloseable {
         }, delegate, queue,
     )
 
-    /** The child job spans request-body preparation as well as network IO. close cancels both. */
+    /** 子 job 覆盖请求体准备与网络 IO。close 会一并取消两者。 */
     suspend fun <T> operation(block: suspend FoundationHttpCall.() -> T): T =
         withContext(dispatcher + FoundationIoContext(dispatcher)) {
             coroutineScope {
@@ -66,8 +66,8 @@ internal class FoundationHttpClient : AutoCloseable {
                     check(!closed) { "HTTP transport is closed" }
                     operations += call
                 }
-                // Remain visible to every closer until the scope's children and cleanup have exited.
-                // invokeOnCompletion also invokes immediately if cancellation won before registration.
+                // 在该作用域的子协程与清理退出之前，对每个 closer 保持可见。
+                // 若取消先于注册发生，invokeOnCompletion 也会立即执行。
                 job.invokeOnCompletion {
                     synchronized(lock) {
                         operations -= call
@@ -96,12 +96,12 @@ internal class FoundationHttpClient : AutoCloseable {
             closed = true
             Triple(first, operations.toList(), platformCurrentThreadId() in activeThreads)
         }
-        // Do not hold the owner lock while cancellation may invoke callbacks or unblock a producer.
+        // 取消可能触发回调或解除生产者阻塞，期间不要持有 owner 锁。
         pending.forEach { it.cancel() }
         if (first) session.invalidateAndCancel()
         if (reentrant) throw SessionBoundaryReentrantCloseException("HTTP transport cannot close from its own callback")
-        // All owned preparation/consumption executes on Default; neither this drain nor a native
-        // callback asks the main thread to finish. A custom sink must preserve that same contract.
+        // 该 client 拥有的全部准备/消费都执行在 Default 上；本 drain 与原生
+        // 回调都不会要求主线程收尾。自定义 sink 必须保持同样的契约。
         runBlocking {
             pending.forEach { it.awaitExit() }
             invalidated.await()
@@ -127,13 +127,13 @@ internal class FoundationHttpClient : AutoCloseable {
             newRequest: NSURLRequest,
             completionHandler: (NSURLRequest?) -> Unit,
         ) {
-            // Even same-origin redirects are refused. The caller receives the original HTTP status.
+            // 即使同源重定向也会被拒绝。调用方收到的是原始 HTTP 状态码。
             completionHandler(null)
         }
     }
 }
 
-/** The serial delegate queue blocks only on a capacity-one channel, never on the main thread or sink. */
+/** 串行 delegate 队列只在容量为 1 的 channel 上阻塞，绝不阻塞主线程或 sink。 */
 internal class FoundationHttpCall(private val owner: FoundationHttpClient, private val job: Job) {
     internal var task: NSURLSessionTask? = null
     private val response = CompletableDeferred<FoundationHttpResponse>()
@@ -186,8 +186,8 @@ internal class FoundationHttpCall(private val owner: FoundationHttpClient, priva
         try {
             publishResponse(task)
             var offset = 0uL
-            // Retain only the current Foundation callback and bounded Kotlin chunks. A slow
-            // consumer applies backpressure to this delegate queue; cancellation closes the channel.
+            // 只保留当前 Foundation 回调与有界的 Kotlin 分块。慢速消费者会向
+            // 该 delegate 队列施加背压；取消则关闭 channel。
             while (offset < data.length) {
                 ensureActive()
                 val count = minOf(IOS_HTTP_CHUNK_BYTES.toULong(), data.length - offset).toInt()
@@ -231,7 +231,7 @@ internal class FoundationHttpCall(private val owner: FoundationHttpClient, priva
     }
 
     internal fun dispose() {
-        // Closing a full channel releases the delegate callback before invalidating the session.
+        // 关闭已满的 channel，可在 session 失效之前释放 delegate 回调。
         chunks.cancel()
         response.cancel()
         task?.cancel()
@@ -242,7 +242,7 @@ private class FoundationIoContext(val dispatcher: CoroutineDispatcher) : Abstrac
     companion object Key : CoroutineContext.Key<FoundationIoContext>
 }
 
-/** File sources retain the owner's dispatcher so synchronous callbacks detect reentrant close. */
+/** 文件源保留 owner 的 dispatcher，使同步回调能检测到重入 close。 */
 internal suspend fun <T> foundationHttpIo(block: suspend CoroutineScope.() -> T): T =
     withContext(currentCoroutineContext()[FoundationIoContext]?.dispatcher ?: Dispatchers.Default, block)
 

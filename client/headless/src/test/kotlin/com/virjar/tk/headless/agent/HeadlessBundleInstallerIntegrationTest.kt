@@ -17,7 +17,7 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlin.test.*
 
-/** Real temporary directories and shell launchers; no user installation or agent data directory is opened. */
+/** 使用真实的临时目录与 shell 启动器；不打开任何用户安装或 agent 数据目录。 */
 class HeadlessBundleInstallerIntegrationTest {
     @Test
     fun `install and immutable upgrade preserve running payload caller cwd and external data`() = workspace { root ->
@@ -127,7 +127,7 @@ class HeadlessBundleInstallerIntegrationTest {
         val upgraded = execute("upgrade-bundle", prefix, second)
         assertFalse(Files.exists(stage))
         assertLauncher(prefix, root, 'b')
-        // A crash after version publication but before current replacement leaves a harmless immutable version.
+        // 版本发布之后、current 替换之前发生崩溃，只会留下一个无害的不可变版本。
         Files.delete(prefix.resolve("current"))
         val old = HeadlessBundleInstaller.verifyBundle(first.toFile()).checksumSha256
         Files.createSymbolicLink(prefix.resolve("current"), Path.of("versions/$old/bundle"))
@@ -323,7 +323,7 @@ cat "${'$'}ROOT/lib/sdk.jar"
     }
 }
 
-/** Separate JVMs verify real shared OS locks rather than overlapping locks in the test JVM. */
+/** 用独立 JVM 验证真实的共享 OS 锁，而不是测试 JVM 内部的重叠锁。 */
 object HeadlessBundleLeaseProbe {
     @JvmStatic fun main(args: Array<String>) {
         HeadlessBundleInstaller.acquireRuntimeLease(File(args.single())).use {

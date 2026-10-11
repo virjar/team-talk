@@ -53,7 +53,7 @@ class AndroidStorageMaintenanceOwnerTest {
         try {
             assertTrue(maintenance.compact())
             assertTrue(entered.await(5, TimeUnit.SECONDS))
-            // Activity disposal only stops its observer. It neither cancels nor joins the IO owner.
+            // Activity 销毁只会停止它的观察者，既不取消也不同步等待 IO owner。
             withTimeout(1000) { observer.cancelAndJoin() }
             assertEquals(AndroidStorageMaintenancePhase.RUNNING, maintenance.state.value.phase)
             assertFalse(maintenance.compact())

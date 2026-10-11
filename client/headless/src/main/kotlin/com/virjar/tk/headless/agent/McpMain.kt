@@ -74,7 +74,7 @@ internal fun readMcpTokenFile(file: File): String {
         require((java.nio.file.Files.getAttribute(path, "unix:nlink", java.nio.file.LinkOption.NOFOLLOW_LINKS) as Number).toInt() == 1)
         val bytes = java.nio.ByteBuffer.allocate(AgentClientIoPolicy.MAX_TOKEN_FILE_BYTES + 1)
         java.nio.channels.FileChannel.open(path, java.nio.file.StandardOpenOption.READ, java.nio.file.LinkOption.NOFOLLOW_LINKS).use { channel ->
-            while (bytes.hasRemaining() && channel.read(bytes) >= 0) { /* bounded private token read */ }
+            while (bytes.hasRemaining() && channel.read(bytes) >= 0) { /* 有界的私有 token 读取 */ }
         }
         require(bytes.position() <= AgentClientIoPolicy.MAX_TOKEN_FILE_BYTES)
         val token = bytes.array().copyOf(bytes.position()).toString(Charsets.UTF_8).trim()
@@ -202,7 +202,7 @@ class McpServer(api: String, token: String) {
         return try {
             verifyAccess()
             val tool = AgentMcpTool.byName[name] ?: throw McpRequestException(-32602, "unknown tool: $name")
-            // Argument defaults and omission are transport behavior, not inferred from JSON schema.
+            // 参数默认值与省略属于传输层行为，不从 JSON schema 推断。
             val fields = when (tool) {
                 AgentMcpTool.STATUS, AgentMcpTool.CONVERSATIONS, AgentMcpTool.FRIENDS -> emptyMap()
                 AgentMcpTool.SEND_TEXT -> mapOf("chatId" to str("chatId"), "clientMsgId" to str("clientMsgId"), "text" to str("text"))

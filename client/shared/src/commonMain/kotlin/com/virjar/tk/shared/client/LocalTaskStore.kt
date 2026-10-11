@@ -132,7 +132,7 @@ internal class LocalTaskStore(
     override fun revoke(taskId: String) = locked {
         var removed = false
         queries.transaction { removed = revokeLocked(taskId) }
-        // A repeated denied read is not a new invalidation; otherwise observers retry forever.
+        // 重复的读取被拒不算新的失效；否则观察者会无限重试。
         if (removed) { currentGeneration += 1; changed() }
     }
     private fun revokeLocked(taskId: String): Boolean {

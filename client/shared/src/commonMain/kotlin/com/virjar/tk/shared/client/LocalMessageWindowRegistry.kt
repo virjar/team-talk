@@ -275,7 +275,7 @@ private class LocalMessagePagerLease(
     }
 
     override fun reloadLatest() = cacheUseGate.use {
-        // Match cache retirement's lock order; never acquire the cache lock while holding ownerLock.
+        // 与缓存退役的加锁顺序一致；绝不在持有 ownerLock 时再获取缓存锁。
         synchronized(cacheStateLock) {
             synchronized(ownerLock) {
                 check(open) { "MessagePager is closed" }

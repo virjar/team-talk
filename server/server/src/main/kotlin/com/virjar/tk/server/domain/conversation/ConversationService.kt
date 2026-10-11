@@ -99,8 +99,8 @@ class ConversationService(
             requireProjectionReady(transaction, chatId)
             if (conversationRepo.deleteConversation(transaction, uid, chatId)) {
                 drafts?.let { repository ->
-                    // Deleting a conversation explicitly consumes its draft. Keep a version even if
-                    // only the legacy string existed, so a delayed expectedRevision=0 cannot revive it.
+                    // 删除会话会显式消费其草稿。即使只存在旧版字符串草稿也保留一个
+                    // 版本，避免迟到的 expectedRevision=0 请求复活它。
                     val before = repository.get(transaction, uid, chatId)
                     check(before.revision < Long.MAX_VALUE) { "草稿版本已达上限" }
                     val cleared = com.virjar.tk.protocol.model.ChatDraftSnapshot(chatId, before.revision + 1,

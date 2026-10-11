@@ -3,7 +3,7 @@ package release
 import java.io.File
 import java.util.Properties
 
-/** A committed release record reserves its protocol contract before any artifact is distributed. */
+/** 已提交的发布记录在任何产物分发之前先占用其协议契约。 */
 data class ProtocolReleaseSnapshot(
     val releaseVersion: String,
     val releaseBuildNumber: Int,
@@ -13,7 +13,7 @@ data class ProtocolReleaseSnapshot(
     val wireBaseline: File,
 )
 
-/** Local release history is authoritative for private distributions too; GitHub tags are not required. */
+/** 本地发布历史对私有分发同样是权威来源；不依赖 GitHub tag。 */
 object ProtocolReleasePolicy {
     private const val RELEASES = "protocol/protocol/releases"
     private const val DEVELOPMENT_BASELINE = "protocol/protocol/wire-baseline.tsv"
@@ -46,7 +46,7 @@ object ProtocolReleasePolicy {
         return recorded
     }
 
-    /** Explicit source edit, never a dependency that silently runs during publication. */
+    /** 仅限显式源码编辑，绝不作为发布过程中静默运行的依赖。 */
     fun prepare(
         rootDir: File,
         releaseVersion: String,

@@ -28,7 +28,7 @@ class TaskModelTest {
         assertEquals(query, ProtoCodec.decode(TaskQuery, ProtoCodec.encode(query)))
         val started = TaskStartedPayload(ID, 1, 100)
         assertEquals(started, ProtoCodec.decode(TaskStartedPayload, ProtoCodec.encode(started)))
-        // Start reminders precede due and must never be folded into the released remindedAt field.
+        // 开始提醒先于到期提醒，绝不能并入已发布的 remindedAt 字段。
         assertFailsWith<IllegalArgumentException> { task.copy(remindedAt = 100) }
         assertEquals(TaskOptions(), ProtoCodec.decode(TaskOptions, ProtoCodec.encode(TaskOptions())))
         assertFailsWith<IllegalArgumentException> { rule.copy(startLocalTime = "18:00", dueLocalTime = "09:00") }

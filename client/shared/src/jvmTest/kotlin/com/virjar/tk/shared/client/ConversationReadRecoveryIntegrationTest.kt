@@ -32,7 +32,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** Actual SQLite restart, generated RPC codecs, and explicitly ordered acknowledgements/events. */
+/** 真实 SQLite 重启、生成的 RPC 编解码器，以及显式排序的确认与事件。 */
 class ConversationReadRecoveryIntegrationTest {
     @Test
     fun `ready reconciliation repairs persisted future reads and new unread survives another restart`() = runBlocking {
@@ -179,7 +179,7 @@ class ConversationReadRecoveryIntegrationTest {
                 cache.upsertConversation(conversation(4, 1))
                 assertEquals(10L, cache.getConversations().single().readSeq)
                 assertEquals(PendingConversationRead(CHAT, 10), cache.getPendingConversationRead(CHAT))
-                // History reads RocksDB while the fresh conversation snapshot may still lag in PG.
+                // History 读取 RocksDB，而最新的会话快照在 PG 中可能仍然滞后。
                 assertTrue(cache.applyConversationSnapshot(cache.beginConversationSnapshot(), listOf(conversation(3, 1))))
                 assertEquals(10L, cache.getConversations().single().readSeq)
                 assertEquals(PendingConversationRead(CHAT, 10), cache.getPendingConversationRead(CHAT))

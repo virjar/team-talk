@@ -2,7 +2,7 @@ package com.virjar.tk.server.infra.db
 
 import org.jetbrains.exposed.sql.Table
 
-/** One pending revision per authoritative resource; retries never append an unbounded event history. */
+/** 每个权威资源只保留一条待处理 revision；重试不会追加无界的事件历史。 */
 object ContentSearchPending : Table("content_search_pending") {
     val kind = integer("kind")
     val resourceId = varchar("resource_id", 36)

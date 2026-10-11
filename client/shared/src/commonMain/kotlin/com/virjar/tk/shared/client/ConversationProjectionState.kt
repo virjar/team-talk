@@ -16,7 +16,7 @@ internal data class LocalDraftOverride(
 /** 区分“没有观察到事件”与权威的 null 草稿。 */
 internal data class AuthoritativeDraftObservation(val draft: String?)
 
-/** Highest requested read and the independently confirmed part of that same local intent. */
+/** 已请求的最高读取位置，以及同一本地意图中被独立确认的部分。 */
 internal data class LocalConversationRead(val readSeq: Long, val validatedReadSeq: Long = 0L)
 
 internal data class ConversationMergePlan(
@@ -96,8 +96,8 @@ internal fun prepareConversationMerge(
     val incoming = remote.copy(
         draft = if (effectiveOverride != null) effectiveOverride.draft else remote.draft,
     )
-    // PG conversation snapshots can lag RocksDB history even after a checkpoint. Local evidence
-    // proves a read possible; only the exact chat's newly fetched message head disproves old data.
+    // 即便经过 checkpoint，PG 的 conversation 快照仍可能落后于 RocksDB 历史。本地证据
+    // 只能证明一次读取可能发生；只有该 chat 新拉取的消息头才能推翻旧数据。
     val confirmedLastSeq = maxOf(local?.lastSeq ?: 0L, remote.lastSeq, confirmedMessageSeq,
         pendingRead?.validatedReadSeq ?: 0L)
     val upperBound = authoritativeMessageHead?.let { maxOf(it, confirmedLastSeq) }

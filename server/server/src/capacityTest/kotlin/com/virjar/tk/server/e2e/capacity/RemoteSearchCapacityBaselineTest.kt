@@ -33,11 +33,11 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Test
 
 /**
- * First-page search development baseline through the same binary RPCs used by Desktop/Android.
+ * 通过 Desktop/Android 使用的同一套二进制 RPC 度量首屏搜索的开发基线。
  *
- * Distinct authenticated users are required because each uid owns one serial server command lane.
- * The fixture uses ordinary group creation and MESSAGE/ACK writes; neither Lucene nor PostgreSQL is
- * called directly. This test never changes host networking.
+ * 需要多个不同的已认证用户，因为每个 uid 只拥有一条串行的服务端命令通道。
+ * 夹具只使用普通的建群与 MESSAGE/ACK 写入；既不直接调用 Lucene，也不直接调用
+ * PostgreSQL。本测试绝不改变宿主机网络。
  */
 class RemoteSearchCapacityBaselineTest {
     @Test

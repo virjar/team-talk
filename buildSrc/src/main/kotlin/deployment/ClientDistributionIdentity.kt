@@ -8,9 +8,9 @@ data class ClientDistributionIdentity(
     val applicationId: String = "com.virjar.tk",
     val displayName: String = "TeamTalk",
     val desktopName: String = "TeamTalk",
-    /** Final Android installation ID; omitted values preserve the established deployment convention. */
+    /** 最终的 Android 安装 ID；缺省取值保持既定部署约定。 */
     val androidApplicationId: String = "$applicationId.android",
-    /** Final Apple bundle ID; this also determines the APNs topic. */
+    /** 最终的 Apple bundle ID；它同时决定 APNs topic。 */
     val iosBundleId: String = "$applicationId.ios",
 ) {
     init {

@@ -11,7 +11,7 @@ import java.io.StringWriter
 import java.util.Properties
 import java.util.zip.ZipFile
 
-/** Same effective values feed Android resources, BuildConfig and the producer's embedded identity. */
+/** 同一组生效取值分别写入 Android 资源、BuildConfig 与生产方嵌入的身份信息。 */
 internal fun androidDeploymentIdentity(canonicalConfig: String): Map<String, String> {
     val config = Json.parseToJsonElement(canonicalConfig).jsonObject
     val client = config.getValue("client").jsonObject
@@ -40,7 +40,7 @@ internal fun writeAndroidReleaseIdentity(
         setProperty("buildIdentity", buildIdentity)
         androidDeploymentIdentity(canonicalConfig).forEach(::setProperty)
     }
-    // Properties performs the required escaping; omit its timestamp and stabilize property order.
+    // Properties 负责必要的转义；去掉其时间戳并固定属性顺序。
     val encoded = StringWriter().also { properties.store(it, null) }.toString()
         .lineSequence().filter { it.isNotEmpty() && !it.startsWith('#') }.sorted().joinToString("\n", postfix = "\n")
     target.parentFile.mkdirs()
@@ -48,8 +48,8 @@ internal fun writeAndroidReleaseIdentity(
 }
 
 /**
- * format 1 bundles predate embedded deployment fields. Their sealed original bytes remain reusable,
- * with actual manifest/resources checked below. Every newly assembled format 2 bundle requires them.
+ * format 1 bundle 早于内嵌 deployment 字段出现。其密封的原始字节仍可复用，
+ * 实际 manifest/资源由下方校验。每个新组装的 format 2 bundle 都必须包含这些字段。
  */
 internal fun verifyAndroidApkIdentity(
     apk: File,
@@ -92,7 +92,7 @@ internal fun verifyAndroidBadging(badging: String, identity: BundleIdentity) {
         labels.all { decodeAndroidBadgingLabel(it.substringAfter(':')) == identity.client.displayName }) {
         "APK application label differs from the effective configuration"
     }
-    // An activity label overrides the application label in launchers. Empty means inherited.
+    // 启动器中 activity 的 label 会覆盖 application 的 label。空值表示继承。
     val launchLabels = Regex("^launchable-activity: name='[^']*' +label='(.*)' +icon=")
     lines.filter { it.startsWith("launchable-activity:") }.forEach { line ->
         val quoted = requireNotNull(launchLabels.find(line)) { "APK launcher label could not be inspected" }.groupValues[1]
@@ -103,7 +103,7 @@ internal fun verifyAndroidBadging(badging: String, identity: BundleIdentity) {
     }
 }
 
-/** aapt2 escapes backslashes and quotes in resource strings, while emitting Unicode directly. */
+/** aapt2 会转义资源字符串中的反斜杠与引号，而 Unicode 字符直接输出。 */
 private fun decodeAndroidBadgingLabel(quoted: String): String {
     require(quoted.length >= 2 && quoted.first() == '\'' && quoted.last() == '\'') {
         "APK application label could not be inspected"
@@ -127,7 +127,7 @@ private fun decodeAndroidBadgingLabel(quoted: String): String {
     }
 }
 
-/** Resolve the existing Android SDK; verification never downloads or installs tooling. */
+/** 解析本机已有的 Android SDK；校验绝不下载或安装工具。 */
 internal fun androidSdkDirectory(): File {
     val localSdk = generateSequence(File(System.getProperty("user.dir")).absoluteFile) { it.parentFile }
         .map { File(it, "local.properties") }.firstOrNull(File::isFile)?.let { file ->

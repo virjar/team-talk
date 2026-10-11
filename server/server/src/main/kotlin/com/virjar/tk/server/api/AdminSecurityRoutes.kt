@@ -65,7 +65,7 @@ internal fun Route.adminSecurityRoutes(auth: AdminSecurityService) {
 
 internal val ADMIN_AUDIT_FAILURE_KEY = AttributeKey<AdminAuditFailureReason>("admin-audit-failure")
 
-/** Only known mutation routes: no bodies, headers, query strings or arbitrary unmatched URLs enter audit. */
+/** 仅覆盖已知的变更路由：请求体、请求头、查询串或任意未匹配的 URL 都不进入审计。 */
 internal fun adminAuditAction(method: HttpMethod, path: String): String? = auditRoutes.firstOrNull {
     it.first == method && it.second.matches(path)
 }?.third

@@ -433,7 +433,7 @@ class AndroidFileDownloadController private constructor(
                 onTextAttachmentPreview?.invoke(attachment)
                 false
             }
-            // Android invokes exports through actWithLease so permission is requested before downloading.
+            // Android 通过 actWithLease 执行导出，从而在下载前先请求权限。
             FileDownloadPendingAction.EXPORT -> error("Android export requires its permission preflight")
         }
 

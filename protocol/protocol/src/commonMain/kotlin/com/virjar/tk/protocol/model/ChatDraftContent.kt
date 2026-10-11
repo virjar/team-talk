@@ -5,7 +5,7 @@ import com.virjar.tk.protocol.body.MarkdownAssetPolicy
 import com.virjar.tk.protocol.body.MessageBodyPolicy
 import kotlinx.serialization.Serializable
 
-/** Only server-ready assets cross devices. Local sources and upload jobs stay on their installation. */
+/** 只有服务端就绪的资产才跨设备；本地源文件与上传任务留在各自安装内。 */
 @SinceProtocol(2)
 @Serializable
 data class ChatDraftContent(

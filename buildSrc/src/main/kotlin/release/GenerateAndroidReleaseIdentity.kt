@@ -7,11 +7,11 @@ import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 
-/** Registered through AGP's generated-assets API so every variant carries its producer's identity. */
+/** 经 AGP 的 generated-assets API 注册，使每个 variant 都携带其生产方身份。 */
 abstract class GenerateAndroidReleaseIdentity : DefaultTask() {
     @get:Input abstract val releaseVersion: Property<String>
     @get:Input abstract val buildIdentity: Property<String>
-    /** Canonical effective configuration includes every client and endpoint value. */
+    /** 规范化的生效配置，覆盖全部客户端与端点取值。 */
     @get:Input abstract val deploymentConfigJson: Property<String>
     @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
 

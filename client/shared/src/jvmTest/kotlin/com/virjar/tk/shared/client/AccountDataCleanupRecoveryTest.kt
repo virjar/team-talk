@@ -33,7 +33,7 @@ class AccountDataCleanupRecoveryTest {
             assertEquals(owner, clearedOwner)
             assertTrue(restarted.pendingOwners().isEmpty())
 
-            // A completed recovery never clears whatever credentials a later login may have installed.
+            // 已完成的恢复绝不会清除后续登录可能已写入的凭据。
             resumePendingAccountCleanup(restarted) { error("completed cleanup must not replay") }
         } finally {
             directory.deleteRecursively()

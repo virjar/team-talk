@@ -6,7 +6,7 @@ class PlatformLogTest {
     @Test
     fun nativeLoggerBridgesStringsWithUnicodePercentSignsAndExceptions() {
         val logger = PlatformOnlyTkLogger("原生日志 %@")
-        // Exercise the real Foundation boundary: an invalid %@ argument crashes the test process.
+        // 走真实 Foundation 边界：非法的 %@ 参数会使测试进程崩溃。
         logger.trace("中文消息 📄，完成 100%，字面格式 %s %@ %d %%")
         logger.fault(
             "刷新失败，保留进度 50%，字面格式 %@ %s",

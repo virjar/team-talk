@@ -19,7 +19,7 @@ internal actual fun canonicalDeploymentTcpHost(host: String): String {
         require('%' !in value) { "Scoped IPv6 TCP hosts are unsupported" }
         val address = alloc<in6_addr>()
         require(inet_pton(AF_INET6, value, address.ptr) == 1) { "TCP host is not a valid IPv6 literal" }
-        // Java Inet6Address uses eight uncompressed groups, so identity fingerprints remain identical.
+        // Java Inet6Address 使用八个未压缩分组，因此身份指纹保持一致。
         val bytes = address.ptr.reinterpret<UByteVar>()
         (0 until 8).joinToString(":") { index -> ((bytes[index * 2].toInt() shl 8) or bytes[index * 2 + 1].toInt()).toString(16) }
     }

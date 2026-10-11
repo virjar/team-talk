@@ -34,7 +34,7 @@ class RocksDbTierReadCacheTest {
         val cache = RocksDbTier.ReadCache(maxSizeBytes = 10, cacheThreshold = 2)
         assertTrue(cache.put("first", ByteArray(4)))
         assertTrue(cache.put("second", ByteArray(4)))
-        cache.get("first") // second becomes the least-recently-used entry.
+        cache.get("first") // second 成为最久未使用的条目。
 
         assertTrue(cache.put("third", ByteArray(5)))
         assertNull(cache.get("second"))

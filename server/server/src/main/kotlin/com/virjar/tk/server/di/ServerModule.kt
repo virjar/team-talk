@@ -301,7 +301,7 @@ internal fun createServerModule(
         )
     }
 
-    // Domain-owned ports backed by Exposed adapters.
+    // 领域自有端口，由 Exposed 适配器提供支撑。
     single<UserRepository> { ExposedUserRepository(database = get()) }
     single<ContactRepository> { ExposedContactRepository(database = get(), userRepo = get()) }
     single<ChatRepository> { ExposedChatRepository(database = get()) }
@@ -349,7 +349,7 @@ internal fun createServerModule(
     single { MessageProjectionReadiness() }
     single { AttachmentLifecycleGate() }
 
-    // Domain Service
+    // 领域服务
     single { SyncReplayLeaseRegistry() }
     single {
         SyncEventService(
@@ -693,7 +693,7 @@ internal fun createServerModule(
         )
     }
 
-    // TCP Server
+    // TCP 服务器
     single { TcpServer(tcpServerConfiguration, traceEventSink = get()) }
 }
 

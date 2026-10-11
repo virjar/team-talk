@@ -14,7 +14,7 @@ import java.security.SecureRandom
 import java.util.Base64
 import java.util.UUID
 
-/** Configuration is only bootstrap/recovery input; a persisted credential is the authority afterwards. */
+/** 配置只是引导/恢复阶段的输入；之后以持久化的凭据为权威。 */
 class AdminBootstrap(
     val username: String? = System.getenv("ADMIN_USER"),
     val password: String? = System.getenv("ADMIN_PASSWORD"),
@@ -35,7 +35,7 @@ data class AdminSecurityStatus(val username: String, val passwordUpdatedAt: Long
 
 enum class AdminPasswordRotationResult { ROTATED, UNAUTHENTICATED, INVALID_CREDENTIALS, RATE_LIMITED }
 
-/** Single owner of admin credentials and bounded, process-local sessions. No application-user roles. */
+/** 管理员凭据与有界进程内会话的唯一持有者。不设应用用户角色。 */
 class AdminSecurityService internal constructor(
     private val store: AdminSecurityStore,
     private val passwordHasher: PasswordHasher,
@@ -52,7 +52,7 @@ class AdminSecurityService internal constructor(
 
     init { require(maxActiveTokens > 0) }
 
-    /** Called before HTTP publication, and lazily for isolated route/test owners. */
+    /** 在 HTTP 发布前调用；对隔离的路由/测试持有者则惰性调用。 */
     suspend fun initialize() = mutex.withLock { initializeLocked() }
 
     private suspend fun initializeLocked() {
@@ -77,7 +77,7 @@ class AdminSecurityService internal constructor(
                 store.saveCredential(it, if (existing == null) "admin.credentials.initialize" else "admin.credentials.recover", now)
             }
         } else existing
-        // Do not retain the environment's plaintext password in the service after initialization.
+        // 初始化完成后不在服务内保留环境变量传入的明文密码。
         bootstrap = null
         initialized = true
     }
@@ -128,7 +128,7 @@ class AdminSecurityService internal constructor(
     suspend fun revoke(token: String, sessionId: String): Boolean = mutex.withLock {
         if (session(token) == null) return@withLock false
         tokens.entries.removeIf { it.value.id == sessionId }
-        true // Idempotent: an already revoked/expired session is also absent.
+        true // 幂等：已撤销/已过期的会话本来就不在列表中。
     }
 
     suspend fun logout(token: String) = mutex.withLock { tokens.remove(tokenKey(token)); Unit }
@@ -167,13 +167,13 @@ class AdminSecurityService internal constructor(
 
     private fun recordRejectedLogin(reason: AdminAuditFailureReason) {
         val now = clock()
-        // The single administrator is known; unverified usernames are request data, not audit principals.
+        // 唯一管理员是已知的；未验证的用户名属于请求数据，不是审计主体。
         val id = store.beginAudit("unauthenticated", "admin.login", "administrator", now)
         store.completeAudit(id, 401, now, reason)
     }
 
-    // Bootstrap previously accepted every non-blank environment password. Preserve short credentials,
-    // and prehash legacy long passwords explicitly instead of BCrypt's lossy 72-byte truncation.
+    // 引导流程早期接受任意非空环境密码。为保留短凭据的原有哈希，
+    // 对遗留长密码显式预哈希，而不是依赖 BCrypt 有损的 72 字节截断。
     private suspend fun hashAdminPassword(password: String): String =
         if (password.toByteArray(Charsets.UTF_8).size > AuthRules.PASSWORD_MAX_UTF8_BYTES) {
             "sha256:" + passwordHasher.hash(adminPasswordDigest(password))

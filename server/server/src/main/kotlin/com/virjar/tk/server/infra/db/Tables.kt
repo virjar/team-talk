@@ -145,7 +145,7 @@ object BannedCredentialTombstones : Table("banned_credential_tombstones") {
 }
 object Chats : LongIdTable("chats") {
     val chatId = varchar("chat_id", 36).uniqueIndex()
-    val chatType = integer("chat_type")  // 1=personal, 2=group
+    val chatType = integer("chat_type")  // 1=私聊，2=群聊
     /** 私聊的规范排序 uid 对；群聊为 null。 */
     val personalKey = varchar("personal_key", 80).nullable().uniqueIndex()
     val maxSeq = long("max_seq").default(0)
@@ -176,7 +176,7 @@ object GroupMembers : LongIdTable("group_members") {
     val chatId = varchar("chat_id", 36).index()
     val chatType = integer("chat_type").default(2)
     val uid = varchar("uid", 36).index()
-    val role = integer("role").default(0)  // 0=member, 1=admin, 2=owner
+    val role = integer("role").default(0)  // 0=成员，1=管理员，2=群主
     val nickname = varchar("nickname", 100).nullable()
     val status = integer("status").default(1)
     val joinedAt = long("joined_at")
@@ -265,7 +265,7 @@ object Friends : LongIdTable("friends") {
     val uid = varchar("uid", 36).index()
     val friendUid = varchar("friend_uid", 36)
     val remark = varchar("remark", 100).nullable()
-    val status = integer("status").default(1)  // 1=normal, 2=blocked
+    val status = integer("status").default(1)  // 1=正常，2=拉黑
     val version = long("version").default(0)
     val createdAt = long("created_at")
 
@@ -280,7 +280,7 @@ object FriendApplies : LongIdTable("friend_applies") {
     /** 仅在请求处于待处理状态时存在处理能力。 */
     val token = varchar("token", 36).nullable().uniqueIndex()
     val remark = varchar("remark", 200).nullable()
-    val status = integer("status").default(0)  // 0=pending, 1=accepted, 2=rejected
+    val status = integer("status").default(0)  // 0=待处理，1=已同意，2=已拒绝
     val createdAt = long("created_at")
     val updatedAt = long("updated_at")
 

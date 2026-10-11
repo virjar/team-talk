@@ -19,7 +19,7 @@ data class TaskQuery(val scope: Int = ASSIGNED, val groupId: String? = null, val
     }
 }
 
-/** Counts cover the complete authorized, filtered query, independent of the requested page. */
+/** 计数覆盖完整授权且过滤后的查询结果，与所请求的分页无关。 */
 @SinceProtocol(3)
 @Serializable
 data class TaskSummary(val totalCount: Long, val openCount: Long, val overdueCount: Long, val nextDueAt: Long?,

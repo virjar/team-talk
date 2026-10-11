@@ -23,9 +23,9 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Test
 
 /**
- * One deliberately small >32 MiB release gate. It exercises the product SDK, GroupFile ACL,
- * deployed filesystem tier, and one exact TeamTalk service restart without changing host network
- * state or stopping any service directly.
+ * 一个刻意很小的 >32 MiB 发布门禁。它演练产品 SDK、GroupFile ACL、
+ * 已部署的文件系统分层，以及一次精确的 TeamTalk 服务重启，全程不改变宿主机网络
+ * 状态，也不直接停止任何服务。
  */
 class RemoteFileSystemTierCapacityTest {
     @Test

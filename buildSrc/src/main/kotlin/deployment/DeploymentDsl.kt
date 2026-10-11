@@ -130,7 +130,7 @@ class ClientDeploymentBuilder internal constructor() {
     internal val oemPushConfigurations = linkedMapOf<String, OemPushVendorDeployment>()
     internal var apnsPushConfiguration: ApnsPushDeployment? = null
 
-    /** Optional Apple notification provider; the .p8 key is read only by server deployment. */
+    /** 可选的 Apple 通知推送提供方；.p8 密钥只由服务端部署读取。 */
     fun apnsPush(configure: ApnsPushDeploymentBuilder.() -> Unit) {
         apnsPushConfiguration = ApnsPushDeploymentBuilder().apply(configure).build()
     }
@@ -188,7 +188,7 @@ class AndroidSigningDeploymentBuilder internal constructor() {
 class ClientIdentityDeploymentBuilder internal constructor() {
     private val defaults = ClientDistributionIdentity()
     var applicationId: String = defaults.applicationId
-    /** Set the final package registered with Android distribution/push services; null preserves older profiles. */
+    /** 设置在 Android 分发/推送服务注册的最终包名；null 保持旧 profile 不变。 */
     var androidApplicationId: String? = null
     var iosBundleId: String? = null
     var displayName: String = defaults.displayName

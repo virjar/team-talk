@@ -2,7 +2,7 @@ package com.virjar.tk.server.infra.db
 
 import org.jetbrains.exposed.sql.Table
 
-/** Single-instance administrator authority; application users have a separate credential model. */
+/** 单实例管理员权威；应用用户使用独立的凭据模型。 */
 internal object AdminSecurityCredentials : Table("admin_security_credentials") {
     val singleton = integer("singleton").check { it eq 1 }
     val username = varchar("username", 100)
