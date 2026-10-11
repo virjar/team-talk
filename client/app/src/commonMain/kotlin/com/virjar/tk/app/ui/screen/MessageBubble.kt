@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import com.virjar.tk.app.ui.platform.contextLongPress
+import com.virjar.tk.app.ui.platform.primaryClickWithContextLongPress
 import com.virjar.tk.app.ui.platform.secondaryClick
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.protocol.model.Message
@@ -78,11 +79,16 @@ internal fun MessageBubble(
                 Spacer(Modifier.padding(end = Tk.spacing.sm).width(Tk.dimens.chatAvatar))
             } else {
                 val user = resolveSender?.invoke(msg.senderUid)
+                // 主点击（打开资料）与触屏长按（mention，T026）必须由单个手势节点分发：
+                // clickable 外再叠 contextLongPress 时，移动端内层 combinedClickable 的空 onClick
+                // 会消费普通点击，资料页永远打不开（桌面右键 mention 仍走 secondaryClick）。
                 val avatarInteraction = when {
                     onAvatarClick != null && onAvatarMention != null -> Modifier
                         .testTag("chat.avatar.${msg.senderUid.take(8)}")
-                        .clickable { onAvatarClick(msg.senderUid) }
-                        .contextLongPress { onAvatarMention(msg.senderUid) }
+                        .primaryClickWithContextLongPress(
+                            onClick = { onAvatarClick(msg.senderUid) },
+                            onLongPress = { onAvatarMention(msg.senderUid) },
+                        )
                         .secondaryClick { onAvatarMention(msg.senderUid) }
                     onAvatarClick != null -> Modifier
                         .testTag("chat.avatar.${msg.senderUid.take(8)}")
