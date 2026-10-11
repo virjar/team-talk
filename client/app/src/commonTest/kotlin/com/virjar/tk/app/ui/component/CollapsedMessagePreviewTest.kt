@@ -16,21 +16,22 @@ class CollapsedMessagePreviewTest {
     }
 
     @Test fun shortButTallMessagesCollapseAndDoNotLeakHtmlBreaks() {
-        val preview = assertNotNull(collapsedMessagePreview(buildRichTextBody("x<br>".repeat(40))))
+        // 折叠行数阈值随 0.0.7 放宽为 48：50 行折叠，办公常态的 30/40 行不折叠。
+        val preview = assertNotNull(collapsedMessagePreview(buildRichTextBody("x<br>".repeat(50))))
         assertFalse(preview.contains("<br>"))
-        assertNotNull(collapsedMessagePreview(buildRichTextBody("x\n".repeat(40))))
+        assertNotNull(collapsedMessagePreview(buildRichTextBody("x\n".repeat(50))))
         // 办公常态消息不折叠：告警/小时报模板普遍在几十行以内。
         assertNull(collapsedMessagePreview(buildRichTextBody("x<br>".repeat(30))))
         assertNull(collapsedMessagePreview(buildRichTextBody("x\n".repeat(30))))
     }
 
     @Test fun officeLengthMessagesRemainCompleteWhilePastedLogsCollapse() {
-        assertNull(collapsedMessagePreview(buildRichTextBody("字".repeat(1800))))
-        assertNotNull(collapsedMessagePreview(buildRichTextBody("字".repeat(1801))))
+        assertNull(collapsedMessagePreview(buildRichTextBody("字".repeat(2400))))
+        assertNotNull(collapsedMessagePreview(buildRichTextBody("字".repeat(2401))))
     }
 
     @Test fun boundedPrefixDoesNotSplitEmojiSurrogatePair() {
-        val preview = assertNotNull(collapsedMessagePreview(buildRichTextBody("a".repeat(239) + "😀" + "b".repeat(1800))))
+        val preview = assertNotNull(collapsedMessagePreview(buildRichTextBody("a".repeat(239) + "😀" + "b".repeat(2400))))
         assertFalse(preview.any { it.isSurrogate() })
     }
 }
