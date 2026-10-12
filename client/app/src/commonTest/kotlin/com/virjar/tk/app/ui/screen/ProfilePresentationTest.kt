@@ -59,4 +59,31 @@ class ProfilePresentationTest {
         )
         assertFalse(canStartPersonalChatFromProfile("me", "me", isFriend = false, organizationSummary = ownMembership))
     }
+
+    @Test
+    fun `profile identity lines copy full uid and undecorated values while display keeps truncation`() {
+        val user = User(
+            uid = "12345678-1234-5678-9012-345678901234",
+            username = "account",
+            name = "显示名",
+            revision = 1,
+        )
+        val lines = profileIdentityLines(user, "备注名").associateBy { it.tag }
+        assertEquals("备注名", lines.getValue("profile.copy.name").value)
+        assertEquals("显示名：显示名", lines.getValue("profile.copy.displayName").display)
+        assertEquals("显示名", lines.getValue("profile.copy.displayName").value)
+        assertEquals("account", lines.getValue("profile.copy.username").value)
+        assertEquals("@account", lines.getValue("profile.copy.username").display)
+        assertEquals(user.uid, lines.getValue("profile.copy.uid").value)
+        assertEquals("UID: 12345678-1234-56", lines.getValue("profile.copy.uid").display)
+    }
+
+    @Test
+    fun `profile identity lines omit canonical name line when remark is blank`() {
+        val user = User(uid = "abcd1234", username = "acct", name = "显示名", revision = 1)
+        val lines = profileIdentityLines(user, "").associateBy { it.tag }
+        assertFalse(lines.containsKey("profile.copy.displayName"))
+        assertEquals("显示名", lines.getValue("profile.copy.name").value)
+        assertEquals(user.uid, lines.getValue("profile.copy.uid").value)
+    }
 }

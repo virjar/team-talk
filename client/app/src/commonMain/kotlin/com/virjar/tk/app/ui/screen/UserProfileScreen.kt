@@ -6,7 +6,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.protocol.model.User
@@ -14,7 +16,11 @@ import com.virjar.tk.shared.Outcome
 import com.virjar.tk.protocol.model.UserRole
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
 import com.virjar.tk.app.ui.component.ScreenHeader
+import com.virjar.tk.app.ui.platform.primaryClickWithContextLongPress
+import com.virjar.tk.app.ui.platform.rememberClipboardTextWriter
+import com.virjar.tk.app.ui.platform.secondaryClick
 import com.virjar.tk.app.ui.theme.Tk
+import kotlinx.coroutines.delay
 
 enum class UserProfilePresentation {
     FullPage,
@@ -72,6 +78,72 @@ internal fun canStartPersonalChatFromProfile(
 ): Boolean = targetUid != myUid && (
     isFriend || organizationSummary?.takeIf { it.uid == targetUid }?.paths?.isNotEmpty() == true
     )
+
+/**
+ * 资料页身份信息行。[display] 是页面所见文本，[value] 是复制进剪贴板的实际内容：
+ * 名称复制所见显示名；用户名不带 @；UID 复制完整值（展示仍按 16 字符截断，避免 UUID 撑破布局）。
+ */
+internal data class ProfileIdentityLine(
+    val tag: String,
+    val display: String,
+    val value: String,
+)
+
+internal fun profileIdentityLines(user: User, remark: String?): List<ProfileIdentityLine> = buildList {
+    val displayName = contactDisplayName(user, remark, user.uid)
+    add(ProfileIdentityLine("profile.copy.name", displayName, displayName))
+    if (!remark.isNullOrBlank()) {
+        add(ProfileIdentityLine("profile.copy.displayName", "显示名：${user.name}", user.name))
+    }
+    add(ProfileIdentityLine("profile.copy.username", "@${user.username}", user.username))
+    add(ProfileIdentityLine("profile.copy.uid", "UID: ${user.uid.take(16)}", user.uid))
+}
+
+private const val PROFILE_COPIED_HINT_MILLIS = 1_600L
+
+/**
+ * 身份信息行的一键复制：点按（触屏）或单击/右键（桌面）写入剪贴板，行尾短暂回显「已复制」。
+ * 沟通中复制对方资料是高频动作，因此不做菜单中转，任何主键/次键交互都直接复制。
+ */
+@Composable
+private fun CopyableProfileLine(
+    line: ProfileIdentityLine,
+    style: TextStyle,
+    color: Color = Color.Unspecified,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+) {
+    val copyText = rememberClipboardTextWriter()
+    var copied by remember(line.value) { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(PROFILE_COPIED_HINT_MILLIS)
+            copied = false
+        }
+    }
+    val copy: () -> Unit = {
+        copyText(line.value)
+        copied = true
+    }
+    Row(
+        modifier = Modifier
+            .primaryClickWithContextLongPress(onClick = copy, onLongPress = copy)
+            .secondaryClick(copy)
+            .testTag(line.tag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(line.display, style = style, color = color, maxLines = maxLines, overflow = overflow)
+        if (copied) {
+            Text(
+                "已复制",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.testTag("${line.tag}.copied"),
+            )
+        }
+    }
+}
 
 @Composable
 fun UserProfileScreen(
@@ -429,7 +501,11 @@ private fun FullPageProfileHero(
             ).testTag("profile.avatar.view"),
         )
         Spacer(Modifier.height(16.dp))
-        Text(contactDisplayName(user, remark, user.uid), style = MaterialTheme.typography.headlineSmall)
+        val identity = profileIdentityLines(user, remark).associateBy { it.tag }
+        CopyableProfileLine(
+            identity.getValue("profile.copy.name"),
+            style = MaterialTheme.typography.headlineSmall,
+        )
         if (user.role == UserRole.SYSTEM) {
             Spacer(Modifier.height(4.dp))
             Text(
@@ -439,16 +515,18 @@ private fun FullPageProfileHero(
                 modifier = Modifier.testTag("profile.system.badge"),
             )
         }
-        if (!remark.isNullOrBlank()) Text("显示名：${user.name}", style = MaterialTheme.typography.bodyMedium)
+        identity["profile.copy.displayName"]?.let {
+            CopyableProfileLine(it, style = MaterialTheme.typography.bodyMedium)
+        }
         Spacer(Modifier.height(4.dp))
-        Text(
-            "@${user.username}",
+        CopyableProfileLine(
+            identity.getValue("profile.copy.username"),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(4.dp))
-        Text(
-            "UID: ${user.uid.take(16)}",
+        CopyableProfileLine(
+            identity.getValue("profile.copy.uid"),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -476,24 +554,27 @@ private fun CompactProfileHero(
             ).testTag("profile.avatar.view"),
         )
         Spacer(Modifier.width(16.dp))
+        val identity = profileIdentityLines(user, remark).associateBy { it.tag }
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                contactDisplayName(user, remark, user.uid),
+            CopyableProfileLine(
+                identity.getValue("profile.copy.name"),
                 style = MaterialTheme.typography.titleLarge,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (!remark.isNullOrBlank()) Text("显示名：${user.name}", style = MaterialTheme.typography.bodySmall)
+            identity["profile.copy.displayName"]?.let {
+                CopyableProfileLine(it, style = MaterialTheme.typography.bodySmall)
+            }
             Spacer(Modifier.height(4.dp))
-            Text(
-                "@${user.username}",
+            CopyableProfileLine(
+                identity.getValue("profile.copy.username"),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                "UID: ${user.uid.take(16)}",
+            CopyableProfileLine(
+                identity.getValue("profile.copy.uid"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
