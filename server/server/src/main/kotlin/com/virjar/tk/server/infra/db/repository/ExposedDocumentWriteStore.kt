@@ -118,13 +118,13 @@ internal class ExposedDocumentWriteStore(
                 return@inExposedTransaction DocumentSpaceCreation(existingCreateResult(
                     existing,
                     space.createdBy,
-                    creator[Users.status] == UserStatus.ACTIVE &&
-                        creator[Users.role] == UserRole.HUMAN,
+                    creator[Users.status] == UserStatus.ACTIVE.code &&
+                        creator[Users.role] == UserRole.HUMAN.code,
                 ), created = false)
             }
 
             require(
-                creator[Users.status] == UserStatus.ACTIVE && creator[Users.role] == UserRole.HUMAN,
+                creator[Users.status] == UserStatus.ACTIVE.code && creator[Users.role] == UserRole.HUMAN.code,
             ) { "只有活动普通用户可以创建文档空间" }
 
             ExposedDocumentCapacity.requireOwnerSpaceSlot(

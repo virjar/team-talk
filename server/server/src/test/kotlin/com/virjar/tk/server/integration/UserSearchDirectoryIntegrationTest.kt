@@ -34,8 +34,8 @@ class UserSearchDirectoryIntegrationTest {
     fun `public directory filters before deterministic limit`() {
         val suffix = UUID.randomUUID().toString().replace("-", "").take(8)
         val keyword = "directory$suffix"
-        seedUser("$keyword-00-bot", "$keyword 00 Bot", role = UserRole.BOT)
-        seedUser("$keyword-01-system", "$keyword 01 System", role = UserRole.SYSTEM)
+        seedUser("$keyword-00-bot", "$keyword 00 Bot", role = UserRole.BOT.code)
+        seedUser("$keyword-01-system", "$keyword 01 System", role = UserRole.SYSTEM.code)
         seedUser("$keyword-02-disabled", "$keyword 02 Disabled", status = STATUS_DISABLED)
         val alpha = seedUser("$keyword-12-alpha", "$keyword 12 Alpha")
         val charlie = seedUser("$keyword-30-charlie", "$keyword 30 Charlie")
@@ -47,7 +47,7 @@ class UserSearchDirectoryIntegrationTest {
 
         assertEquals(listOf(alpha, bravo), first.map { it.uid })
         assertEquals(first, repeated)
-        assertTrue(first.all { it.role == UserRole.HUMAN && it.status == STATUS_ACTIVE })
+        assertTrue(first.all { it.role == UserRole.HUMAN.code && it.status == STATUS_ACTIVE })
         assertTrue(charlie !in first.map { it.uid })
     }
 
@@ -131,7 +131,7 @@ class UserSearchDirectoryIntegrationTest {
     private fun seedUser(
         username: String,
         name: String,
-        role: Int = UserRole.HUMAN,
+        role: Int = UserRole.HUMAN.code,
         status: Int = STATUS_ACTIVE,
         namePinyinFull: String = "",
         namePinyinInitials: String = "",

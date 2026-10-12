@@ -42,7 +42,7 @@ class UserServiceAuthenticationPolicyTest {
     fun `banned human requires password proof while service identity consumes dummy work`() = runTest {
         val repository = FakeUserRepository().apply {
             internals["banned-user"] = humanInternal(status = 2, passwordHash = "banned-hash")
-            internals["service-user"] = humanInternal(role = UserRole.BOT, passwordHash = "service-marker")
+            internals["service-user"] = humanInternal(role = UserRole.BOT.code, passwordHash = "service-marker")
         }
         val hasher = RecordingPasswordHasher(verificationResult = true)
         val service = service(repository, hasher)
@@ -100,7 +100,7 @@ class UserServiceAuthenticationPolicyTest {
 
         val created = service.createServiceAccount(TestTransaction, "Notification Bot")
 
-        assertEquals(UserRole.BOT, created.role)
+        assertEquals(UserRole.BOT.code, created.role)
         assertTrue(created.username.startsWith("bot-"))
         assertEquals(0, hasher.hashInputs.size)
         assertEquals(0, hasher.verificationTargets.size)
@@ -127,7 +127,7 @@ class UserServiceAuthenticationPolicyTest {
         val repository = FakeUserRepository()
         val service = service(repository, RecordingPasswordHasher())
         listOf(
-            User(uid = "bot", username = "search-bot", name = "Search Bot", role = UserRole.BOT),
+            User(uid = "bot", username = "search-bot", name = "Search Bot", role = UserRole.BOT.code),
             User(uid = "disabled", username = "search-disabled", name = "Disabled", status = 2),
         ).forEach { hiddenIdentity ->
             repository.publicDirectoryResults = listOf(hiddenIdentity)
@@ -210,11 +210,11 @@ class UserServiceAuthenticationPolicyTest {
             uid: String,
             username: String,
             name: String,
-            role: Int,
+            role: UserRole,
         ): User {
             assertSame(TestTransaction, transaction)
             serviceAccountCreates++
-            return User(uid = uid, username = username, name = name, role = role)
+            return User(uid = uid, username = username, name = name, role = role.code)
         }
 
         override fun updateProfile(
@@ -239,7 +239,7 @@ class UserServiceAuthenticationPolicyTest {
     private companion object {
         fun humanInternal(
             status: Int = 1,
-            role: Int = UserRole.HUMAN,
+            role: Int = UserRole.HUMAN.code,
             passwordHash: String = "stored-human-hash",
         ) = UserInternal(
             user = User(

@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.model.UserRole
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
+import com.virjar.tk.protocol.model.roleValue
 
 /** 群成员角色：0=普通, 1=管理员, 2=群主。 */
 internal fun Member.roleName(): String? = when (role) {
@@ -59,7 +60,7 @@ internal fun MemberRow(member: Member, modifier: Modifier = Modifier) {
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                if (member.user?.role == UserRole.BOT) {
+                if (member.user?.roleValue == UserRole.BOT) {
                     Spacer(Modifier.width(6.dp))
                     RoleChip("机器人")
                 }

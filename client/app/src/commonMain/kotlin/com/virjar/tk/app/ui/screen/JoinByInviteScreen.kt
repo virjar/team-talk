@@ -16,6 +16,8 @@ import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.protocol.model.InvitePreview
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import com.virjar.tk.protocol.model.InvitePreviewStatus
+import com.virjar.tk.protocol.model.statusValue
 
 /** 先预览邀请，再把同一次查看的输入交给加入操作；解析与授权由 SDK 和服务端完成。 */
 @Composable
@@ -126,11 +128,11 @@ fun JoinByInviteScreen(
                         }
                         Text(
                             invitePreviewStatus(current.status),
-                            color = if (current.status == InvitePreview.VALID) Tk.colors.secondaryText
+                            color = if (current.statusValue == InvitePreviewStatus.VALID) Tk.colors.secondaryText
                             else MaterialTheme.colorScheme.error,
                             modifier = Modifier.testTag("invite.join.status"),
                         )
-                        if (current.alreadyJoined || current.status == InvitePreview.VALID) {
+                        if (current.alreadyJoined || current.statusValue == InvitePreviewStatus.VALID) {
                             Button(
                                 onClick = {
                                     if (!loading && !joining && preview === current && input == previewInput) {
@@ -165,12 +167,12 @@ fun JoinByInviteScreen(
     }
 }
 
-private fun invitePreviewStatus(status: Int): String = when (status) {
-    InvitePreview.VALID -> "邀请链接有效"
-    InvitePreview.NOT_FOUND -> "邀请不存在，请检查链接或邀请码"
-    InvitePreview.REVOKED -> "邀请链接已撤销"
-    InvitePreview.EXPIRED -> "邀请链接已过期"
-    InvitePreview.EXHAUSTED -> "邀请链接的使用次数已用完"
-    InvitePreview.GROUP_UNAVAILABLE -> "群聊已不可用"
+private fun invitePreviewStatus(status: Int): String = when (InvitePreviewStatus.fromCode(status)) {
+    InvitePreviewStatus.VALID -> "邀请链接有效"
+    InvitePreviewStatus.NOT_FOUND -> "邀请不存在，请检查链接或邀请码"
+    InvitePreviewStatus.REVOKED -> "邀请链接已撤销"
+    InvitePreviewStatus.EXPIRED -> "邀请链接已过期"
+    InvitePreviewStatus.EXHAUSTED -> "邀请链接的使用次数已用完"
+    InvitePreviewStatus.GROUP_UNAVAILABLE -> "群聊已不可用"
     else -> "邀请暂不可用，请重新查看"
 }

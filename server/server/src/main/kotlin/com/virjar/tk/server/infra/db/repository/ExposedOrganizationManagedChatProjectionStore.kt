@@ -147,7 +147,7 @@ class ExposedOrganizationManagedChatProjectionStore(
                 "受管群机器人授权引用了不存在的服务身份"
             }
             activeBotUids.forEach { uid ->
-                val role = observedUsers.getValue(uid)[Users.role]
+                val role = UserRole.fromCode(observedUsers.getValue(uid)[Users.role])
                 check(role == UserRole.BOT || role == UserRole.SYSTEM) {
                     "机器人授权引用了非服务身份: $uid"
                 }

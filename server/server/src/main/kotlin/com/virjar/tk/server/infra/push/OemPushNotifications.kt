@@ -86,7 +86,7 @@ internal class OemPushNotifications(
             val device = Devices.selectAll().where {
                 (Devices.uid eq uid) and (Devices.deviceId eq deviceId)
             }.forUpdate().singleOrNull() ?: return@transaction false
-            if (user[Users.status] != UserStatus.ACTIVE || device[Devices.status] != Devices.STATUS_ACTIVE ||
+            if (user[Users.status] != UserStatus.ACTIVE.code || device[Devices.status] != Devices.STATUS_ACTIVE ||
                 device[Devices.credentialEpoch] != deviceCredentialEpoch ||
                 device[Devices.deviceFlag] != deviceFlag
             ) return@transaction false
@@ -226,7 +226,7 @@ internal class OemPushNotifications(
         val credential = Credentials.join(Users, JoinType.INNER, Credentials.uid, Users.uid)
             .join(Devices, JoinType.INNER, Credentials.uid, Devices.uid).selectAll().where {
             (Credentials.tokenHash eq refreshHash) and (Credentials.tokenType eq REFRESH_TOKEN_TYPE) and
-                (Credentials.expiresAt greater clock()) and (Users.status eq UserStatus.ACTIVE) and
+                (Credentials.expiresAt greater clock()) and (Users.status eq UserStatus.ACTIVE.code) and
                 (Users.credentialEpoch eq Credentials.userCredentialEpoch) and
                 (Devices.deviceId eq Credentials.deviceId) and (Devices.status eq Devices.STATUS_ACTIVE) and
                 (Devices.credentialEpoch eq Credentials.deviceCredentialEpoch) and

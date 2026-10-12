@@ -2,6 +2,8 @@ package com.virjar.tk.server.domain.document
 
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.roleValue
+import com.virjar.tk.protocol.model.statusValue
 import com.virjar.tk.protocol.model.UserStatus
 
 /**
@@ -19,7 +21,7 @@ internal object DocumentCustodyTargetPolicy {
         }
     }
 
-    fun requireActiveSteward(role: Int, status: Int) {
+    fun requireActiveSteward(role: UserRole?, status: UserStatus?) {
         require(role == UserRole.HUMAN && status == UserStatus.ACTIVE) {
             "目标责任人必须是活动普通用户"
         }

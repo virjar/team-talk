@@ -12,6 +12,10 @@ import com.virjar.tk.app.navigation.UiLocalDataBoundary
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.Contact
 import com.virjar.tk.protocol.model.ContactApplyRecord
+import com.virjar.tk.protocol.model.directionValue
+import com.virjar.tk.protocol.model.statusValue
+import com.virjar.tk.protocol.model.ContactApplyDirection
+import com.virjar.tk.protocol.model.ContactApplyStatus
 import com.virjar.tk.protocol.model.Device
 import com.virjar.tk.protocol.model.ProfilePatch
 import com.virjar.tk.protocol.model.ProfilePatchValue
@@ -30,9 +34,9 @@ enum class ProfileFriendApplyState {
 }
 
 internal fun profileFriendApplyState(record: ContactApplyRecord?): ProfileFriendApplyState = when {
-    record?.status != ContactApplyRecord.STATUS_PENDING -> ProfileFriendApplyState.NONE
-    record.direction == ContactApplyRecord.DIRECTION_OUTGOING -> ProfileFriendApplyState.OUTGOING_PENDING
-    record.direction == ContactApplyRecord.DIRECTION_INCOMING -> ProfileFriendApplyState.INCOMING_PENDING
+    record?.statusValue != ContactApplyStatus.PENDING -> ProfileFriendApplyState.NONE
+    record.directionValue == ContactApplyDirection.OUTGOING -> ProfileFriendApplyState.OUTGOING_PENDING
+    record.directionValue == ContactApplyDirection.INCOMING -> ProfileFriendApplyState.INCOMING_PENDING
     else -> ProfileFriendApplyState.NONE
 }
 
@@ -453,7 +457,7 @@ class AccountFeature internal constructor(
         scope.launch {
             try {
                 val applied = session.contactRepo.apply(uid, remark).getOrThrow()
-                if (applied.status == ContactApplyRecord.STATUS_PENDING) {
+                if (applied.statusValue == ContactApplyStatus.PENDING) {
                     updateFriendApplyState(uid, ProfileFriendApplyState.OUTGOING_PENDING)
                 }
             } catch (e: AppError) {

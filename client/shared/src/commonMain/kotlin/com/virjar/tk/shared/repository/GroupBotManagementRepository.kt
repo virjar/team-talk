@@ -11,7 +11,9 @@ import com.virjar.tk.protocol.http.CreateGroupBotRequest
 import com.virjar.tk.protocol.http.GROUP_BOT_NAME_MAX_LENGTH
 import com.virjar.tk.protocol.http.GroupBotCommandReceipt
 import com.virjar.tk.protocol.http.GroupBotCredentials
+import com.virjar.tk.protocol.http.GroupBotStatus
 import com.virjar.tk.protocol.http.GroupBotSummary
+import com.virjar.tk.protocol.http.statusValue
 import com.virjar.tk.protocol.http.RotateGroupBotTokenRequest
 import com.virjar.tk.shared.outcome
 import kotlinx.coroutines.CancellationException
@@ -331,7 +333,7 @@ internal object GroupBotHttpContract {
             "机器人凭据响应目标群不匹配"
         }
         require(
-            receipt.bot.status == GroupBotSummary.STATUS_ACTIVE && receipt.bot.groupManaged && receipt.bot.createdByMe &&
+            receipt.bot.statusValue == GroupBotStatus.ACTIVE && receipt.bot.groupManaged && receipt.bot.createdByMe &&
                 receipt.bot.canRotateToken && receipt.bot.canRemove,
         ) { "机器人凭据响应不是当前创建者的活动群机器人" }
         if (command.kind == GroupBotCredentialCommandKind.CREATE) {

@@ -10,6 +10,7 @@ import com.virjar.tk.protocol.model.ContactApply
 import com.virjar.tk.protocol.model.ContactApplyLookup
 import com.virjar.tk.protocol.model.ContactApplyRecord
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.roleValue
 import com.virjar.tk.protocol.NotifyType
 import java.util.UUID
 
@@ -163,13 +164,13 @@ class ContactService(
     fun getPendingApply(uid: String, targetUid: String): ContactApplyLookup {
         if (uid == targetUid) return ContactApplyLookup()
         val target = users.findByUid(targetUid) ?: return ContactApplyLookup()
-        if (target.role != UserRole.HUMAN) return ContactApplyLookup()
+        if (target.roleValue != UserRole.HUMAN) return ContactApplyLookup()
         return ContactApplyLookup(contacts.getPendingApply(uid, targetUid))
     }
 
     private fun requireHumanTarget(targetUid: String) {
         val target = users.findByUid(targetUid) ?: throw IllegalArgumentException("用户不存在")
-        require(target.role == UserRole.HUMAN) { "不能向机器人或系统账户发起好友申请" }
+        require(target.roleValue == UserRole.HUMAN) { "不能向机器人或系统账户发起好友申请" }
     }
 
     companion object {

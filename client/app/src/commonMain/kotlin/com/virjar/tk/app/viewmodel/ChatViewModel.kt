@@ -38,6 +38,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.virjar.tk.protocol.model.ChatType
+import com.virjar.tk.protocol.model.GroupMemberRole
+import com.virjar.tk.protocol.model.roleValue
 
 /** 带一个有界 [LocalCache.pager] 租约和显式退役的 chat 状态 owner。 */
 class ChatViewModel(
@@ -190,10 +192,10 @@ class ChatViewModel(
         .map { chat -> chat?.notice?.takeIf(String::isNotBlank) }
         .stateIn(scope, SharingStarted.Eagerly, null)
 
-    /** 当前用户在群内的角色（0=成员/1=管理员/2=群主；私聊与未知为 0）——已读入口可见性数据源。 */
-    val chatRole: StateFlow<Int> = localCache.observeMembers(chatId)
-        .map { members -> members.firstOrNull { it.uid == myUid }?.role ?: 0 }
-        .stateIn(scope, SharingStarted.Eagerly, 0)
+    /** 当前用户在群内的角色（私聊/非成员/未知为 null）——已读入口可见性数据源。 */
+    val chatRole: StateFlow<GroupMemberRole?> = localCache.observeMembers(chatId)
+        .map { members -> members.firstOrNull { it.uid == myUid }?.roleValue }
+        .stateIn(scope, SharingStarted.Eagerly, null)
 
 
     /** 私聊对端 uid（仅 chatType=1 非空）；@ 可见性按会话范围过滤候选（内测 T047）。 */

@@ -6,6 +6,34 @@ import com.virjar.tk.protocol.PacketBuffer
 import kotlinx.serialization.Serializable
 
 /**
+ * 好友申请方向；wire 存 Int code，逻辑代码经 [ContactApplyRecord.directionValue] 比较。
+ */
+@com.virjar.tk.protocol.SinceProtocol(7)
+enum class ContactApplyDirection(val code: Int) {
+    INCOMING(1),
+    OUTGOING(2);
+
+    companion object {
+        fun fromCode(code: Int): ContactApplyDirection? = entries.find { it.code == code }
+    }
+}
+
+/**
+ * 好友申请处理状态；与 friend_applies 表 status 列共用值空间。
+ * 未知 code（未来版本）经 [ContactApplyRecord.statusValue] 映射为 null，按已终结处理。
+ */
+@com.virjar.tk.protocol.SinceProtocol(7)
+enum class ContactApplyStatus(val code: Int) {
+    PENDING(0),
+    ACCEPTED(1),
+    REJECTED(2);
+
+    companion object {
+        fun fromCode(code: Int): ContactApplyStatus? = entries.find { it.code == code }
+    }
+}
+
+/**
  * 当前用户视角的好友申请记录。
  *
  * 与 [ContactApply] 分离：前者是处理动作的定向投影，本模型是包含方向和历史状态的查询投影。
@@ -16,9 +44,11 @@ data class ContactApplyRecord(
     val id: Long,
     val fromUid: String,
     val toUid: String,
+    /** wire 仍为 Int code；逻辑代码使用 [directionValue] 枚举视图比较。 */
     val direction: Int,
     val token: String? = null,
     val remark: String? = null,
+    /** wire 仍为 Int code；逻辑代码使用 [statusValue] 枚举视图比较。 */
     val status: Int,
     val createdAt: Long,
     val updatedAt: Long,
@@ -39,13 +69,6 @@ data class ContactApplyRecord(
     }
 
     companion object : IProtoReader<ContactApplyRecord> {
-        const val DIRECTION_INCOMING = 1
-        const val DIRECTION_OUTGOING = 2
-
-        const val STATUS_PENDING = 0
-        const val STATUS_ACCEPTED = 1
-        const val STATUS_REJECTED = 2
-
         override fun readFrom(buf: PacketBuffer): ContactApplyRecord = ContactApplyRecord(
             id = buf.readVarLong(),
             fromUid = buf.readRequiredString(),
@@ -60,6 +83,14 @@ data class ContactApplyRecord(
         )
     }
 }
+
+/** 申请方向的类型化视图；null = 未知取值（未来版本）。 */
+val ContactApplyRecord.directionValue: ContactApplyDirection?
+    get() = ContactApplyDirection.fromCode(direction)
+
+/** 申请状态的类型化视图；null = 未知取值，按已终结处理。 */
+val ContactApplyRecord.statusValue: ContactApplyStatus?
+    get() = ContactApplyStatus.fromCode(status)
 
 /** 可选结果包装器，因为 RPC payload 要求 IProto 有显式的存在字节。 */
 @Serializable

@@ -51,7 +51,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.shared.client.GroupBotCredentialCommandKind
 import com.virjar.tk.protocol.http.GroupBotCredentials
+import com.virjar.tk.protocol.http.GroupBotStatus
 import com.virjar.tk.protocol.http.GroupBotSummary
+import com.virjar.tk.protocol.http.statusValue
 import com.virjar.tk.shared.repository.PendingGroupBotCredentialRecovery
 import com.virjar.tk.app.ui.component.ScreenHeader
 import com.virjar.tk.app.ui.platform.rememberClipboardTextWriter
@@ -354,9 +356,9 @@ private fun GroupBotRow(
         supportingContent = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    if (bot.status == GroupBotSummary.STATUS_ACTIVE) "运行中" else "已停用",
+                    if (bot.statusValue == GroupBotStatus.ACTIVE) "运行中" else "已停用",
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (bot.status == GroupBotSummary.STATUS_ACTIVE) MaterialTheme.colorScheme.primary
+                    color = if (bot.statusValue == GroupBotStatus.ACTIVE) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(endpoint, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)

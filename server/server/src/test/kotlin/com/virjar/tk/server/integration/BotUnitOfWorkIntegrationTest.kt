@@ -105,7 +105,7 @@ class BotUnitOfWorkIntegrationTest {
         assertEquals(countsBefore, aggregateCounts())
         assertEquals(ownerEventBefore, latestEventSeq(owner))
         assertTrue(ctx.chatService.getMembers(group.chatId).none { member ->
-            ctx.userRepo.findByUid(member.uid)?.role == UserRole.BOT
+            ctx.userRepo.findByUid(member.uid)?.role == UserRole.BOT.code
         })
     }
 
@@ -267,7 +267,7 @@ class BotUnitOfWorkIntegrationTest {
         val baselines = listOf(owner, created.bot.userUid).associateWith(::latestEventSeq)
 
         transaction(ctx.database) {
-            Users.update({ Users.uid eq created.bot.userUid }) { it[role] = UserRole.HUMAN }
+            Users.update({ Users.uid eq created.bot.userUid }) { it[role] = UserRole.HUMAN.code }
         }
         try {
             assertIs<IllegalStateException>(
@@ -285,7 +285,7 @@ class BotUnitOfWorkIntegrationTest {
             baselines.forEach { (uid, seq) -> assertEquals(seq, latestEventSeq(uid)) }
         } finally {
             transaction(ctx.database) {
-                Users.update({ Users.uid eq created.bot.userUid }) { it[role] = UserRole.BOT }
+                Users.update({ Users.uid eq created.bot.userUid }) { it[role] = UserRole.BOT.code }
             }
         }
     }
@@ -596,7 +596,7 @@ class BotUnitOfWorkIntegrationTest {
         )
         ctx.organizationService.assignMember(unit.unitId, revokedMember, null, primary = false)
         val ungranted = ctx.botService.create("Pending authority grant candidate")
-        val baselineBotUsers = transaction(ctx.database) { Users.selectAll().where { Users.role eq UserRole.BOT }.count() }
+        val baselineBotUsers = transaction(ctx.database) { Users.selectAll().where { Users.role eq UserRole.BOT.code }.count() }
         val baselineBots = transaction(ctx.database) { AutomationBots.selectAll().count() }
         val baselineGrants = transaction(ctx.database) { AutomationBotGrants.selectAll().count() }
         val baselineTokenHash = transaction(ctx.database) {
@@ -634,7 +634,7 @@ class BotUnitOfWorkIntegrationTest {
             assertEquals("受管群投影尚未收敛", rejected.message)
         }
 
-        assertEquals(baselineBotUsers, transaction(ctx.database) { Users.selectAll().where { Users.role eq UserRole.BOT }.count() })
+        assertEquals(baselineBotUsers, transaction(ctx.database) { Users.selectAll().where { Users.role eq UserRole.BOT.code }.count() })
         assertEquals(baselineBots, transaction(ctx.database) { AutomationBots.selectAll().count() })
         assertEquals(baselineGrants, transaction(ctx.database) { AutomationBotGrants.selectAll().count() })
         assertEquals(baselineTokenHash, transaction(ctx.database) {
@@ -647,7 +647,7 @@ class BotUnitOfWorkIntegrationTest {
         assertTrue(ctx.organizationProjector.project(pending))
         assertFalse(isActiveMember(unit.unitId, revokedMember))
         assertFalse(hasGrant(ungranted.bot.botId, unit.unitId))
-        assertEquals(baselineBotUsers, transaction(ctx.database) { Users.selectAll().where { Users.role eq UserRole.BOT }.count() })
+        assertEquals(baselineBotUsers, transaction(ctx.database) { Users.selectAll().where { Users.role eq UserRole.BOT.code }.count() })
         assertEquals(baselineBots, transaction(ctx.database) { AutomationBots.selectAll().count() })
         assertEquals(baselineGrants, transaction(ctx.database) { AutomationBotGrants.selectAll().count() })
         assertEquals(baselineTokenHash, transaction(ctx.database) {
@@ -716,7 +716,7 @@ class BotUnitOfWorkIntegrationTest {
 
     private fun aggregateCounts(): AggregateCounts = transaction(ctx.database) {
         AggregateCounts(
-            botUsers = Users.selectAll().where { Users.role eq UserRole.BOT }.count(),
+            botUsers = Users.selectAll().where { Users.role eq UserRole.BOT.code }.count(),
             bots = AutomationBots.selectAll().count(),
             credentialCommands = BotCredentialCommands.selectAll().count(),
             grants = AutomationBotGrants.selectAll().count(),

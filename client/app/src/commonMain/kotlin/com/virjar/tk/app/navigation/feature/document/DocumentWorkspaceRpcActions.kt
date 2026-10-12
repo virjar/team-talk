@@ -29,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.virjar.tk.protocol.model.roleValue
 
 /** 共享的 UI owner 失败边界：取消保留对象身份，绝不变成 UI。 */
 internal fun Exception.rethrowIfDocumentWorkspaceCancelled() {
@@ -526,7 +527,7 @@ internal class DocumentGrantOrganizationController(
                     "Document grant member search exceeded its result boundary"
                 }
                 check(candidates.all { candidate ->
-                    candidate.role == UserRole.HUMAN &&
+                    candidate.roleValue == UserRole.HUMAN &&
                         candidate.status == DOCUMENT_GRANT_ACTIVE_USER_STATUS
                 }) {
                     "Document grant member search returned an inactive or non-human identity"

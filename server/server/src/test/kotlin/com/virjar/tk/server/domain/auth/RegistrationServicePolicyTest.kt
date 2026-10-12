@@ -22,6 +22,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.UserRole
 
 class RegistrationServicePolicyTest {
     @Test
@@ -161,7 +162,7 @@ class RegistrationServicePolicyTest {
             uid: String,
             username: String,
             name: String,
-            role: Int,
+            role: UserRole,
         ): User = error("not used")
 
         override fun updateProfile(

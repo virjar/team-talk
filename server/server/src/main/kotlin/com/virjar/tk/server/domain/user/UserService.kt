@@ -15,7 +15,9 @@ import com.virjar.tk.protocol.model.ProfilePatchValue
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.model.UserAvatarPolicy
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.roleValue
 import com.virjar.tk.protocol.model.UserStatus
+import com.virjar.tk.protocol.model.statusValue
 import com.virjar.tk.protocol.NotifyType
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -65,7 +67,7 @@ class UserService(
     suspend fun authenticateForCredentialIssue(username: String, password: String): CredentialLoginProof {
         AuthRules.validateLogin(username, password)
         val internal = users.findInternalByUsername(username)
-        val eligibleHuman = internal?.user?.role == UserRole.HUMAN
+        val eligibleHuman = internal?.user?.roleValue == UserRole.HUMAN
 
         // 封禁判定会触发客户端删除资料，必须先证明密码；缺失及服务身份仍使用等效假校验。
         val passwordMatches = passwordHasher.verify(
@@ -73,11 +75,11 @@ class UserService(
             encodedHash = internal?.passwordHash?.takeIf { eligibleHuman },
         )
         if (internal == null) throw invalidCredentials()
-        if (internal.user.role != UserRole.HUMAN) {
+        if (internal.user.roleValue != UserRole.HUMAN) {
             throw IllegalArgumentException("服务账户不能使用客户端密码登录")
         }
         if (!passwordMatches) throw invalidCredentials()
-        if (internal.user.status != UserStatus.ACTIVE) {
+        if (internal.user.statusValue != UserStatus.ACTIVE) {
             throw AccountBannedException(internal.user.uid)
         }
         return CredentialLoginProof(internal.user, internal.credentialEpoch, internal.passwordHash)
@@ -87,7 +89,7 @@ class UserService(
     fun createServiceAccount(
         transaction: PgWriteTransactionContext,
         name: String,
-        role: Int = UserRole.BOT,
+        role: UserRole = UserRole.BOT,
     ): User {
         require(role == UserRole.BOT || role == UserRole.SYSTEM) { "非法服务账户类型" }
         require(name.isNotBlank()) { "服务账户名称不能为空" }
@@ -307,7 +309,7 @@ class UserService(
         AuthRules.validatePassword(newPassword)?.let { throw IllegalArgumentException(it) }
         if (AuthRules.validatePassword(oldPassword) != null) throw IllegalArgumentException("旧密码错误")
         val internal = users.findInternalByUid(uid) ?: throw IllegalArgumentException("用户不存在")
-        val eligibleHuman = internal.user.status == UserStatus.ACTIVE && internal.user.role == UserRole.HUMAN
+        val eligibleHuman = internal.user.statusValue == UserStatus.ACTIVE && internal.user.roleValue == UserRole.HUMAN
         val oldPasswordMatches = passwordHasher.verify(
             rawPassword = oldPassword,
             encodedHash = internal.passwordHash.takeIf { eligibleHuman },
@@ -329,6 +331,6 @@ class UserService(
         val PUBLIC_DIRECTORY_ORDER = compareBy<User>(User::name, User::username, User::uid)
 
         fun isPublicDirectoryUser(user: User): Boolean =
-            user.status == UserStatus.ACTIVE && user.role == UserRole.HUMAN
+            user.statusValue == UserStatus.ACTIVE && user.roleValue == UserRole.HUMAN
     }
 }

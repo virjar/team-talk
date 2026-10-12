@@ -3,6 +3,7 @@ package com.virjar.tk.server.infra.db
 import com.virjar.tk.protocol.body.AttachmentPolicy
 import com.virjar.tk.protocol.telemetry.ClientTelemetryLimits
 import com.virjar.tk.protocol.model.ContactApplyRecord
+import com.virjar.tk.protocol.model.ContactApplyStatus
 import com.virjar.tk.protocol.model.ConversationCapacityPolicy
 import com.virjar.tk.protocol.model.UserAvatarPolicy
 import org.jetbrains.exposed.dao.id.LongIdTable
@@ -196,7 +197,7 @@ object GroupMembers : LongIdTable("group_members") {
         uniqueIndex(
             "uq_group_members_active_owner",
             chatId,
-            filterCondition = { (status eq STATUS_ACTIVE) and (role eq com.virjar.tk.protocol.model.Member.ROLE_OWNER) },
+            filterCondition = { (status eq STATUS_ACTIVE) and (role eq com.virjar.tk.protocol.model.GroupMemberRole.OWNER.code) },
         )
     }
 }
@@ -301,23 +302,23 @@ object FriendApplies : LongIdTable("friend_applies") {
             "idx_friend_applies_pending_sender",
             false,
             fromUid,
-            filterCondition = { status eq ContactApplyRecord.STATUS_PENDING },
+            filterCondition = { status eq ContactApplyStatus.PENDING.code },
         )
         index(
             "idx_friend_applies_pending_recipient",
             false,
             toUid,
-            filterCondition = { status eq ContactApplyRecord.STATUS_PENDING },
+            filterCondition = { status eq ContactApplyStatus.PENDING.code },
         )
         uniqueIndex(
             "uq_friend_applies_pending_direction",
             fromUid,
             toUid,
-            filterCondition = { status eq ContactApplyRecord.STATUS_PENDING },
+            filterCondition = { status eq ContactApplyStatus.PENDING.code },
         )
         check("ck_friend_applies_status") { status inList listOf(0, 1, 2) }
         check("ck_friend_applies_token_lifecycle") {
-            ((status eq ContactApplyRecord.STATUS_PENDING) and token.isNotNull()) or ((status neq ContactApplyRecord.STATUS_PENDING) and token.isNull())
+            ((status eq ContactApplyStatus.PENDING.code) and token.isNotNull()) or ((status neq ContactApplyStatus.PENDING.code) and token.isNull())
         }
     }
 }
@@ -775,7 +776,7 @@ object ScheduledMessages : Table("scheduled_messages") {
         index("idx_scheduled_operation", true, senderUid, operationId)
         // 到期扫描：WAITING 按 deliverAt 升序。
         index("idx_scheduled_due", false, deliverAt, scheduledId,
-            filterCondition = { status eq com.virjar.tk.protocol.model.ScheduledMessage.STATUS_WAITING })
+            filterCondition = { status eq com.virjar.tk.protocol.model.ScheduledMessageStatus.WAITING.code })
         check("ck_scheduled_status") { status inList listOf(0, 1, 2, 3) }
     }
 }

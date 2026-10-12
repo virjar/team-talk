@@ -44,7 +44,7 @@ internal class ExposedDocumentPolicyMutationStore {
         }.forUpdate().singleOrNull()
         DocumentPolicyMutationFence(
             actorIsActiveHuman = actor != null &&
-                actor[Users.role] == UserRole.HUMAN &&
+                actor[Users.role] == UserRole.HUMAN.code &&
                 actor[Users.status] == STATUS_ACTIVE,
             space = spaceRow?.toDocumentSpace(),
             spaceIsActive = spaceRow?.get(DocumentSpaces.status) == STATUS_ACTIVE,

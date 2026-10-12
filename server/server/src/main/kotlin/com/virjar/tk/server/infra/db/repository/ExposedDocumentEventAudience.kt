@@ -75,6 +75,6 @@ private val DOCUMENT_EVENT_AUDIENCE_SQL = """
         JOIN matching_units unit ON unit.unit_id = membership.unit_id
     )
     SELECT users.uid FROM users JOIN candidates ON candidates.uid = users.uid
-    WHERE users.status = ${UserStatus.ACTIVE} AND users.role = ${UserRole.HUMAN}
+    WHERE users.status = ${UserStatus.ACTIVE.code} AND users.role = ${UserRole.HUMAN.code}
     ORDER BY users.uid
 """.trimIndent()

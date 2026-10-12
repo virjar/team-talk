@@ -2,6 +2,7 @@ package com.virjar.tk.server.domain.document
 
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
@@ -77,10 +78,10 @@ class DocumentCustodyAdministrationPolicyTest {
     private fun snapshot(
         sourceStatus: Int,
         targetStatus: Int,
-        targetRole: Int = UserRole.HUMAN,
+        targetRole: UserRole? = UserRole.HUMAN,
     ) = DocumentCustodySnapshot(
-        source = DocumentCustodyUserFact(sourceUid, UserRole.HUMAN, sourceStatus),
-        targetSteward = DocumentCustodyUserFact(targetUid, targetRole, targetStatus),
+        source = DocumentCustodyUserFact(sourceUid, UserRole.HUMAN, UserStatus.fromCode(sourceStatus)),
+        targetSteward = DocumentCustodyUserFact(targetUid, targetRole, UserStatus.fromCode(targetStatus)),
         targetOwnerUnitStatus = null,
         spaces = listOf(space),
         directGrants = listOf(DocumentCustodyGrantPlanEntry(space.spaceId, space.policyRevision)),

@@ -60,14 +60,14 @@ class ExposedUserRepository internal constructor(
     override fun listHumanUidPage(afterUid: String?, limit: Int): List<String> {
         require(limit > 0) { "Human uid page size must be positive" }
         return transaction(database) {
-            val base = Users.selectAll().where { Users.role eq UserRole.HUMAN }
+            val base = Users.selectAll().where { Users.role eq UserRole.HUMAN.code }
             val scoped = if (afterUid == null) base else base.andWhere { Users.uid greater afterUid }
             scoped.orderBy(Users.uid).limit(limit).map { it[Users.uid] }
         }
     }
 
     override fun countHumans(): Long = transaction(database) {
-        Users.selectAll().where { Users.role eq UserRole.HUMAN }.count()
+        Users.selectAll().where { Users.role eq UserRole.HUMAN.code }.count()
     }
 
     override fun findByUid(uid: String): User? {
@@ -134,7 +134,7 @@ class ExposedUserRepository internal constructor(
                 name = command.name,
                 passwordHash = command.passwordHash,
                 phone = phone,
-                role = UserRole.HUMAN,
+                role = UserRole.HUMAN.code,
                 now = now,
             )
         } catch (error: Exception) {
@@ -152,7 +152,7 @@ class ExposedUserRepository internal constructor(
         uid: String,
         username: String,
         name: String,
-        role: Int,
+        role: UserRole,
     ): User {
         transaction.requireExposedTransaction()
         return try {
@@ -162,7 +162,7 @@ class ExposedUserRepository internal constructor(
                 name = name,
                 passwordHash = newDisabledCredentialMarker(),
                 phone = null,
-                role = role,
+                role = role.code,
                 now = System.currentTimeMillis(),
             )
         } catch (error: Exception) {
@@ -247,7 +247,7 @@ class ExposedUserRepository internal constructor(
                 val friendUids = Friends.select(Friends.friendUid)
                     .where { (Friends.uid eq callerUid) and (Friends.status eq Contact.STATUS_NORMAL) }
                 (Users.status eq STATUS_ACTIVE) and
-                    (Users.role eq UserRole.HUMAN) and
+                    (Users.role eq UserRole.HUMAN.code) and
                     (
                         (Users.username like literalPattern) or
                             (Users.name like literalPattern) or

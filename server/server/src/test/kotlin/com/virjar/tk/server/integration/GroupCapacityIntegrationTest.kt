@@ -391,7 +391,7 @@ class GroupCapacityIntegrationTest {
             this[Users.username] = "user-$uid"
             this[Users.name] = "User $uid"
             this[Users.passwordHash] = "integration-fixture"
-            this[Users.role] = UserRole.HUMAN
+            this[Users.role] = UserRole.HUMAN.code
             this[Users.status] = ACTIVE
             this[Users.createdAt] = now
             this[Users.updatedAt] = now
@@ -447,7 +447,7 @@ class GroupCapacityIntegrationTest {
     private fun aggregateCounts(): GroupCapacityAggregateCounts = transaction(ctx.database) {
         GroupCapacityAggregateCounts(
             users = Users.selectAll().count(),
-            botUsers = Users.selectAll().where { Users.role eq UserRole.BOT }.count(),
+            botUsers = Users.selectAll().where { Users.role eq UserRole.BOT.code }.count(),
             chats = Chats.selectAll().count(),
             groupChats = GroupChats.selectAll().count(),
             bots = AutomationBots.selectAll().count(),

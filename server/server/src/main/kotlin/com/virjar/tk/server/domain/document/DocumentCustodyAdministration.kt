@@ -8,9 +8,11 @@ import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.OrganizationUnit
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.roleValue
 import com.virjar.tk.protocol.model.UserStatus
 import com.virjar.tk.protocol.model.isActiveHuman
 import kotlinx.serialization.Serializable
+import com.virjar.tk.protocol.model.statusValue
 
 /** 一次管理型 Document 归属批量操作（custody batch）的显式目的地。 */
 data class DocumentCustodyTarget(
@@ -99,8 +101,8 @@ data class DocumentCustodyBatchCommit(
 /** 行政恢复策略所需的最小账户事实。 */
 data class DocumentCustodyUserFact(
     val uid: String,
-    val role: Int,
-    val status: Int,
+    val role: UserRole?,
+    val status: UserStatus?,
 )
 
 /** 一次事务一致的来源盘点与目标校验快照。 */

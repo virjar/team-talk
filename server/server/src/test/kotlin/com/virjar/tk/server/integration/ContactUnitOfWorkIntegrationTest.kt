@@ -34,6 +34,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.ContactApplyStatus
+import com.virjar.tk.protocol.model.ContactApplyDirection
 
 /** 针对 Contact 聚合 + 持久事件事务边界的真实 PostgreSQL 门禁测试。 */
 class ContactUnitOfWorkIntegrationTest {
@@ -71,7 +73,7 @@ class ContactUnitOfWorkIntegrationTest {
         }.exceptionOrNull())
         assertFalse(ctx.contactRepo.isFriend(sender, recipient))
         assertFalse(ctx.contactRepo.isFriend(recipient, sender))
-        assertEquals(ContactApplyRecord.STATUS_PENDING, ctx.contactRepo.getPendingApply(sender, recipient)?.status)
+        assertEquals(ContactApplyStatus.PENDING.code, ctx.contactRepo.getPendingApply(sender, recipient)?.status)
         assertEquals(
             acceptedEventsBefore,
             eventCount(sender, NotifyType.CONTACT_ACCEPTED) +
@@ -231,7 +233,7 @@ class ContactUnitOfWorkIntegrationTest {
 
         assertFalse(ctx.contactRepo.isBlocked(recipient, sender))
         assertEquals(
-            ContactApplyRecord.STATUS_PENDING,
+            ContactApplyStatus.PENDING.code,
             ctx.contactRepo.getPendingApply(sender, recipient)?.status,
         )
         assertEquals(senderBefore, streamPosition(sender))
@@ -309,7 +311,7 @@ class ContactUnitOfWorkIntegrationTest {
             )
         }.exceptionOrNull())
         assertEquals(
-            ContactApplyRecord.STATUS_PENDING,
+            ContactApplyStatus.PENDING.code,
             ctx.contactRepo.getPendingApply(rejectSender, rejectRecipient)?.status,
         )
         assertTrue(transaction(ctx.database) {
@@ -457,7 +459,7 @@ class ContactUnitOfWorkIntegrationTest {
 
         val retained = repository.listApplyRecords(sender, beforeId = 0, limit = 100)
         assertEquals(requestIds.takeLast(2).reversed(), retained.map { it.id })
-        assertTrue(retained.all { it.status == ContactApplyRecord.STATUS_REJECTED && it.token == null })
+        assertTrue(retained.all { it.status == ContactApplyStatus.REJECTED.code && it.token == null })
         transaction(ctx.database) {
             val rows = FriendApplies.selectAll().where {
                 (FriendApplies.fromUid eq sender) or (FriendApplies.toUid eq sender)

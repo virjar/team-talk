@@ -57,7 +57,7 @@ class ExposedContentAssetRepository(private val database: Database) : ContentAss
 
     override fun documentScopes(transaction: PgReadTransactionContext, uid: String, scopeId: String): Set<String> = transaction.inExposedReadTransaction {
         val actor = Users.select(Users.uid).where {
-            (Users.uid eq uid) and (Users.status eq UserStatus.ACTIVE) and (Users.role eq UserRole.HUMAN)
+            (Users.uid eq uid) and (Users.status eq UserStatus.ACTIVE.code) and (Users.role eq UserRole.HUMAN.code)
         }.singleOrNull() ?: throw DocumentAccessDeniedException("当前账号不能读取文档")
         check(actor[Users.uid] == uid)
         val access = ExposedDocumentActorAccess.read(transaction, uid)

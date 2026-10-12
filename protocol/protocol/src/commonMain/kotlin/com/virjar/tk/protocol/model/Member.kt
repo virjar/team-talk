@@ -9,6 +9,7 @@ import com.virjar.tk.protocol.PacketBuffer
 data class Member(
     val uid: String,
     val chatId: String,
+    /** wire 仍为 Int code；逻辑代码使用 [roleValue] 枚举视图比较。 */
     val role: Int,
     val nickname: String? = null,
     val joinedAt: Long = 0,
@@ -26,10 +27,6 @@ data class Member(
     }
 
     companion object : com.virjar.tk.protocol.IProtoReader<Member> {
-        const val ROLE_MEMBER = 0
-        const val ROLE_ADMIN = 1
-        const val ROLE_OWNER = 2
-
         override fun readFrom(buf: PacketBuffer): Member = Member(
             uid = buf.readRequiredString(),
             chatId = buf.readRequiredString(),

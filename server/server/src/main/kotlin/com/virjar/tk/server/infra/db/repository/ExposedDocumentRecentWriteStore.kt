@@ -33,7 +33,7 @@ internal class ExposedDocumentRecentWriteStore {
         val exposedTransaction = transaction.requireExposedTransaction()
         val actor = Users.select(Users.uid, Users.role, Users.status).where { Users.uid eq actorUid }
             .forUpdate().singleOrNull() ?: throw IllegalArgumentException("用户不存在")
-        require(actor[Users.role] == UserRole.HUMAN && actor[Users.status] == UserStatus.ACTIVE) {
+        require(actor[Users.role] == UserRole.HUMAN.code && actor[Users.status] == UserStatus.ACTIVE.code) {
             "只有活动普通用户可以更新文档最近访问记录"
         }
 

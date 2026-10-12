@@ -35,6 +35,8 @@ import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.or
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.update
+import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 
 /** 显式管理 Document 资产交接控制平面的 PostgreSQL 适配器。 */
 class ExposedDocumentCustodyAdministrationRepository : DocumentCustodyAdministrationRepository {
@@ -258,8 +260,8 @@ class ExposedDocumentCustodyAdministrationRepository : DocumentCustodyAdministra
         return rows.associate { row ->
             val fact = DocumentCustodyUserFact(
                 uid = row[Users.uid],
-                role = row[Users.role],
-                status = row[Users.status],
+                role = UserRole.fromCode(row[Users.role]),
+                status = UserStatus.fromCode(row[Users.status]),
             )
             fact.uid to fact
         }

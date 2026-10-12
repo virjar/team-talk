@@ -18,13 +18,13 @@ data class InvitePreview(
     val alreadyJoined: Boolean = false,
 ) : IProto {
     init {
-        require(status in VALID..GROUP_UNAVAILABLE)
+        require(status in InvitePreviewStatus.VALID.code..InvitePreviewStatus.GROUP_UNAVAILABLE.code)
         require((chatId == null) == (name == null))
         require(chatId == null || chatId.length == 36)
         require(name == null || name.length <= ConversationWirePolicy.MAX_CHAT_NAME_LENGTH)
         require(memberCount in 0..GroupPolicy.MAX_MEMBERS)
         require(chatId != null || (memberCount == 0 && !alreadyJoined))
-        require(status != VALID || chatId != null)
+        require(status != InvitePreviewStatus.VALID.code || chatId != null)
     }
 
     override fun writeTo(buf: PacketBuffer) {
@@ -36,12 +36,6 @@ data class InvitePreview(
     }
 
     companion object : IProtoReader<InvitePreview> {
-        const val VALID = 1
-        const val NOT_FOUND = 2
-        const val REVOKED = 3
-        const val EXPIRED = 4
-        const val EXHAUSTED = 5
-        const val GROUP_UNAVAILABLE = 6
 
         override fun readFrom(buf: PacketBuffer) = InvitePreview(
             status = buf.readVarInt(),
@@ -52,3 +46,25 @@ data class InvitePreview(
         )
     }
 }
+
+/**
+ * 邀请链接预览状态；未知 code（未来版本）经 [InvitePreview.statusValue] 映射为 null，
+ * 预览页按不可用展示。
+ */
+@com.virjar.tk.protocol.SinceProtocol(7)
+enum class InvitePreviewStatus(val code: Int) {
+    VALID(1),
+    NOT_FOUND(2),
+    REVOKED(3),
+    EXPIRED(4),
+    EXHAUSTED(5),
+    GROUP_UNAVAILABLE(6);
+
+    companion object {
+        fun fromCode(code: Int): InvitePreviewStatus? = entries.find { it.code == code }
+    }
+}
+
+/** 预览状态的类型化视图；null = 未知取值（未来版本）。 */
+val InvitePreview.statusValue: InvitePreviewStatus?
+    get() = InvitePreviewStatus.fromCode(status)

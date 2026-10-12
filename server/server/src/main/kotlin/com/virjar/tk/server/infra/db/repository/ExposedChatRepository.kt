@@ -193,8 +193,8 @@ class ExposedChatRepository(
             .toList()
         require(rows.size == 2) { "用户不存在" }
         require(rows.all { it[Users.status] == 1 }) { "用户已停用" }
-        require(rows.single { it[Users.uid] == uid }[Users.role] == UserRole.HUMAN) { "只有人类用户可以创建系统私聊" }
-        check(rows.single { it[Users.uid] == systemUid }[Users.role] == UserRole.SYSTEM) { "固定系统账号身份异常" }
+        require(rows.single { it[Users.uid] == uid }[Users.role] == UserRole.HUMAN.code) { "只有人类用户可以创建系统私聊" }
+        check(rows.single { it[Users.uid] == systemUid }[Users.role] == UserRole.SYSTEM.code) { "固定系统账号身份异常" }
 
         val blocked = Friends.selectAll().where {
             (((Friends.uid eq uid) and (Friends.friendUid eq systemUid)) or
@@ -708,7 +708,7 @@ class ExposedChatRepository(
             .toList()
         require(rows.size == required.size) { "用户不存在" }
         require(rows.all { it[Users.status] == 1 }) { "用户已停用" }
-        require(rows.all { it[Users.role] == UserRole.HUMAN }) {
+        require(rows.all { it[Users.role] == UserRole.HUMAN.code }) {
             "机器人或系统成员只能通过对应的管理入口操作"
         }
     }

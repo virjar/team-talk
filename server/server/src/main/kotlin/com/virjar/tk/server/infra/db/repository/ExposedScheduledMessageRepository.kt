@@ -19,6 +19,7 @@ import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.update
 import com.virjar.tk.protocol.model.ScheduledMessage
+import com.virjar.tk.protocol.model.ScheduledMessageStatus
 
 /** PostgreSQL 访问：scheduled_messages 调度行（MSG-01/F3）。 */
 class ExposedScheduledMessageRepository(
@@ -56,7 +57,7 @@ class ExposedScheduledMessageRepository(
     override fun findDue(transaction: PgWriteTransactionContext, now: Long, limit: Int): List<ScheduledMessageRow> {
         transaction.requireExposedTransaction()
         return ScheduledMessages.selectAll()
-            .where { (ScheduledMessages.status eq ScheduledMessage.STATUS_WAITING) and (ScheduledMessages.deliverAt lessEq now) }
+            .where { (ScheduledMessages.status eq ScheduledMessageStatus.WAITING.code) and (ScheduledMessages.deliverAt lessEq now) }
             .orderBy(ScheduledMessages.deliverAt, SortOrder.ASC)
             .limit(limit)
             .map { it.toRow() }

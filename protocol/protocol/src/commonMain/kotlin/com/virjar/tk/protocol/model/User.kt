@@ -91,19 +91,43 @@ object UserAvatarPolicy {
     }
 }
 
-/** 用户全局身份类型。群内 Member.role 是另一条独立维度。 */
-object UserRole {
-    const val HUMAN = 0
-    const val BOT = 10
-    const val SYSTEM = 20
+/**
+ * 用户全局身份类型。群内 [GroupMemberRole] 是另一条独立维度。
+ * wire/DB 列仍存 Int code（[User.role]），逻辑代码经 [User.roleValue] 比较本枚举。
+ */
+@com.virjar.tk.protocol.SinceProtocol(7)
+enum class UserRole(val code: Int) {
+    HUMAN(0),
+    BOT(10),
+    SYSTEM(20);
+
+    companion object {
+        fun fromCode(code: Int): UserRole? = entries.find { it.code == code }
+    }
 }
 
-/** 用户账号状态；服务端是唯一权威，客户端只消费投影。与 users 表 status 列共用值空间。 */
-object UserStatus {
-    const val ACTIVE = 1
-    const val BANNED = 2
+/**
+ * 用户账号状态；服务端是唯一权威，客户端只消费投影。与 users 表 status 列共用值空间。
+ * 未知 code（未来版本）经 [User.statusValue] 映射为 null，按非活跃处理（fail closed）。
+ */
+@com.virjar.tk.protocol.SinceProtocol(7)
+enum class UserStatus(val code: Int) {
+    ACTIVE(1),
+    BANNED(2);
+
+    companion object {
+        fun fromCode(code: Int): UserStatus? = entries.find { it.code == code }
+    }
 }
+
+/** 用户身份的类型化视图；null = 未知取值（未来版本）。 */
+val User.roleValue: UserRole?
+    get() = UserRole.fromCode(role)
+
+/** 账号状态的类型化视图；null = 未知取值，按非活跃处理。 */
+val User.statusValue: UserStatus?
+    get() = UserStatus.fromCode(status)
 
 /** 各业务入口共用的“活动普通用户”判定；封禁或服务身份都不是有效业务 actor。 */
 val User.isActiveHuman: Boolean
-    get() = role == UserRole.HUMAN && status == UserStatus.ACTIVE
+    get() = roleValue == UserRole.HUMAN && statusValue == UserStatus.ACTIVE

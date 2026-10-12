@@ -305,7 +305,7 @@ class ExposedInviteLinkRepository internal constructor(
         val row = Users.selectAll().where { Users.uid eq uid }.forUpdate().singleOrNull()
             ?: throw IllegalArgumentException("用户不存在")
         require(row[Users.status] == 1) { "用户已停用" }
-        require(row[Users.role] == UserRole.HUMAN) {
+        require(row[Users.role] == UserRole.HUMAN.code) {
             "机器人或系统成员只能通过对应的管理入口操作"
         }
     }

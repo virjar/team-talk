@@ -59,7 +59,7 @@ class OrganizationPaginationIntegrationTest {
                 it[username] = "user-$callerUid"
                 it[name] = "Pagination Caller"
                 it[passwordHash] = "organization-page-fixture"
-                it[role] = UserRole.HUMAN
+                it[role] = UserRole.HUMAN.code
                 it[status] = 1
                 it[createdAt] = now
                 it[updatedAt] = now
@@ -103,7 +103,7 @@ class OrganizationPaginationIntegrationTest {
                 this[Users.username] = "user-$uid"
                 this[Users.name] = "User $uid"
                 this[Users.passwordHash] = "organization-page-fixture"
-                this[Users.role] = UserRole.HUMAN
+                this[Users.role] = UserRole.HUMAN.code
                 this[Users.status] = 1
                 this[Users.createdAt] = now
                 this[Users.updatedAt] = now

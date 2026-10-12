@@ -54,7 +54,7 @@ internal fun TaskFeature.searchAssignees(query: String) {
         try {
             delay(250)
             val result = localData.run { session.userRepo.search(keyword).getOrThrow() }
-                .filter { it.role == UserRole.HUMAN && it.status == UserStatus.ACTIVE }.take(50)
+                .filter { it.roleValue == UserRole.HUMAN && it.statusValue == UserStatus.ACTIVE }.take(50)
             if (owner != assigneeOwner) return@launch
             assigneeCandidates = result
             users = (users + result.associateBy(User::uid)).entries.toList().takeLast(512).associate { it.toPair() }

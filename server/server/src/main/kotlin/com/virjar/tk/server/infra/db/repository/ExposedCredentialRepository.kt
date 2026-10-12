@@ -88,7 +88,7 @@ class ExposedCredentialRepository(
         transaction.requireExposedTransaction()
         val storedUser = lockUser(user.uid)
             ?: error("Registration user disappeared inside its aggregate transaction")
-        check(storedUser[Users.role] == UserRole.HUMAN && storedUser[Users.status] == UserStatus.ACTIVE) {
+        check(storedUser[Users.role] == UserRole.HUMAN.code && storedUser[Users.status] == UserStatus.ACTIVE.code) {
             "Initial credentials require a newly registered active human"
         }
         check(storedUser[Users.credentialEpoch] == INITIAL_USER_CREDENTIAL_EPOCH) {
@@ -132,7 +132,7 @@ class ExposedCredentialRepository(
         credentialTransaction {
             hooks.beforeUserLock(CredentialMutation.ISSUE, request.uid, request.device.deviceId)
             val user = lockUser(request.uid) ?: return@credentialTransaction null
-            if (user[Users.status] != UserStatus.ACTIVE || user[Users.role] != UserRole.HUMAN) {
+            if (user[Users.status] != UserStatus.ACTIVE.code || user[Users.role] != UserRole.HUMAN.code) {
                 return@credentialTransaction null
             }
             if (user[Users.credentialEpoch] != request.expectedUserCredentialEpoch ||
@@ -188,7 +188,7 @@ class ExposedCredentialRepository(
             val now = clock()
             val userEpoch = user[Users.credentialEpoch]
             val previousDeviceEpoch = deviceRow[Devices.credentialEpoch]
-            if (user[Users.status] != UserStatus.ACTIVE || user[Users.role] != UserRole.HUMAN ||
+            if (user[Users.status] != UserStatus.ACTIVE.code || user[Users.role] != UserRole.HUMAN.code ||
                 deviceRow[Devices.status] != Devices.STATUS_ACTIVE ||
                 credential[Credentials.uid] != uid ||
                 credential[Credentials.deviceId] != device.deviceId ||
@@ -308,7 +308,7 @@ class ExposedCredentialRepository(
         hooks.beforeUserLock(CredentialMutation.CHANGE_PASSWORD, uid, null)
         val user = lockUser(uid) ?: return@credentialTransaction null
         hooks.afterUserLock(CredentialMutation.CHANGE_PASSWORD, uid, null)
-        if (user[Users.status] != UserStatus.ACTIVE || user[Users.role] != UserRole.HUMAN ||
+        if (user[Users.status] != UserStatus.ACTIVE.code || user[Users.role] != UserRole.HUMAN.code ||
             user[Users.passwordHash] != expectedPasswordHash
         ) {
             return@credentialTransaction null
@@ -328,7 +328,7 @@ class ExposedCredentialRepository(
         val user = lockUser(uid) ?: throw IllegalArgumentException("用户不存在: $uid")
         hooks.afterUserLock(CredentialMutation.BAN_USER, uid, null)
         val currentEpoch = user[Users.credentialEpoch]
-        val committedEpoch = if (user[Users.status] == UserStatus.ACTIVE) {
+        val committedEpoch = if (user[Users.status] == UserStatus.ACTIVE.code) {
             val nextRevision = checkedNextUserRevision(user[Users.revision])
             checkedNextEpoch(currentEpoch).also { next ->
                 Users.update({ Users.uid eq uid }) {
@@ -367,7 +367,7 @@ class ExposedCredentialRepository(
                 .singleOrNull()?.get(BannedCredentialTombstones.uid)
                 ?: return@credentialTransaction null
             val banned = Users.selectAll().where { Users.uid eq uid }.singleOrNull()
-                ?.get(Users.status) != UserStatus.ACTIVE
+                ?.get(Users.status) != UserStatus.ACTIVE.code
             uid.takeIf { banned }
         }
     }
@@ -377,7 +377,7 @@ class ExposedCredentialRepository(
             hooks.beforeUserLock(CredentialMutation.UNBAN_USER, uid, null)
             val user = lockUser(uid) ?: throw IllegalArgumentException("用户不存在: $uid")
             hooks.afterUserLock(CredentialMutation.UNBAN_USER, uid, null)
-            if (user[Users.status] != UserStatus.ACTIVE) {
+            if (user[Users.status] != UserStatus.ACTIVE.code) {
                 val nextRevision = checkedNextUserRevision(user[Users.revision])
                 Users.update({ Users.uid eq uid }) {
                     it[status] = Devices.STATUS_ACTIVE
@@ -393,7 +393,7 @@ class ExposedCredentialRepository(
             hooks.beforeUserLock(CredentialMutation.RESET_PASSWORD, uid, null)
             val user = lockUser(uid) ?: throw IllegalArgumentException("用户不存在: $uid")
             hooks.afterUserLock(CredentialMutation.RESET_PASSWORD, uid, null)
-            require(user[Users.role] == UserRole.HUMAN) { "服务账户不支持密码重置" }
+            require(user[Users.role] == UserRole.HUMAN.code) { "服务账户不支持密码重置" }
             val nextEpoch = checkedNextEpoch(user[Users.credentialEpoch])
             Users.update({ Users.uid eq uid }) {
                 it[Users.passwordHash] = passwordHash
@@ -434,8 +434,8 @@ class ExposedCredentialRepository(
                         (Credentials.tokenHash eq tokenHash(token)) and
                             (Credentials.tokenType eq TYPE_ACCESS) and
                             (Credentials.expiresAt greaterEq now) and
-                            (Users.status eq UserStatus.ACTIVE) and
-                            (Users.role eq UserRole.HUMAN) and
+                            (Users.status eq UserStatus.ACTIVE.code) and
+                            (Users.role eq UserRole.HUMAN.code) and
                             (Users.credentialEpoch eq Credentials.userCredentialEpoch) and
                             (Devices.status eq Devices.STATUS_ACTIVE) and
                             (Devices.credentialEpoch eq Credentials.deviceCredentialEpoch)
@@ -478,8 +478,8 @@ class ExposedCredentialRepository(
                     .selectAll()
                     .where {
                         (Users.uid eq uid) and
-                            (Users.status eq UserStatus.ACTIVE) and
-                            (Users.role eq UserRole.HUMAN) and
+                            (Users.status eq UserStatus.ACTIVE.code) and
+                            (Users.role eq UserRole.HUMAN.code) and
                             (Users.credentialEpoch eq userCredentialEpoch) and
                             (Devices.deviceId eq deviceId) and
                             (Devices.status eq Devices.STATUS_ACTIVE) and

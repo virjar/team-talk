@@ -12,7 +12,8 @@ data class ContactApply(
     val toUid: String,
     val token: String? = null,
     val remark: String? = null,
-    val status: Int = 0,     // 0=待处理，1=已接受，2=已拒绝
+    /** wire 仍为 Int code（与 [ContactApplyStatus] 共用值空间）；逻辑代码用 [statusValue]。 */
+    val status: Int = 0,
     val createdAt: Long = 0,
     val fromUser: User? = null,
 ) : IProto {
@@ -42,3 +43,7 @@ data class ContactApply(
         )
     }
 }
+
+/** 处理动作定向投影的状态视图；与 [ContactApplyRecord.statusValue] 同一值空间。 */
+val ContactApply.statusValue: ContactApplyStatus?
+    get() = ContactApplyStatus.fromCode(status)

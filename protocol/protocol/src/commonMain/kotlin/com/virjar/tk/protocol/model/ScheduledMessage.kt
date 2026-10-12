@@ -41,10 +41,6 @@ data class ScheduledMessage(
     }
 
     companion object : IProtoReader<ScheduledMessage> {
-        const val STATUS_WAITING = 0
-        const val STATUS_DELIVERED = 1
-        const val STATUS_CANCELLED = 2
-        const val STATUS_FAILED = 3
 
         override fun readFrom(buf: PacketBuffer): ScheduledMessage {
             val scheduledId = buf.readRequiredString(MAX_ID_LENGTH, "scheduledId")
@@ -65,3 +61,23 @@ data class ScheduledMessage(
         const val MAX_ID_LENGTH = 256
     }
 }
+
+/**
+ * 定时消息状态；与 scheduled_messages 表 status 列共用值空间。
+ * 未知 code（未来版本）经 [ScheduledMessage.statusValue] 映射为 null，按已终结展示。
+ */
+@com.virjar.tk.protocol.SinceProtocol(7)
+enum class ScheduledMessageStatus(val code: Int) {
+    WAITING(0),
+    DELIVERED(1),
+    CANCELLED(2),
+    FAILED(3);
+
+    companion object {
+        fun fromCode(code: Int): ScheduledMessageStatus? = entries.find { it.code == code }
+    }
+}
+
+/** 定时消息状态的类型化视图；null = 未知取值（未来版本）。 */
+val ScheduledMessage.statusValue: ScheduledMessageStatus?
+    get() = ScheduledMessageStatus.fromCode(status)

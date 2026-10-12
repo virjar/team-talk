@@ -29,7 +29,7 @@ class BotIntegrationTest {
         val group = ctx.chatService.createGroup("发布通知", null, owner, listOf(member))
         val created = ctx.botService.create("发布机器人")
 
-        assertEquals(UserRole.BOT, ctx.userRepo.findByUid(created.bot.userUid)?.role)
+        assertEquals(UserRole.BOT.code, ctx.userRepo.findByUid(created.bot.userUid)?.role)
         assertFailsWith<BotAuthenticationException> {
             ctx.botService.deliver(created.bot.botId, "wrong-token", group.chatId, "hello", "wrong-token")
         }

@@ -23,6 +23,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.InvitePreviewStatus
 
 class InviteLinkIntegrationTest {
 
@@ -42,19 +43,19 @@ class InviteLinkIntegrationTest {
         val eventsBefore = transaction(ctx.database) { SyncEvents.selectAll().count() }
         val rpc = ChatRpcImpl(guest, ctx.chatService)
         repeat(2) {
-            assertEquals(InvitePreview(InvitePreview.VALID, chatId, "TestGroup", 2), rpc.previewInvite(token))
+            assertEquals(InvitePreview(InvitePreviewStatus.VALID.code, chatId, "TestGroup", 2), rpc.previewInvite(token))
         }
         assertEquals(0, ctx.chatService.getInviteInfo(token).useCount)
         assertEquals(eventsBefore, transaction(ctx.database) { SyncEvents.selectAll().count() })
         assertFailsWith<ChatAccessDeniedException> { ctx.chatService.getChatFor(guest, chatId) }
         assertFailsWith<ChatAccessDeniedException> { ctx.chatService.getMembersFor(guest, chatId) }
         assertTrue(ctx.chatService.getGroupAvatars(guest, listOf(chatId)).isEmpty())
-        assertEquals(InvitePreview(InvitePreview.NOT_FOUND), rpc.previewInvite("invalid"))
-        assertEquals(InvitePreview(InvitePreview.NOT_FOUND), rpc.previewInvite(java.util.UUID.randomUUID().toString()))
+        assertEquals(InvitePreview(InvitePreviewStatus.NOT_FOUND.code), rpc.previewInvite("invalid"))
+        assertEquals(InvitePreview(InvitePreviewStatus.NOT_FOUND.code), rpc.previewInvite(java.util.UUID.randomUUID().toString()))
 
         // 预览不是加入授权：确认前撤销后，重读和实际加入都立即看到当前事实。
         ctx.chatService.revokeInviteLink(creator, token)
-        assertEquals(InvitePreview(InvitePreview.REVOKED), rpc.previewInvite(token))
+        assertEquals(InvitePreview(InvitePreviewStatus.REVOKED.code), rpc.previewInvite(token))
         assertFailsWith<IllegalArgumentException> { rpc.joinByInvite(token) }
     }
 
@@ -67,28 +68,28 @@ class InviteLinkIntegrationTest {
         assertEquals(chatId, ctx.chatService.joinByInvite(guest, token).chatId)
         assertEquals(1, ctx.chatService.getInviteInfo(token).useCount)
         val joined = ctx.chatService.previewInvite(guest, token)
-        assertEquals(InvitePreview.EXHAUSTED, joined.status)
+        assertEquals(InvitePreviewStatus.EXHAUSTED.code, joined.status)
         assertTrue(joined.alreadyJoined)
         assertEquals(chatId, joined.chatId)
         assertEquals(3, joined.memberCount)
-        assertEquals(InvitePreview(InvitePreview.EXHAUSTED), ctx.chatService.previewInvite(outsider, token))
+        assertEquals(InvitePreview(InvitePreviewStatus.EXHAUSTED.code), ctx.chatService.previewInvite(outsider, token))
         val eventsAfterJoin = transaction(ctx.database) { SyncEvents.selectAll().count() }
         assertEquals(chatId, ctx.chatService.joinByInvite(guest, token).chatId)
         transaction(ctx.database) {
             GroupInviteLinks.update({ GroupInviteLinks.token eq token }) { it[expiresAt] = 1L }
         }
-        assertEquals(InvitePreview.EXPIRED, ctx.chatService.previewInvite(guest, token).status)
-        assertEquals(InvitePreview(InvitePreview.EXPIRED), ctx.chatService.previewInvite(outsider, token))
+        assertEquals(InvitePreviewStatus.EXPIRED.code, ctx.chatService.previewInvite(guest, token).status)
+        assertEquals(InvitePreview(InvitePreviewStatus.EXPIRED.code), ctx.chatService.previewInvite(outsider, token))
         assertEquals(chatId, ctx.chatService.joinByInvite(guest, token).chatId)
         ctx.chatService.revokeInviteLink(creator, token)
-        assertEquals(InvitePreview.REVOKED, ctx.chatService.previewInvite(guest, token).status)
+        assertEquals(InvitePreviewStatus.REVOKED.code, ctx.chatService.previewInvite(guest, token).status)
         assertEquals(chatId, ctx.chatService.joinByInvite(guest, token).chatId)
         assertEquals(1, ctx.chatService.getInviteInfo(token).useCount)
         assertEquals(eventsAfterJoin, transaction(ctx.database) { SyncEvents.selectAll().count() })
 
         val expired = ctx.chatService.createInviteLink(creator, chatId, "过期邀请", 0, 1L)
-        assertEquals(InvitePreview(InvitePreview.EXPIRED), ctx.chatService.previewInvite(outsider, expired))
-        assertEquals(InvitePreview.EXPIRED, ctx.chatService.previewInvite(guest, expired).status)
+        assertEquals(InvitePreview(InvitePreviewStatus.EXPIRED.code), ctx.chatService.previewInvite(outsider, expired))
+        assertEquals(InvitePreviewStatus.EXPIRED.code, ctx.chatService.previewInvite(guest, expired).status)
         assertEquals(chatId, ctx.chatService.joinByInvite(guest, expired).chatId)
     }
 
@@ -112,7 +113,7 @@ class InviteLinkIntegrationTest {
             Chats.update({ Chats.chatId eq chatId }) { it[status] = 0 }
         }
         val unavailable = ctx.chatService.previewInvite(guest, token)
-        assertEquals(InvitePreview.GROUP_UNAVAILABLE, unavailable.status)
+        assertEquals(InvitePreviewStatus.GROUP_UNAVAILABLE.code, unavailable.status)
         assertNull(unavailable.chatId)
         assertFailsWith<IllegalArgumentException> { ctx.chatService.joinByInvite(guest, token) }
     }

@@ -30,6 +30,7 @@ import com.virjar.tk.app.ui.platform.secondaryClick
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.roleValue
 import com.virjar.tk.shared.client.OutgoingFailureCode
 import androidx.compose.runtime.key
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
@@ -121,7 +122,7 @@ internal fun MessageBubble(
                         style = MaterialTheme.typography.labelSmall,
                         color = Tk.colors.metaText,
                     )
-                    if (resolveSender?.invoke(msg.senderUid)?.role == UserRole.BOT) {
+                    if (resolveSender?.invoke(msg.senderUid)?.roleValue == UserRole.BOT) {
                         Spacer(Modifier.width(5.dp))
                         RoleChip("机器人")
                     }

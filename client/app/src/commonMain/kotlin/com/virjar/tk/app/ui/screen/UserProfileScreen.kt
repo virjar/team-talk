@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.roleValue
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
 import com.virjar.tk.app.ui.component.ScreenHeader
 import com.virjar.tk.app.ui.platform.primaryClickWithContextLongPress
@@ -61,7 +62,7 @@ internal fun availableUserProfileDestructiveActions(
 }
 
 internal fun canAddFriendFromProfile(user: User, myUid: String): Boolean =
-    user.uid != myUid && user.role == UserRole.HUMAN
+    user.uid != myUid && user.roleValue == UserRole.HUMAN
 
 /**
  * 资料页"发消息"入口资格（办公语义）：好友始终可发起；同组织同事无需好友关系即可直接
@@ -506,7 +507,7 @@ private fun FullPageProfileHero(
             identity.getValue("profile.copy.name"),
             style = MaterialTheme.typography.headlineSmall,
         )
-        if (user.role == UserRole.SYSTEM) {
+        if (user.roleValue == UserRole.SYSTEM) {
             Spacer(Modifier.height(4.dp))
             Text(
                 "系统服务",

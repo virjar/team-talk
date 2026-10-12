@@ -42,6 +42,8 @@ import com.virjar.tk.shared.client.OutgoingFailureCode
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.MessageReactionGroup
 import com.virjar.tk.app.ui.platform.rememberClipboardTextWriter
+import com.virjar.tk.protocol.model.GroupMemberRole
+import com.virjar.tk.protocol.model.isAtLeast
 import com.virjar.tk.app.ui.platform.localUiDateTime
 import com.virjar.tk.app.ui.theme.Tk
 import kotlinx.datetime.atTime
@@ -81,7 +83,7 @@ internal fun ChatMessageList(
     /** 菜单"多选"入口：从该消息进入多选并预选它。 */
     onStartSelection: ((Message) -> Unit)? = null,
     /** 当前用户在群内的角色（0/1/2）；私聊恒 0。 */
-    myRole: Int = 0,
+    myRole: GroupMemberRole? = null,
     onToggleReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
     onPickReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
     /** 非 null 且消息已确认时，长按/右键菜单提供"收藏"（CLIENT-08）。 */
@@ -470,7 +472,7 @@ private fun messageMenuItems(
     onRemindLater: ((Message, remindAt: Long) -> Unit)? = null,
     /** 已读情况（MSG-01/F5）：仅发送者与群管理员/群主可见；null 隐藏。 */
     onShowReadStates: ((Message) -> Unit)? = null,
-    myRole: Int = 0,
+    myRole: GroupMemberRole? = null,
     /** 多选入口（MSG-01/F6）：仅已确认消息。 */
     onStartSelection: ((Message) -> Unit)? = null,
 ): @Composable ColumnScope.() -> Unit = {
@@ -496,7 +498,7 @@ private fun messageMenuItems(
             modifier = Modifier.testTag("chat.multiselect.entry"),
         )
     }
-    if (onShowReadStates != null && msg.serverSeq > 0L && (isMe || myRole >= 1)) {
+    if (onShowReadStates != null && msg.serverSeq > 0L && (isMe || myRole.isAtLeast(GroupMemberRole.ADMIN))) {
         DropdownMenuItem(
             text = { Text("已读情况") },
             onClick = {

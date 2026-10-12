@@ -601,7 +601,7 @@ class ExposedChatMemberRepository internal constructor(
             .toList()
         require(rows.size == required.size) { "用户不存在" }
         require(rows.all { it[Users.status] == 1 }) { "用户已停用" }
-        require(rows.all { it[Users.role] == UserRole.HUMAN }) {
+        require(rows.all { it[Users.role] == UserRole.HUMAN.code }) {
             "机器人或系统成员只能通过对应的管理入口操作"
         }
     }
@@ -613,7 +613,7 @@ class ExposedChatMemberRepository internal constructor(
             .forUpdate()
             .toList()
         require(rows.size == required.size) { "用户不存在" }
-        require(rows.all { it[Users.role] == UserRole.HUMAN }) {
+        require(rows.all { it[Users.role] == UserRole.HUMAN.code }) {
             "机器人或系统成员只能通过对应的管理入口操作"
         }
         val usersByUid = rows.associateBy { it[Users.uid] }

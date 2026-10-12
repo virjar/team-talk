@@ -23,7 +23,7 @@ class ExposedTaskRepository : TaskRepository {
         transaction.requireExposedTransaction()
         return Users.selectAll().where { Users.uid inList uids.sorted() }
             .orderBy(Users.uid, SortOrder.ASC).forUpdate().filter {
-                it[Users.status] == 1 && it[Users.role] == UserRole.HUMAN
+                it[Users.status] == 1 && it[Users.role] == UserRole.HUMAN.code
             }.mapTo(mutableSetOf()) { it[Users.uid] }
     }
 

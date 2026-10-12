@@ -15,7 +15,7 @@ object MentionPolicy {
         uid = ALL,
         username = ALL,
         name = "所有人",
-        role = UserRole.SYSTEM,
+        role = UserRole.SYSTEM.code,
         revision = 1L,
     )
 }

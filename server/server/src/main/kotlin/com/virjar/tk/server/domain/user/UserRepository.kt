@@ -42,7 +42,7 @@ interface UserRepository {
         uid: String,
         username: String,
         name: String,
-        role: Int,
+        role: UserRole,
     ): User
     /** 锁定 User 行，并仅应用 [patch] 中标记为存在的字段。 */
     fun updateProfile(

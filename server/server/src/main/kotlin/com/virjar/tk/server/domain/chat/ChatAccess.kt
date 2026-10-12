@@ -3,6 +3,9 @@ package com.virjar.tk.server.domain.chat
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.ChatType
 import com.virjar.tk.protocol.model.Member
+import com.virjar.tk.protocol.model.GroupMemberRole
+import com.virjar.tk.protocol.model.roleValue
+import com.virjar.tk.protocol.model.roleRank
 
 /** 一次聊天授权决策所使用的、一致的权威快照。 */
 data class ChatAccessSnapshot(
@@ -67,13 +70,13 @@ class ChatAccess(
 
     suspend fun requireAdmin(uid: String, chatId: String): Member {
         val member = requireGroupMember(uid, chatId)
-        if (member.role < ROLE_ADMIN) throw ChatAccessDeniedException("需要管理员权限")
+        if (member.roleRank < GroupMemberRole.ADMIN.rank) throw ChatAccessDeniedException("需要管理员权限")
         return member
     }
 
     suspend fun requireOwner(uid: String, chatId: String): Member {
         val member = requireGroupMember(uid, chatId)
-        if (member.role != ROLE_OWNER) throw ChatAccessDeniedException("需要群主权限")
+        if (member.roleValue != GroupMemberRole.OWNER) throw ChatAccessDeniedException("需要群主权限")
         return member
     }
 
@@ -88,10 +91,10 @@ class ChatAccess(
         if (chat.chatType != ChatType.GROUP.code) throw ChatAccessDeniedException("群聊不存在")
         val actor = snapshot.member(operatorUid)
             ?: throw ChatAccessDeniedException("操作者不是群成员")
-        if (actor.role < ROLE_ADMIN) throw ChatAccessDeniedException("需要管理员权限")
+        if (actor.roleRank < GroupMemberRole.ADMIN.rank) throw ChatAccessDeniedException("需要管理员权限")
         val target = snapshot.member(targetUid)
             ?: throw ChatAccessDeniedException("目标不是群成员")
-        if (actor.role <= target.role) throw ChatAccessDeniedException("不能管理同级或更高角色")
+        if (actor.roleRank <= target.roleRank) throw ChatAccessDeniedException("不能管理同级或更高角色")
         return actor to target
     }
 
@@ -120,7 +123,7 @@ class ChatAccess(
 
     suspend fun <T> readAsAdmin(uid: String, chatId: String, block: (Chat, Member) -> T): T =
         readAsGroupMember(uid, chatId) { chat, member ->
-            if (member.role < ROLE_ADMIN) throw ChatAccessDeniedException("需要管理员权限")
+            if (member.roleRank < GroupMemberRole.ADMIN.rank) throw ChatAccessDeniedException("需要管理员权限")
             block(chat, member)
         }
 
@@ -144,10 +147,6 @@ class ChatAccess(
 
     private fun ChatAccessSnapshot.member(uid: String): Member? = members.firstOrNull { it.uid == uid }
 
-    private companion object {
-        const val ROLE_ADMIN = 1
-        const val ROLE_OWNER = 2
-    }
 }
 
 class ChatAccessDeniedException(message: String) : IllegalArgumentException(message)

@@ -2,6 +2,8 @@ package com.virjar.tk.server.integration
 
 import com.virjar.tk.server.infra.db.FriendApplies
 import com.virjar.tk.protocol.model.ContactApplyRecord
+import com.virjar.tk.protocol.model.ContactApplyDirection
+import com.virjar.tk.protocol.model.ContactApplyStatus
 import com.virjar.tk.protocol.NotifyType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -182,12 +184,12 @@ class ContactIntegrationTest {
         val incomingToken = pendingToken(recipient, sender1)
 
         val senderPending = ctx.contactService(sender1).getPendingApply(recipient).record!!
-        assertEquals(ContactApplyRecord.DIRECTION_OUTGOING, senderPending.direction)
+        assertEquals(ContactApplyDirection.OUTGOING.code, senderPending.direction)
         assertEquals(recipient, senderPending.peerUser?.uid)
         assertNull(senderPending.token)
 
         val recipientPending = ctx.contactService(recipient).getPendingApply(sender1).record!!
-        assertEquals(ContactApplyRecord.DIRECTION_INCOMING, recipientPending.direction)
+        assertEquals(ContactApplyDirection.INCOMING.code, recipientPending.direction)
         assertEquals(sender1, recipientPending.peerUser?.uid)
         assertEquals(incomingToken, recipientPending.token)
 
@@ -196,17 +198,17 @@ class ContactIntegrationTest {
 
         val newest = ctx.contactService(recipient).listApplyRecords(0, 1).single()
         assertEquals(sender2, newest.fromUid)
-        assertEquals(ContactApplyRecord.STATUS_PENDING, newest.status)
+        assertEquals(ContactApplyStatus.PENDING.code, newest.status)
         assertNotNull(newest.token)
 
         val older = ctx.contactService(recipient).listApplyRecords(newest.id, 10)
             .single { it.fromUid == sender1 }
-        assertEquals(ContactApplyRecord.STATUS_REJECTED, older.status)
+        assertEquals(ContactApplyStatus.REJECTED.code, older.status)
         assertNull(older.token)
 
         val senderHistory = ctx.contactService(sender1).listApplyRecords(0, 10).single()
-        assertEquals(ContactApplyRecord.DIRECTION_OUTGOING, senderHistory.direction)
-        assertEquals(ContactApplyRecord.STATUS_REJECTED, senderHistory.status)
+        assertEquals(ContactApplyDirection.OUTGOING.code, senderHistory.direction)
+        assertEquals(ContactApplyStatus.REJECTED.code, senderHistory.status)
         assertNull(senderHistory.token)
 
         ctx.contactService(recipient).accept(pendingToken(recipient, sender2))
@@ -238,7 +240,7 @@ class ContactIntegrationTest {
         assertFailsWith<IllegalArgumentException> {
             ctx.contactService(recipient).apply(sender, "反向重复")
         }
-        assertEquals(ContactApplyRecord.DIRECTION_INCOMING, ctx.contactService(recipient)
+        assertEquals(ContactApplyDirection.INCOMING.code, ctx.contactService(recipient)
             .getPendingApply(sender).record?.direction)
     }
 
@@ -285,7 +287,7 @@ class ContactIntegrationTest {
         assertNull(ctx.contactService(sender).getPendingApply(recipient).record)
         assertNull(ctx.contactService(recipient).getPendingApply(sender).record)
         val closed = ctx.contactService(sender).listApplyRecords(0, 10).single { it.id == first.id }
-        assertEquals(ContactApplyRecord.STATUS_REJECTED, closed.status)
+        assertEquals(ContactApplyStatus.REJECTED.code, closed.status)
         assertNull(closed.token)
         assertFailsWith<IllegalArgumentException> {
             ctx.contactService(sender).apply(recipient, "while blocked")
@@ -294,7 +296,7 @@ class ContactIntegrationTest {
         ctx.contactService(recipient).removeFromBlacklist(sender)
         val second = ctx.contactService(sender).apply(recipient, "after unblock")
         assertTrue(second.id != first.id)
-        assertEquals(ContactApplyRecord.STATUS_PENDING, second.status)
+        assertEquals(ContactApplyStatus.PENDING.code, second.status)
     }
 
     @Test
@@ -321,7 +323,7 @@ class ContactIntegrationTest {
                     it[FriendApplies.toUid] = recipient
                     it[FriendApplies.token] = UUID.randomUUID().toString()
                     it[FriendApplies.remark] = null
-                    it[FriendApplies.status] = ContactApplyRecord.STATUS_PENDING
+                    it[FriendApplies.status] = ContactApplyStatus.PENDING.code
                     it[FriendApplies.createdAt] = index.toLong()
                     it[FriendApplies.updatedAt] = index.toLong()
                 }

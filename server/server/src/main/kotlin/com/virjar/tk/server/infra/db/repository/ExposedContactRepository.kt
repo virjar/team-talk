@@ -19,8 +19,11 @@ import com.virjar.tk.server.infra.db.requireExposedTransaction
 import com.virjar.tk.protocol.model.Contact
 import com.virjar.tk.protocol.model.ContactApply
 import com.virjar.tk.protocol.model.ContactApplyRecord
+import com.virjar.tk.protocol.model.ContactApplyStatus
+import com.virjar.tk.protocol.model.ContactApplyDirection
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.roleValue
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -185,14 +188,14 @@ class ExposedContactRepository internal constructor(
                 (Friends.friendUid eq friendUid) and
                 (Friends.status eq Contact.STATUS_NORMAL)
         }) {
-            it[status] = ContactApplyRecord.STATUS_PENDING
+            it[status] = ContactApplyStatus.PENDING.code
         } > 0
         val targetRemoved = Friends.update({
             (Friends.uid eq friendUid) and
                 (Friends.friendUid eq uid) and
                 (Friends.status eq Contact.STATUS_NORMAL)
         }) {
-            it[status] = ContactApplyRecord.STATUS_PENDING
+            it[status] = ContactApplyStatus.PENDING.code
         } > 0
         ContactPairMutationResult(
             actorChanged = actorRemoved,
@@ -260,7 +263,7 @@ class ExposedContactRepository internal constructor(
         val targetFriendshipRemoved = Friends.update({
             (Friends.uid eq targetUid) and (Friends.friendUid eq uid) and (Friends.status eq Contact.STATUS_NORMAL)
         }) {
-            it[status] = ContactApplyRecord.STATUS_PENDING
+            it[status] = ContactApplyStatus.PENDING.code
         } > 0
 
         // 拉黑在关系语义上同时终止双方之间尚未处理的申请。否则 apply 先完成、
@@ -269,9 +272,9 @@ class ExposedContactRepository internal constructor(
         val pendingApplyRemoved = FriendApplies.update({
             ((((FriendApplies.fromUid eq uid) and (FriendApplies.toUid eq targetUid)) or
                 ((FriendApplies.fromUid eq targetUid) and (FriendApplies.toUid eq uid))) and
-                (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING))
+                (FriendApplies.status eq ContactApplyStatus.PENDING.code))
         }) {
-            it[status] = ContactApplyRecord.STATUS_REJECTED
+            it[status] = ContactApplyStatus.REJECTED.code
             it[FriendApplies.token] = null
             it[FriendApplies.updatedAt] = updatedAt
         } > 0
@@ -286,7 +289,7 @@ class ExposedContactRepository internal constructor(
         inWriteTransaction(transaction) {
             lockUserPair(uid, targetUid)
             Friends.update({ (Friends.uid eq uid) and (Friends.friendUid eq targetUid) and (Friends.status eq Contact.STATUS_BLOCKED) }) {
-                it[status] = ContactApplyRecord.STATUS_PENDING
+                it[status] = ContactApplyStatus.PENDING.code
             }
         }
     }
@@ -318,7 +321,7 @@ class ExposedContactRepository internal constructor(
     ): ContactApplyCreation = inWriteTransaction(transaction) {
             val users = lockUserPair(fromUid, toUid)
             val target = users.getValue(toUid).toUser()
-            require(target.role == UserRole.HUMAN) { "不能向机器人或系统账户发起好友申请" }
+            require(target.roleValue == UserRole.HUMAN) { "不能向机器人或系统账户发起好友申请" }
 
             val blocked = Friends.selectAll().where {
                 ((((Friends.uid eq fromUid) and (Friends.friendUid eq toUid)) or
@@ -337,7 +340,7 @@ class ExposedContactRepository internal constructor(
             val existing = FriendApplies.selectAll().where {
                 (FriendApplies.fromUid eq fromUid) and
                     (FriendApplies.toUid eq toUid) and
-                    (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING)
+                    (FriendApplies.status eq ContactApplyStatus.PENDING.code)
             }.orderBy(FriendApplies.id, SortOrder.DESC).limit(1).firstOrNull()
             if (existing != null) {
                 val row = existing.toFriendApplyRow()
@@ -350,7 +353,7 @@ class ExposedContactRepository internal constructor(
             val reversePending = FriendApplies.selectAll().where {
                 (FriendApplies.fromUid eq toUid) and
                     (FriendApplies.toUid eq fromUid) and
-                    (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING)
+                    (FriendApplies.status eq ContactApplyStatus.PENDING.code)
             }.limit(1).any()
             require(!reversePending) { "对方已申请你，请处理现有申请" }
 
@@ -365,7 +368,7 @@ class ExposedContactRepository internal constructor(
                 it[FriendApplies.toUid] = toUid
                 it[FriendApplies.token] = token
                 it[FriendApplies.remark] = remark
-                it[FriendApplies.status] = ContactApplyRecord.STATUS_PENDING
+                it[FriendApplies.status] = ContactApplyStatus.PENDING.code
                 it[FriendApplies.createdAt] = now
                 it[FriendApplies.updatedAt] = now
             }
@@ -420,7 +423,7 @@ class ExposedContactRepository internal constructor(
         }.forUpdate().singleOrNull()
             ?: return@inWriteTransaction null
 
-        if (row[FriendApplies.status] != ContactApplyRecord.STATUS_PENDING) return@inWriteTransaction null
+        if (row[FriendApplies.status] != ContactApplyStatus.PENDING.code) return@inWriteTransaction null
 
         val updatedAt = System.currentTimeMillis()
         val result = when (command.decision) {
@@ -453,9 +456,9 @@ class ExposedContactRepository internal constructor(
         FriendApplies.update({
             ((((FriendApplies.fromUid eq fromUid) and (FriendApplies.toUid eq toUid)) or
                 ((FriendApplies.fromUid eq toUid) and (FriendApplies.toUid eq fromUid))) and
-                (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING))
+                (FriendApplies.status eq ContactApplyStatus.PENDING.code))
         }) {
-            it[status] = ContactApplyRecord.STATUS_ACCEPTED
+            it[status] = ContactApplyStatus.ACCEPTED.code
             it[FriendApplies.token] = null
             it[FriendApplies.updatedAt] = updatedAt
         }
@@ -486,7 +489,7 @@ class ExposedContactRepository internal constructor(
 
         val apply = row.toFriendApplyRow().copy(
             token = null,
-            status = ContactApplyRecord.STATUS_ACCEPTED,
+            status = ContactApplyStatus.ACCEPTED.code,
             updatedAt = updatedAt,
         ).toContactApply(users.getValue(fromUid).toUser())
         return ContactDecisionResult(
@@ -509,16 +512,16 @@ class ExposedContactRepository internal constructor(
         FriendApplies.update({
             (FriendApplies.fromUid eq fromUid) and
                 (FriendApplies.toUid eq toUid) and
-                (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING)
+                (FriendApplies.status eq ContactApplyStatus.PENDING.code)
         }) {
-            it[status] = ContactApplyRecord.STATUS_REJECTED
+            it[status] = ContactApplyStatus.REJECTED.code
             it[FriendApplies.token] = null
             it[FriendApplies.updatedAt] = updatedAt
         }
         return ContactDecisionResult(
             apply = row.toFriendApplyRow().copy(
                 token = null,
-                status = ContactApplyRecord.STATUS_REJECTED,
+                status = ContactApplyStatus.REJECTED.code,
                 updatedAt = updatedAt,
             ).toContactApply(users.getValue(fromUid).toUser()),
             firstCommit = true,
@@ -528,7 +531,7 @@ class ExposedContactRepository internal constructor(
     override fun listPendingApplies(uid: String): List<ContactApply> {
         return transaction(database) {
             val pending = applySenderJoin().selectAll()
-                .where { (FriendApplies.toUid eq uid) and (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING) }
+                .where { (FriendApplies.toUid eq uid) and (FriendApplies.status eq ContactApplyStatus.PENDING.code) }
                 .orderBy(FriendApplies.id, SortOrder.DESC)
                 .limit(capacity.incomingPendingAppliesPerUser + 1)
                 .map { row ->
@@ -569,7 +572,7 @@ class ExposedContactRepository internal constructor(
             FriendApplies.selectAll().where {
                 ((((FriendApplies.fromUid eq uid) and (FriendApplies.toUid eq targetUid)) or
                     ((FriendApplies.fromUid eq targetUid) and (FriendApplies.toUid eq uid))) and
-                    (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING))
+                    (FriendApplies.status eq ContactApplyStatus.PENDING.code))
             }.orderBy(FriendApplies.id, SortOrder.DESC).limit(1).firstOrNull()?.toFriendApplyRow()
         } ?: return null
         return row.toRecord(uid, userRepo.findByUid(if (uid == row.toUid) row.fromUid else row.toUid))
@@ -610,7 +613,7 @@ class ExposedContactRepository internal constructor(
     private fun requirePendingApplyCapacity(fromUid: String, toUid: String) {
         val outgoing = FriendApplies.selectAll().where {
             (FriendApplies.fromUid eq fromUid) and
-                (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING)
+                (FriendApplies.status eq ContactApplyStatus.PENDING.code)
         }.count()
         require(outgoing < capacity.outgoingPendingAppliesPerUser.toLong()) {
             "发出的待处理好友申请数量已达上限"
@@ -618,7 +621,7 @@ class ExposedContactRepository internal constructor(
 
         val incoming = FriendApplies.selectAll().where {
             (FriendApplies.toUid eq toUid) and
-                (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING)
+                (FriendApplies.status eq ContactApplyStatus.PENDING.code)
         }.count()
         require(incoming < capacity.incomingPendingAppliesPerUser.toLong()) {
             "收到的待处理好友申请数量已达上限"
@@ -639,7 +642,7 @@ class ExposedContactRepository internal constructor(
         participantUids.distinct().sorted().forEach { uid ->
             val terminalIds = FriendApplies.select(FriendApplies.id).where {
                 (((FriendApplies.fromUid eq uid) or (FriendApplies.toUid eq uid)) and
-                    (FriendApplies.status neq ContactApplyRecord.STATUS_PENDING))
+                    (FriendApplies.status neq ContactApplyStatus.PENDING.code))
             }
                 .orderBy(
                     FriendApplies.updatedAt to SortOrder.DESC,
@@ -727,11 +730,11 @@ class ExposedContactRepository internal constructor(
             fromUid = fromUid,
             toUid = toUid,
             direction = if (incoming) {
-                ContactApplyRecord.DIRECTION_INCOMING
+                ContactApplyDirection.INCOMING.code
             } else {
-                ContactApplyRecord.DIRECTION_OUTGOING
+                ContactApplyDirection.OUTGOING.code
             },
-            token = token.takeIf { incoming && status == ContactApplyRecord.STATUS_PENDING },
+            token = token.takeIf { incoming && status == ContactApplyStatus.PENDING.code },
             remark = remark,
             status = status,
             createdAt = createdAt,

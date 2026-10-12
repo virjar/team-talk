@@ -107,7 +107,7 @@ class ExposedBotRepository(
         inWriteTransaction(transaction) {
             val row = Users.selectAll().where { Users.uid eq userUid }.forUpdate().singleOrNull()
                 ?: throw IllegalStateException("机器人服务身份不存在: $userUid")
-            check(row[Users.role] == UserRole.BOT || row[Users.role] == UserRole.SYSTEM) {
+            check(row[Users.role] == UserRole.BOT.code || row[Users.role] == UserRole.SYSTEM.code) {
                 "机器人记录引用了非服务身份: $userUid"
             }
         }
@@ -115,7 +115,7 @@ class ExposedBotRepository(
 
     override fun isServiceIdentity(userUid: String): Boolean = transaction(database) {
         Users.selectAll().where { Users.uid eq userUid }.singleOrNull()?.let { row ->
-            row[Users.role] == UserRole.BOT || row[Users.role] == UserRole.SYSTEM
+            row[Users.role] == UserRole.BOT.code || row[Users.role] == UserRole.SYSTEM.code
         } == true
     }
 
@@ -256,7 +256,7 @@ class ExposedBotRepository(
                     .toList()
                 check(identities.size == serviceUids.size) { "机器人服务身份缺失，拒绝解散投影" }
                 identities.forEach { row ->
-                    check(row[Users.role] == UserRole.BOT || row[Users.role] == UserRole.SYSTEM) {
+                    check(row[Users.role] == UserRole.BOT.code || row[Users.role] == UserRole.SYSTEM.code) {
                         "机器人记录引用了非服务身份，拒绝解散投影"
                     }
                 }

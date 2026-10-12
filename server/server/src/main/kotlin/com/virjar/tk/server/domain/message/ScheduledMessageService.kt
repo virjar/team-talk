@@ -3,6 +3,7 @@ package com.virjar.tk.server.domain.message
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.ScheduledMessage
+import com.virjar.tk.protocol.model.ScheduledMessageStatus
 import com.virjar.tk.protocol.model.ScheduledMessageDraft
 import com.virjar.tk.server.domain.chat.ChatAccess
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
@@ -49,7 +50,7 @@ class ScheduledMessageService(
                 messageType = draft.messageType,
                 body = draft.body,
                 deliverAt = draft.deliverAt,
-                status = STATUS_WAITING,
+                status = ScheduledMessageStatus.WAITING.code,
                 operationId = draft.operationId,
                 createdAt = now,
                 settledAt = null,
@@ -64,8 +65,8 @@ class ScheduledMessageService(
         unitOfWork.write {
             val row = repository.get(transaction, scheduledId) ?: return@write false
             if (row.senderUid != senderUid || row.operationId != operationId) return@write false
-            if (row.status != STATUS_WAITING) return@write true
-            repository.settle(transaction, scheduledId, STATUS_WAITING, STATUS_CANCELLED, System.currentTimeMillis())
+            if (row.status != ScheduledMessageStatus.WAITING.code) return@write true
+            repository.settle(transaction, scheduledId, ScheduledMessageStatus.WAITING.code, ScheduledMessageStatus.CANCELLED.code, System.currentTimeMillis())
         }
 
     suspend fun listWaiting(senderUid: String, chatId: String): List<ScheduledMessage> {
@@ -96,7 +97,7 @@ class ScheduledMessageService(
                 )
                 messageService.sendMessage(row.senderUid, message)
                 unitOfWork.write {
-                    repository.settle(transaction, row.scheduledId, STATUS_WAITING, STATUS_DELIVERED, now)
+                    repository.settle(transaction, row.scheduledId, ScheduledMessageStatus.WAITING.code, ScheduledMessageStatus.DELIVERED.code, now)
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
@@ -108,7 +109,7 @@ class ScheduledMessageService(
                 )
                 runCatching {
                     unitOfWork.write {
-                        repository.settle(transaction, row.scheduledId, STATUS_WAITING, STATUS_FAILED, now)
+                        repository.settle(transaction, row.scheduledId, ScheduledMessageStatus.WAITING.code, ScheduledMessageStatus.FAILED.code, now)
                     }
                 }.onFailure { settleFailure ->
                     logger.error("Scheduled message {} failure settlement itself failed", row.scheduledId, settleFailure)
@@ -131,11 +132,6 @@ class ScheduledMessageService(
     )
 
     companion object {
-        /** 状态值与 wire 投影 [ScheduledMessage.STATUS_*] 共用同一事实源。 */
-        const val STATUS_WAITING = ScheduledMessage.STATUS_WAITING
-        const val STATUS_CANCELLED = ScheduledMessage.STATUS_CANCELLED
-        const val STATUS_DELIVERED = ScheduledMessage.STATUS_DELIVERED
-        const val STATUS_FAILED = ScheduledMessage.STATUS_FAILED
 
         const val DELIVER_BATCH = 50
         const val CLOCK_SKEW_TOLERANCE_MILLIS = 60_000L

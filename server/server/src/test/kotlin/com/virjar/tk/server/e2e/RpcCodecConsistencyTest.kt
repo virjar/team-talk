@@ -2,6 +2,9 @@ package com.virjar.tk.server.e2e
 
 import com.virjar.tk.protocol.body.buildRichTextBody
 import com.virjar.tk.protocol.model.ContactApplyRecord
+import com.virjar.tk.protocol.model.ScheduledMessageStatus
+import com.virjar.tk.protocol.model.ContactApplyDirection
+import com.virjar.tk.protocol.model.ContactApplyStatus
 import com.virjar.tk.protocol.model.ConversationPageRequest
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.MessageType
@@ -60,13 +63,13 @@ class RpcCodecConsistencyTest {
         assertEquals(user2.uid, application.toUid)
         assertNull(application.token, "sender must not receive the contact-processing token")
         val incoming = user2Contacts.listPendingApplies()
-            .single { it.fromUid == user1.uid && it.status == ContactApplyRecord.STATUS_PENDING }
+            .single { it.fromUid == user1.uid && it.status == ContactApplyStatus.PENDING.code }
         val accepted = user2Contacts.accept(
             UUID.randomUUID().toString(),
             System.currentTimeMillis(),
             requireNotNull(incoming.token),
         )
-        assertEquals(ContactApplyRecord.STATUS_ACCEPTED, accepted.status)
+        assertEquals(ContactApplyStatus.ACCEPTED.code, accepted.status)
 
         val chat = ChatRpcProxy(user1.rpc).createPersonal(user2.uid)
         chatId = chat.chatId
@@ -125,16 +128,16 @@ class RpcCodecConsistencyTest {
             assertNull(application.token)
 
             val incoming = rpc.listPendingApplies().single { it.fromUid == applicant.uid }
-            assertEquals(ContactApplyRecord.STATUS_PENDING, incoming.status)
+            assertEquals(ContactApplyStatus.PENDING.code, incoming.status)
             assertNotNull(incoming.token)
 
             val lookup = rpc.getPendingApply(applicant.uid).record
             assertNotNull(lookup)
             assertEquals(incoming.id, lookup?.id)
-            assertEquals(ContactApplyRecord.DIRECTION_INCOMING, lookup?.direction)
+            assertEquals(ContactApplyDirection.INCOMING.code, lookup?.direction)
 
             val records = rpc.listApplyRecords(beforeId = 0, limit = 20)
-            assertTrue(records.any { it.id == incoming.id && it.status == ContactApplyRecord.STATUS_PENDING })
+            assertTrue(records.any { it.id == incoming.id && it.status == ContactApplyStatus.PENDING.code })
 
             rpc.blacklist(blocked.uid)
             assertTrue(rpc.listBlacklist().any { it.friendUid == blocked.uid })

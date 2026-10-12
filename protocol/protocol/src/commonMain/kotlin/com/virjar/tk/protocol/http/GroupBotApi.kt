@@ -44,12 +44,7 @@ data class GroupBotSummary(
     val canRotateToken: Boolean,
     /** 创建者、群管理员或群主可以移除群范围机器人。 */
     val canRemove: Boolean,
-) {
-    companion object {
-        const val STATUS_DISABLED = 0
-        const val STATUS_ACTIVE = 1
-    }
-}
+)
 
 /**
  * 客户端由其持久命令与服务端回执组装出的一次性凭据。
@@ -94,3 +89,20 @@ data class GroupBotCommandReceipt(
     val operationId: String,
     val bot: GroupBotSummary,
 )
+
+/**
+ * 群机器人运行状态；未知 code 经 [GroupBotSummary.statusValue] 映射为 null，按已停用展示。
+ */
+@com.virjar.tk.protocol.SinceProtocol(7)
+enum class GroupBotStatus(val code: Int) {
+    DISABLED(0),
+    ACTIVE(1);
+
+    companion object {
+        fun fromCode(code: Int): GroupBotStatus? = entries.find { it.code == code }
+    }
+}
+
+/** 机器人状态的类型化视图；null = 未知取值。 */
+val GroupBotSummary.statusValue: GroupBotStatus?
+    get() = GroupBotStatus.fromCode(status)

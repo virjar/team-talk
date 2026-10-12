@@ -59,7 +59,7 @@ class ExposedClientTelemetryControlRepository(
         // 或把旧运行时事实附着到复用了同一设备 id 的新安装上。
         val user = Users.selectAll().where { Users.uid eq authority.uid }.forUpdate().singleOrNull()
             ?: return@transaction false
-        if (user[Users.status] != UserStatus.ACTIVE ||
+        if (user[Users.status] != UserStatus.ACTIVE.code ||
             user[Users.credentialEpoch] != authority.userCredentialEpoch
         ) {
             return@transaction false
