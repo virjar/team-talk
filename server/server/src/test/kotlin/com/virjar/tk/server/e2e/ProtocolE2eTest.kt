@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.*
 import org.junit.jupiter.api.*
 import org.junit.jupiter.api.Assertions.*
 import java.util.UUID
+import com.virjar.tk.protocol.model.ContactApplyStatus
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ProtocolE2eTest {
@@ -69,7 +70,7 @@ class ProtocolE2eTest {
             val response = invoke("contact", ContactRpcContract.M_LIST_PENDING_APPLIES)
             require(response.status == 0 && response.payload != null) { "无法读取待处理好友申请" }
             return ProtoCodec.decodeList(ContactApply, response.payload!!)
-                .single { it.fromUid == fromUid && it.status == 0 }
+                .single { it.fromUid == fromUid && it.status == ContactApplyStatus.PENDING }
                 .token ?: error("待处理申请缺少收件人 token")
         }
 

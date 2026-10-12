@@ -50,7 +50,7 @@ class ScheduledMessageService(
                 messageType = draft.messageType,
                 body = draft.body,
                 deliverAt = draft.deliverAt,
-                status = ScheduledMessageStatus.WAITING.code,
+                status = ScheduledMessageStatus.WAITING,
                 operationId = draft.operationId,
                 createdAt = now,
                 settledAt = null,
@@ -65,7 +65,7 @@ class ScheduledMessageService(
         unitOfWork.write {
             val row = repository.get(transaction, scheduledId) ?: return@write false
             if (row.senderUid != senderUid || row.operationId != operationId) return@write false
-            if (row.status != ScheduledMessageStatus.WAITING.code) return@write true
+            if (row.status != ScheduledMessageStatus.WAITING) return@write true
             repository.settle(transaction, scheduledId, ScheduledMessageStatus.WAITING.code, ScheduledMessageStatus.CANCELLED.code, System.currentTimeMillis())
         }
 

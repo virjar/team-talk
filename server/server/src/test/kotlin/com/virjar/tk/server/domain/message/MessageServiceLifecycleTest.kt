@@ -50,6 +50,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 class MessageServiceLifecycleTest {
     @Test
@@ -144,7 +145,7 @@ class MessageServiceLifecycleTest {
         val accessSource = MutableForwardAccessSource(sourceChatId, targetChatId, chats)
         val access = ChatAccess(accessSource)
         val membersByChat = chats.keys.associateWith { chatId ->
-            listOf(Member(uid = ACTOR_UID, chatId = chatId, role = 0))
+            listOf(Member(uid = ACTOR_UID, chatId = chatId, role = GroupMemberRole.MEMBER))
         }
         val chatRepository = interfaceStub<ChatRepository> { method, args ->
             when (method) {
@@ -327,7 +328,7 @@ class MessageServiceLifecycleTest {
             if (uid != ACTOR_UID || getChat(chatId) == null) return null
             if (chatId == sourceChatId && !sourceMemberActive) return null
             if (chatId != sourceChatId && chatId != targetChatId) return null
-            return Member(uid = uid, chatId = chatId, role = 0)
+            return Member(uid = uid, chatId = chatId, role = GroupMemberRole.MEMBER)
         }
 
         override suspend fun load(chatId: String, memberUids: Set<String>): ChatAccessSnapshot =

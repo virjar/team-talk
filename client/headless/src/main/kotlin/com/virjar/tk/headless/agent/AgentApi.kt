@@ -290,7 +290,7 @@ class AgentApi internal constructor(private val agent: AgentRuntime, private val
                 200 to ok(buildJsonObject {
                     put("members", buildJsonArray {
                         list.forEach { m -> add(buildJsonObject {
-                            put("uid", m.uid); put("name", m.user?.name ?: m.uid); put("role", m.role)
+                            put("uid", m.uid); put("name", m.user?.name ?: m.uid); put("role", m.role.code)
                         }) }
                     })
                 })

@@ -24,6 +24,8 @@ import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.sql.Connection
 import java.util.UUID
+import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 
 /** 构建完整 checkpoint，它先于常规的持久事件尾部重放。 */
 class SyncCheckpointService(
@@ -219,8 +221,8 @@ class SyncCheckpointService(
         avatar = toUserAvatar(),
         phone = this[Users.phone],
         sex = this[Users.sex],
-        role = this[Users.role],
-        status = this[Users.status],
+        role = UserRole.fromCode(this[Users.role]),
+        status = UserStatus.fromCode(this[Users.status]),
         revision = this[Users.revision],
     )
 

@@ -30,6 +30,7 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty
 import org.bytedeco.javacv.FFmpegFrameGrabber
 import java.io.*
 import java.util.UUID
+import com.virjar.tk.protocol.model.ContactApplyStatus
 
 /**
  * 对端测试角色（账号 B）—— 真机 UI 测试的协同脚本。
@@ -159,7 +160,7 @@ class TestPeer {
             session.close(); return@runBlocking
         }
         val applies = ProtoCodec.decodeList(com.virjar.tk.protocol.model.ContactApply, listPayload)
-        val pending = applies.firstOrNull { it.status == 0 && it.token != null }
+        val pending = applies.firstOrNull { it.status == ContactApplyStatus.PENDING && it.token != null }
         if (pending == null) {
             println("===ACCEPT FAILED=== 没有可接受的申请（共 ${applies.size} 条，可能 token 未下发）")
             session.close(); return@runBlocking

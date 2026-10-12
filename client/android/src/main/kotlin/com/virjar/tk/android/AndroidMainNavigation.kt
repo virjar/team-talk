@@ -77,6 +77,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import com.virjar.tk.app.ui.call.CallScreen
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /**
  * 已认证状态下的 Android 主导航外壳。
@@ -752,8 +753,8 @@ private fun NavGraphBuilder.groupAdminDestination(
         val detailMembers = dataState.groups.members.takeIf { detailReady }.orEmpty()
         val currentRole = detailMembers
             .firstOrNull { it.uid == dataState.userSession.uid }
-            ?.role ?: -1
-        val currentUserIsOwner = currentRole == 2
+            ?.role
+        val currentUserIsOwner = currentRole == GroupMemberRole.OWNER
         val groupAvatarMap by dataState.chat.chatAvatars.collectAsState(emptyMap())
 
         // 群头像修改（内测反馈 T053）：相册选图 → 方形裁剪 → staging 上传 → setGroupAvatar。
@@ -813,7 +814,7 @@ private fun NavGraphBuilder.groupAdminDestination(
             members = detailMembers,
             isOwner = currentUserIsOwner,
             groupAvatar = detailChat?.chatId?.let { chatId -> groupAvatarMap[chatId] },
-            onEditGroupAvatar = if (currentRole >= 1) {
+            onEditGroupAvatar = if (currentRole?.isAtLeast(GroupMemberRole.ADMIN) == true) {
                 {
                     if (!avatarEditBusy) {
                         pendingAvatarUri = null

@@ -2,8 +2,6 @@ package com.virjar.tk.server.domain.document
 
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.UserRole
-import com.virjar.tk.protocol.model.roleValue
-import com.virjar.tk.protocol.model.statusValue
 import com.virjar.tk.protocol.model.UserStatus
 
 /**

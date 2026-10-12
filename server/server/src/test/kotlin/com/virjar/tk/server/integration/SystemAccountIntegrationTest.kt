@@ -57,7 +57,7 @@ class SystemAccountIntegrationTest {
             }
             SystemAccountUids.ALL.forEach { uid ->
                 val account = legacy.userService.getProfile(uid)
-                assertEquals(UserRole.SYSTEM.code, account.role)
+                assertEquals(UserRole.SYSTEM, account.role)
                 assertEquals(SystemAccountUids.USERNAMES.getValue(uid), account.username)
                 assertNotNull(AuthRules.validateUsername(account.username), "系统保留用户名不能成为合法人类注册输入")
             }
@@ -95,7 +95,7 @@ class SystemAccountIntegrationTest {
         SystemAccountUids.DISPLAY_NAMES.forEach { (uid, name) ->
             val user = ctx.userService.getProfile(uid)
             assertEquals(name, user.name)
-            assertEquals(com.virjar.tk.protocol.model.UserRole.SYSTEM.code, user.role)
+            assertEquals(com.virjar.tk.protocol.model.UserRole.SYSTEM, user.role)
         }
         // 二次引导幂等：不抛唯一约束冲突
         ctx.userService.ensureSystemAccounts()

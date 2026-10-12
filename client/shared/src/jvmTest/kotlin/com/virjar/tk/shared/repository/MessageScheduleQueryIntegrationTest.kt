@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.ScheduledMessageStatus
 
 /** 定时发送 SDK：契约方法/载荷、身份校验、列表透传。 */
 class MessageScheduleQueryIntegrationTest {
@@ -27,7 +28,7 @@ class MessageScheduleQueryIntegrationTest {
                 senderUid = "me",
                 messageType = MessageType.RICH_TEXT.code,
                 deliverAt = deliverAt,
-                status = 0,
+                status = ScheduledMessageStatus.WAITING,
                 createdAt = 1L,
                 operationId = "op-1",
                 body = buildRichTextBody("定时"),
@@ -57,7 +58,7 @@ class MessageScheduleQueryIntegrationTest {
                     ProtoCodec.encode(
                         ScheduledMessage(
                             "sch-1", "other-chat", "me", MessageType.RICH_TEXT.code,
-                            System.currentTimeMillis() + 60_000, 0, 1L, "op-1", buildRichTextBody("x"),
+                            System.currentTimeMillis() + 60_000, ScheduledMessageStatus.WAITING, 1L, "op-1", buildRichTextBody("x"),
                         ),
                     ),
                 )
@@ -75,7 +76,7 @@ class MessageScheduleQueryIntegrationTest {
             val list = listOf(
                 ScheduledMessage(
                     "sch-2", CHAT, "me", MessageType.RICH_TEXT.code,
-                    System.currentTimeMillis() + 60_000, 3, 1L, "op-2", buildRichTextBody("failed"),
+                    System.currentTimeMillis() + 60_000, ScheduledMessageStatus.FAILED, 1L, "op-2", buildRichTextBody("failed"),
                 ),
             )
             val rpc = FakeRpcInvoker().apply {
@@ -93,7 +94,7 @@ class MessageScheduleQueryIntegrationTest {
                     listOf(
                         ScheduledMessage(
                             "sch-3", "elsewhere", "me", 1,
-                            System.currentTimeMillis() + 60_000, 0, 1L, "op-3", buildRichTextBody("x"),
+                            System.currentTimeMillis() + 60_000, ScheduledMessageStatus.fromCode(0), 1L, "op-3", buildRichTextBody("x"),
                         ),
                     ),
                 ),

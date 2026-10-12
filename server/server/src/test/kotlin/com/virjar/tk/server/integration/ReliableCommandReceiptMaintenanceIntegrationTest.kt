@@ -23,6 +23,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.ContactApplyStatus
 
 class ReliableCommandReceiptMaintenanceIntegrationTest {
     companion object {
@@ -39,7 +40,7 @@ class ReliableCommandReceiptMaintenanceIntegrationTest {
         val actor = deterministicUuid("maintenance-actor")
         val chatId = deterministicUuid("maintenance-chat")
         val contactPayload = ProtoCodec.encode(
-            ContactApply(id = 1L, fromUid = "from", toUid = actor, status = 1),
+            ContactApply(id = 1L, fromUid = "from", toUid = actor, status = ContactApplyStatus.ACCEPTED),
         )
         val expiredIndexes = 0 until 5
         transaction(ext.env.database) {

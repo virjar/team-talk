@@ -34,6 +34,7 @@ import java.security.SecureRandom
 import java.sql.SQLException
 import java.util.Base64
 import com.virjar.tk.protocol.model.Contact
+import com.virjar.tk.protocol.model.UserStatus
 
 /** PostgreSQL LIKE 对绑定模式值默认使用反斜杠作为转义字符。 */
 internal fun escapePostgresLikeLiteral(value: String): String = buildString(value.length) {
@@ -294,7 +295,7 @@ class ExposedUserRepository internal constructor(
             it[Users.createdAt] = now
             it[Users.updatedAt] = now
         }
-        return User(uid = uid, username = username, name = name, phone = phone, role = role)
+        return User(uid = uid, username = username, name = name, phone = phone, role = UserRole.fromCode(role))
     }
 
     /** T062：短首拼放行 = 调用者加入了组织，或已有任一正常好友关系。 */
@@ -317,8 +318,8 @@ class ExposedUserRepository internal constructor(
         avatar = toUserAvatar(),
         phone = this[Users.phone],
         sex = this[Users.sex],
-        role = this[Users.role],
-        status = this[Users.status],
+        role = UserRole.fromCode(this[Users.role]),
+        status = UserStatus.fromCode(this[Users.status]),
         revision = this[Users.revision],
     )
 
@@ -330,8 +331,8 @@ class ExposedUserRepository internal constructor(
             avatar = toUserAvatar(),
             phone = this[Users.phone],
             sex = this[Users.sex],
-            role = this[Users.role],
-            status = this[Users.status],
+            role = UserRole.fromCode(this[Users.role]),
+            status = UserStatus.fromCode(this[Users.status]),
             revision = this[Users.revision],
         ),
         passwordHash = this[Users.passwordHash],

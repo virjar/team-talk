@@ -1,6 +1,7 @@
 package com.virjar.tk.protocol.model
 
 import kotlinx.serialization.Serializable
+import com.virjar.tk.protocol.WireCoded
 
 import com.virjar.tk.protocol.body.AttachmentPolicy
 import com.virjar.tk.protocol.IProto
@@ -16,8 +17,8 @@ data class User(
     val avatar: Attachment? = null,
     val phone: String? = null,
     val sex: Int = 0,
-    val role: Int = 0,
-    val status: Int = 1,
+    val role: UserRole = UserRole.HUMAN,
+    val status: UserStatus = UserStatus.ACTIVE,
     /** 该用户快照中每个对外可见事实的单调版本号。 */
     val revision: Long = 1,
 ) : IProto {
@@ -30,8 +31,8 @@ data class User(
         avatar?.let(UserAvatarPolicy::requireCanonical)?.writeTo(buf)
         buf.writeString(phone)
         buf.writeVarInt(sex)
-        buf.writeVarInt(role)
-        buf.writeVarInt(status)
+        buf.writeVarInt(role.code)
+        buf.writeVarInt(status.code)
         if (revision <= 0L) throw ProtocolEncodingException("User revision is invalid")
         buf.writeVarLong(revision)
     }
@@ -48,8 +49,8 @@ data class User(
             },
             phone = buf.readString(),
             sex = buf.readVarInt(),
-            role = buf.readVarInt(),
-            status = buf.readVarInt(),
+            role = UserRole.fromCode(buf.readVarInt()),
+            status = UserStatus.fromCode(buf.readVarInt()),
             revision = buf.readVarLong().also { revision ->
                 if (revision <= 0L) throw ProtocolCorruptionException("user revision is invalid")
             },
@@ -92,42 +93,66 @@ object UserAvatarPolicy {
 }
 
 /**
- * 用户全局身份类型。群内 [GroupMemberRole] 是另一条独立维度。
- * wire/DB 列仍存 Int code（[User.role]），逻辑代码经 [User.roleValue] 比较本枚举。
+ * 用户全局身份类型。群内 [GroupMemberRole] 是另一条独立维度；未知取值承载为 [UserRole.Unknown]。
  */
-@com.virjar.tk.protocol.SinceProtocol(7)
-enum class UserRole(val code: Int) {
-    HUMAN(0),
-    BOT(10),
-    SYSTEM(20);
+@Serializable(with = UserRole.CodeSerializer::class)
+sealed interface UserRole : WireCoded {
+    data object HUMAN : UserRole {
+        override val code = 0
+    }
+
+    data object BOT : UserRole {
+        override val code = 10
+    }
+
+    data object SYSTEM : UserRole {
+        override val code = 20
+    }
+
+    data class Unknown(override val code: Int) : UserRole
+
+    object CodeSerializer : com.virjar.tk.protocol.WireCodedSerializer<UserRole>("UserRole") {
+        override fun fromCode(code: Int) = UserRole.fromCode(code)
+    }
 
     companion object {
-        fun fromCode(code: Int): UserRole? = entries.find { it.code == code }
+        fun fromCode(code: Int): UserRole = when (code) {
+            HUMAN.code -> HUMAN
+            BOT.code -> BOT
+            SYSTEM.code -> SYSTEM
+            else -> Unknown(code)
+        }
     }
 }
 
 /**
- * 用户账号状态；服务端是唯一权威，客户端只消费投影。与 users 表 status 列共用值空间。
- * 未知 code（未来版本）经 [User.statusValue] 映射为 null，按非活跃处理（fail closed）。
+ * 用户账号状态；服务端是唯一权威，客户端只消费投影。与 users 表 status 列共用值空间；
+ * 未知取值承载为 [UserStatus.Unknown]，按非活跃处理（fail closed）。
  */
-@com.virjar.tk.protocol.SinceProtocol(7)
-enum class UserStatus(val code: Int) {
-    ACTIVE(1),
-    BANNED(2);
+@Serializable(with = UserStatus.CodeSerializer::class)
+sealed interface UserStatus : WireCoded {
+    data object ACTIVE : UserStatus {
+        override val code = 1
+    }
+    data object BANNED : UserStatus {
+        override val code = 2
+    }
+
+    data class Unknown(override val code: Int) : UserStatus
+
+    object CodeSerializer : com.virjar.tk.protocol.WireCodedSerializer<UserStatus>("UserStatus") {
+        override fun fromCode(code: Int) = UserStatus.fromCode(code)
+    }
 
     companion object {
-        fun fromCode(code: Int): UserStatus? = entries.find { it.code == code }
+        fun fromCode(code: Int): UserStatus = when (code) {
+            ACTIVE.code -> ACTIVE
+            BANNED.code -> BANNED
+            else -> Unknown(code)
+        }
     }
 }
 
-/** 用户身份的类型化视图；null = 未知取值（未来版本）。 */
-val User.roleValue: UserRole?
-    get() = UserRole.fromCode(role)
-
-/** 账号状态的类型化视图；null = 未知取值，按非活跃处理。 */
-val User.statusValue: UserStatus?
-    get() = UserStatus.fromCode(status)
-
-/** 各业务入口共用的“活动普通用户”判定；封禁或服务身份都不是有效业务 actor。 */
+/** 各业务入口共用的“活动普通用户”判定；封禁、服务身份与未知取值都不是有效业务 actor。 */
 val User.isActiveHuman: Boolean
-    get() = roleValue == UserRole.HUMAN && statusValue == UserStatus.ACTIVE
+    get() = role == UserRole.HUMAN && status == UserStatus.ACTIVE

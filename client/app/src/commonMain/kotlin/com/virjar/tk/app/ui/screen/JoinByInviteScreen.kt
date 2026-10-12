@@ -17,7 +17,6 @@ import com.virjar.tk.protocol.model.InvitePreview
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import com.virjar.tk.protocol.model.InvitePreviewStatus
-import com.virjar.tk.protocol.model.statusValue
 
 /** 先预览邀请，再把同一次查看的输入交给加入操作；解析与授权由 SDK 和服务端完成。 */
 @Composable
@@ -128,11 +127,11 @@ fun JoinByInviteScreen(
                         }
                         Text(
                             invitePreviewStatus(current.status),
-                            color = if (current.statusValue == InvitePreviewStatus.VALID) Tk.colors.secondaryText
+                            color = if (current.status == InvitePreviewStatus.VALID) Tk.colors.secondaryText
                             else MaterialTheme.colorScheme.error,
                             modifier = Modifier.testTag("invite.join.status"),
                         )
-                        if (current.alreadyJoined || current.statusValue == InvitePreviewStatus.VALID) {
+                        if (current.alreadyJoined || current.status == InvitePreviewStatus.VALID) {
                             Button(
                                 onClick = {
                                     if (!loading && !joining && preview === current && input == previewInput) {
@@ -167,7 +166,7 @@ fun JoinByInviteScreen(
     }
 }
 
-private fun invitePreviewStatus(status: Int): String = when (InvitePreviewStatus.fromCode(status)) {
+private fun invitePreviewStatus(status: InvitePreviewStatus): String = when (status) {
     InvitePreviewStatus.VALID -> "邀请链接有效"
     InvitePreviewStatus.NOT_FOUND -> "邀请不存在，请检查链接或邀请码"
     InvitePreviewStatus.REVOKED -> "邀请链接已撤销"

@@ -5,6 +5,7 @@ import com.virjar.tk.protocol.model.Member
 import java.util.LinkedHashMap
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /**
  * Chat 领域热缓存。
@@ -85,13 +86,13 @@ class ChatStore(
             cached.memberSnapshotOversized = true
             return members
         }
-        val roles = linkedMapOf<String, Int>()
+        val roles = linkedMapOf<String, GroupMemberRole>()
         members.forEach { member -> roles[member.uid] = member.role }
         cached.memberRoles = roles.toMap()
         return membersFromRoles(chatId, cached.memberRoles.orEmpty())
     }
 
-    private fun membersFromRoles(chatId: String, roles: Map<String, Int>): List<Member> =
+    private fun membersFromRoles(chatId: String, roles: Map<String, GroupMemberRole>): List<Member> =
         roles.map { (uid, role) -> Member(uid = uid, chatId = chatId, role = role) }
 
     private inline fun <T> withCacheGate(chatId: String, block: ChatCacheStripe.() -> T): T {
@@ -109,7 +110,7 @@ class ChatStore(
 
     private data class CachedChat(
         val chat: Chat,
-        var memberRoles: Map<String, Int>? = null,
+        var memberRoles: Map<String, GroupMemberRole>? = null,
         var memberSnapshotOversized: Boolean = false,
     )
 

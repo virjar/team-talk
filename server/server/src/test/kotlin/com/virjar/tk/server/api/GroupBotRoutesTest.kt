@@ -26,6 +26,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.http.GroupBotStatus
 
 class GroupBotRoutesTest {
     @Test
@@ -234,7 +235,7 @@ private class FakeGroupBotManagement(
     private fun summary() = GroupBotSummary(
         botId = "bot-1",
         name = "构建机器人",
-        status = 1,
+        status = GroupBotStatus.ACTIVE,
         lastUsedAt = null,
         createdAt = 1,
         apiPath = "/api/v1/groups/chat-1/bots/bot-1/messages",

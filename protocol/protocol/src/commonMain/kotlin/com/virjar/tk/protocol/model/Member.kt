@@ -9,8 +9,8 @@ import com.virjar.tk.protocol.PacketBuffer
 data class Member(
     val uid: String,
     val chatId: String,
-    /** wire 仍为 Int code；逻辑代码使用 [roleValue] 枚举视图比较。 */
-    val role: Int,
+    /** wire 写 [GroupMemberRole.code]；未知取值承载为 [GroupMemberRole.Unknown]。 */
+    val role: GroupMemberRole,
     val nickname: String? = null,
     val joinedAt: Long = 0,
     val user: User? = null,
@@ -19,7 +19,7 @@ data class Member(
     override fun writeTo(buf: PacketBuffer) {
         buf.writeString(uid)
         buf.writeString(chatId)
-        buf.writeVarInt(role)
+        buf.writeVarInt(role.code)
         buf.writeString(nickname)
         buf.writeVarLong(joinedAt)
         buf.writeBoolean(user != null)
@@ -30,7 +30,7 @@ data class Member(
         override fun readFrom(buf: PacketBuffer): Member = Member(
             uid = buf.readRequiredString(),
             chatId = buf.readRequiredString(),
-            role = buf.readVarInt(),
+            role = GroupMemberRole.fromCode(buf.readVarInt()),
             nickname = buf.readString(),
             joinedAt = buf.readVarLong(),
             user = if (buf.readBoolean("member user presence")) User.readFrom(buf) else null,

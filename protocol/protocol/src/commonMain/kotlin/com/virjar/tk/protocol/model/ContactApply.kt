@@ -12,8 +12,7 @@ data class ContactApply(
     val toUid: String,
     val token: String? = null,
     val remark: String? = null,
-    /** wire 仍为 Int code（与 [ContactApplyStatus] 共用值空间）；逻辑代码用 [statusValue]。 */
-    val status: Int = 0,
+    val status: ContactApplyStatus = ContactApplyStatus.PENDING,
     val createdAt: Long = 0,
     val fromUser: User? = null,
 ) : IProto {
@@ -24,7 +23,7 @@ data class ContactApply(
         buf.writeString(toUid)
         buf.writeString(token)
         buf.writeString(remark)
-        buf.writeVarInt(status)
+        buf.writeVarInt(status.code)
         buf.writeVarLong(createdAt)
         buf.writeBoolean(fromUser != null)
         fromUser?.writeTo(buf)
@@ -37,13 +36,9 @@ data class ContactApply(
             toUid = buf.readRequiredString(),
             token = buf.readString(),
             remark = buf.readString(),
-            status = buf.readVarInt(),
+            status = ContactApplyStatus.fromCode(buf.readVarInt()),
             createdAt = buf.readVarLong(),
             fromUser = if (buf.readBoolean("contact apply user presence")) User.readFrom(buf) else null,
         )
     }
 }
-
-/** 处理动作定向投影的状态视图；与 [ContactApplyRecord.statusValue] 同一值空间。 */
-val ContactApply.statusValue: ContactApplyStatus?
-    get() = ContactApplyStatus.fromCode(status)

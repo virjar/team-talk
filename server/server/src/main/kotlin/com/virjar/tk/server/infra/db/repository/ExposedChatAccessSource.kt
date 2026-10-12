@@ -21,6 +21,7 @@ import org.jetbrains.exposed.sql.or
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.experimental.newSuspendedTransaction
 import java.sql.Connection
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /**
  * 由 PostgreSQL 支撑的授权源。每次调用都绕过 [com.virjar.tk.server.domain.chat.ChatStore]，
@@ -180,7 +181,7 @@ class ExposedChatAccessSource(
     private fun ResultRow.toMember() = Member(
         uid = this[GroupMembers.uid],
         chatId = this[GroupMembers.chatId],
-        role = this[GroupMembers.role],
+        role = GroupMemberRole.fromCode(this[GroupMembers.role]),
         nickname = this[GroupMembers.nickname],
         joinedAt = this[GroupMembers.joinedAt],
     )

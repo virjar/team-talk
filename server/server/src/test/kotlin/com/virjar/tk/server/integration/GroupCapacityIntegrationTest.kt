@@ -47,6 +47,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /** 针对规范群成员容量包络的真实 PostgreSQL 覆盖测试。 */
 class GroupCapacityIntegrationTest {
@@ -104,7 +105,7 @@ class GroupCapacityIntegrationTest {
                             uids = listOf(fixture.firstCandidateUid, fixture.firstCandidateUid),
                             requiredHumanUids = setOf(fixture.ownerUid, fixture.firstCandidateUid),
                         ) { facts ->
-                            require(facts.operator?.role == OWNER_ROLE) { "owner snapshot missing" }
+                            require(facts.operator?.role == GroupMemberRole.OWNER) { "owner snapshot missing" }
                         }
                     }
                 }

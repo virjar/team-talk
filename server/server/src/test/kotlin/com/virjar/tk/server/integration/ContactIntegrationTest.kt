@@ -37,10 +37,10 @@ class ContactIntegrationTest {
         val uid2 = ctx.registerUser()
         val apply = ctx.contactService(uid1).apply(uid2, "Hi")
         assertNotNull(apply)
-        assertEquals(0, apply.status)
+        assertEquals(ContactApplyStatus.PENDING, apply.status)
         assertNull(apply.token, "apply 响应不能向发件人暴露收件人处理 token")
         val accepted = ctx.contactService(uid2).accept(pendingToken(uid2, uid1))
-        assertEquals(1, accepted.status)
+        assertEquals(ContactApplyStatus.ACCEPTED, accepted.status)
     }
 
     @Test
@@ -49,7 +49,7 @@ class ContactIntegrationTest {
         val uid2 = ctx.registerUser()
         ctx.contactService(uid1).apply(uid2, "Hi")
         val rejected = ctx.contactService(uid2).reject(pendingToken(uid2, uid1))
-        assertEquals(2, rejected.status)
+        assertEquals(ContactApplyStatus.REJECTED, rejected.status)
     }
 
     @Test
@@ -64,7 +64,7 @@ class ContactIntegrationTest {
             ctx.contactService(outsider).accept(token)
         }
         val accepted = ctx.contactService(recipient).accept(token)
-        assertEquals(1, accepted.status)
+        assertEquals(ContactApplyStatus.ACCEPTED, accepted.status)
     }
 
     @Test
@@ -184,12 +184,12 @@ class ContactIntegrationTest {
         val incomingToken = pendingToken(recipient, sender1)
 
         val senderPending = ctx.contactService(sender1).getPendingApply(recipient).record!!
-        assertEquals(ContactApplyDirection.OUTGOING.code, senderPending.direction)
+        assertEquals(ContactApplyDirection.OUTGOING, senderPending.direction)
         assertEquals(recipient, senderPending.peerUser?.uid)
         assertNull(senderPending.token)
 
         val recipientPending = ctx.contactService(recipient).getPendingApply(sender1).record!!
-        assertEquals(ContactApplyDirection.INCOMING.code, recipientPending.direction)
+        assertEquals(ContactApplyDirection.INCOMING, recipientPending.direction)
         assertEquals(sender1, recipientPending.peerUser?.uid)
         assertEquals(incomingToken, recipientPending.token)
 
@@ -198,17 +198,17 @@ class ContactIntegrationTest {
 
         val newest = ctx.contactService(recipient).listApplyRecords(0, 1).single()
         assertEquals(sender2, newest.fromUid)
-        assertEquals(ContactApplyStatus.PENDING.code, newest.status)
+        assertEquals(ContactApplyStatus.PENDING, newest.status)
         assertNotNull(newest.token)
 
         val older = ctx.contactService(recipient).listApplyRecords(newest.id, 10)
             .single { it.fromUid == sender1 }
-        assertEquals(ContactApplyStatus.REJECTED.code, older.status)
+        assertEquals(ContactApplyStatus.REJECTED, older.status)
         assertNull(older.token)
 
         val senderHistory = ctx.contactService(sender1).listApplyRecords(0, 10).single()
-        assertEquals(ContactApplyDirection.OUTGOING.code, senderHistory.direction)
-        assertEquals(ContactApplyStatus.REJECTED.code, senderHistory.status)
+        assertEquals(ContactApplyDirection.OUTGOING, senderHistory.direction)
+        assertEquals(ContactApplyStatus.REJECTED, senderHistory.status)
         assertNull(senderHistory.token)
 
         ctx.contactService(recipient).accept(pendingToken(recipient, sender2))
@@ -240,7 +240,7 @@ class ContactIntegrationTest {
         assertFailsWith<IllegalArgumentException> {
             ctx.contactService(recipient).apply(sender, "反向重复")
         }
-        assertEquals(ContactApplyDirection.INCOMING.code, ctx.contactService(recipient)
+        assertEquals(ContactApplyDirection.INCOMING, ctx.contactService(recipient)
             .getPendingApply(sender).record?.direction)
     }
 
@@ -287,7 +287,7 @@ class ContactIntegrationTest {
         assertNull(ctx.contactService(sender).getPendingApply(recipient).record)
         assertNull(ctx.contactService(recipient).getPendingApply(sender).record)
         val closed = ctx.contactService(sender).listApplyRecords(0, 10).single { it.id == first.id }
-        assertEquals(ContactApplyStatus.REJECTED.code, closed.status)
+        assertEquals(ContactApplyStatus.REJECTED, closed.status)
         assertNull(closed.token)
         assertFailsWith<IllegalArgumentException> {
             ctx.contactService(sender).apply(recipient, "while blocked")
@@ -296,7 +296,7 @@ class ContactIntegrationTest {
         ctx.contactService(recipient).removeFromBlacklist(sender)
         val second = ctx.contactService(sender).apply(recipient, "after unblock")
         assertTrue(second.id != first.id)
-        assertEquals(ContactApplyStatus.PENDING.code, second.status)
+        assertEquals(ContactApplyStatus.PENDING, second.status)
     }
 
     @Test

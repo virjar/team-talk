@@ -31,6 +31,7 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.neq
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
 import com.virjar.tk.protocol.model.ChatType
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /** GroupInviteLinks 表访问 + 邀请链接业务记录模型。 */
 enum class InviteLinkRepositoryStage { BEFORE_CREATION_RESERVATION }
@@ -316,7 +317,7 @@ class ExposedInviteLinkRepository internal constructor(
         Member(
             uid = row[GroupMembers.uid],
             chatId = row[GroupMembers.chatId],
-            role = row[GroupMembers.role],
+            role = GroupMemberRole.fromCode(row[GroupMembers.role]),
             nickname = row[GroupMembers.nickname],
             joinedAt = row[GroupMembers.joinedAt],
         )

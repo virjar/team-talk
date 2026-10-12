@@ -28,6 +28,7 @@ import com.virjar.tk.protocol.model.UserRole
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.transaction
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 internal enum class ChatMemberRepositoryStage {
     BEFORE_CHAT_LOCK,
@@ -689,7 +690,7 @@ class ExposedChatMemberRepository internal constructor(
 private fun ResultRow.toMember() = Member(
     uid = this[GroupMembers.uid],
     chatId = this[GroupMembers.chatId],
-    role = this[GroupMembers.role],
+    role = GroupMemberRole.fromCode(this[GroupMembers.role]),
     nickname = this[GroupMembers.nickname],
     joinedAt = this[GroupMembers.joinedAt],
 )

@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
+import com.virjar.tk.protocol.model.ContactApplyStatus
 
 /**
  * 远程部署 E2E 测试工具。
@@ -91,7 +92,7 @@ object RemoteAcceptanceSupport {
             val response = invoke("contact", ContactRpcContract.M_LIST_PENDING_APPLIES)
             require(response.status == 0 && response.payload != null) { "无法读取待处理好友申请" }
             return ProtoCodec.decodeList(ContactApply, response.payload!!)
-                .single { it.fromUid == fromUid && it.status == 0 }
+                .single { it.fromUid == fromUid && it.status == ContactApplyStatus.PENDING }
                 .token ?: error("待处理申请缺少收件人 token")
         }
 

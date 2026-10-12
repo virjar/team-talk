@@ -30,6 +30,8 @@ import java.security.SecureRandom
 import java.util.Base64
 import java.util.UUID
 import com.virjar.tk.protocol.model.ChatType
+import com.virjar.tk.protocol.model.GroupMemberRole
+import com.virjar.tk.protocol.http.GroupBotStatus
 
 class BotAuthenticationException : IllegalArgumentException("机器人凭据无效")
 class BotAuthorizationException(message: String) : IllegalArgumentException(message)
@@ -327,7 +329,7 @@ class BotService(
                     val actor = groupMembership.getActiveMember(transaction, chatId, actorUid)
                         ?: throw BotAuthorizationException("不是当前群成员")
                     requireGroupOwnedBot(bot, chatId)
-                    if (bot.createdByUid != actorUid && actor.role < 1) {
+                    if (bot.createdByUid != actorUid && !actor.role.isAtLeast(GroupMemberRole.ADMIN)) {
                         throw BotAuthorizationException("只能移除自己创建的机器人")
                     }
                     repository.setStatus(transaction, botId, AutomationBot.STATUS_DISABLED)
@@ -696,7 +698,7 @@ class BotService(
         transaction: PgWriteTransactionContext,
         receipt: BotCredentialCommandReceipt,
         actorUid: String,
-        actorRole: Int,
+        actorRole: GroupMemberRole,
         chatId: String,
     ): GroupBotCommandReceipt {
         repository.lockServiceIdentity(transaction, receipt.botUserUid)
@@ -737,20 +739,20 @@ class BotService(
         }
     }
 
-    private fun AutomationBot.toGroupSummary(actorUid: String, actorRole: Int, chatId: String): GroupBotSummary {
+    private fun AutomationBot.toGroupSummary(actorUid: String, actorRole: GroupMemberRole, chatId: String): GroupBotSummary {
         val managedHere = managedChatId?.let(grantedChatIds::contains) == true
         val createdByCaller = managedHere && createdByUid == actorUid
         return GroupBotSummary(
             botId = botId,
             name = name,
-            status = status,
+            status = GroupBotStatus.fromCode(status),
             lastUsedAt = lastUsedAt,
             createdAt = createdAt,
             apiPath = "/api/v1/groups/$chatId/bots/$botId/messages",
             groupManaged = managedHere,
             createdByMe = createdByCaller,
             canRotateToken = createdByCaller,
-            canRemove = managedHere && (createdByCaller || actorRole >= 1),
+            canRemove = managedHere && (createdByCaller || actorRole.rank >= GroupMemberRole.ADMIN.rank),
         )
     }
 

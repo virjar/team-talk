@@ -5,7 +5,9 @@ import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.PacketBuffer
 import com.virjar.tk.protocol.body.MessageBody
+import com.virjar.tk.protocol.WireCoded
 import com.virjar.tk.protocol.body.MessageBodyRegistry
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 
 /**
@@ -21,7 +23,7 @@ data class ScheduledMessage(
     val senderUid: String,
     val messageType: Int,
     val deliverAt: Long,
-    val status: Int,
+    val status: ScheduledMessageStatus,
     val createdAt: Long,
     val operationId: String,
     @Transient
@@ -33,7 +35,7 @@ data class ScheduledMessage(
         buf.writeString(senderUid)
         buf.writeByte(messageType)
         buf.writeVarLong(deliverAt)
-        buf.writeByte(status)
+        buf.writeByte(status.code)
         buf.writeVarLong(createdAt)
         buf.writeString(operationId)
         buf.writeBoolean(body != null)
@@ -48,7 +50,7 @@ data class ScheduledMessage(
             val senderUid = buf.readRequiredString(MAX_ID_LENGTH, "scheduled senderUid")
             val messageType = buf.readByte()
             val deliverAt = buf.readVarLong()
-            val status = buf.readByte()
+            val status = ScheduledMessageStatus.fromCode(buf.readByte().toInt())
             val createdAt = buf.readVarLong()
             val operationId = buf.readRequiredString(MAX_ID_LENGTH, "scheduled operationId")
             val hasBody = buf.readBoolean("scheduled body presence")
@@ -64,20 +66,36 @@ data class ScheduledMessage(
 
 /**
  * 定时消息状态；与 scheduled_messages 表 status 列共用值空间。
- * 未知 code（未来版本）经 [ScheduledMessage.statusValue] 映射为 null，按已终结展示。
+ * 未知取值承载为 [ScheduledMessageStatus.Unknown]，按已终结展示。
  */
-@com.virjar.tk.protocol.SinceProtocol(7)
-enum class ScheduledMessageStatus(val code: Int) {
-    WAITING(0),
-    DELIVERED(1),
-    CANCELLED(2),
-    FAILED(3);
+@Serializable(with = ScheduledMessageStatus.CodeSerializer::class)
+sealed interface ScheduledMessageStatus : WireCoded {
+    data object WAITING : ScheduledMessageStatus {
+        override val code = 0
+    }
+    data object DELIVERED : ScheduledMessageStatus {
+        override val code = 1
+    }
+    data object CANCELLED : ScheduledMessageStatus {
+        override val code = 2
+    }
+    data object FAILED : ScheduledMessageStatus {
+        override val code = 3
+    }
+
+    data class Unknown(override val code: Int) : ScheduledMessageStatus
+
+    object CodeSerializer : com.virjar.tk.protocol.WireCodedSerializer<ScheduledMessageStatus>("ScheduledMessageStatus") {
+        override fun fromCode(code: Int) = ScheduledMessageStatus.fromCode(code)
+    }
 
     companion object {
-        fun fromCode(code: Int): ScheduledMessageStatus? = entries.find { it.code == code }
+        fun fromCode(code: Int): ScheduledMessageStatus = when (code) {
+            WAITING.code -> WAITING
+            DELIVERED.code -> DELIVERED
+            CANCELLED.code -> CANCELLED
+            FAILED.code -> FAILED
+            else -> Unknown(code)
+        }
     }
 }
-
-/** 定时消息状态的类型化视图；null = 未知取值（未来版本）。 */
-val ScheduledMessage.statusValue: ScheduledMessageStatus?
-    get() = ScheduledMessageStatus.fromCode(status)

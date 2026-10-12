@@ -21,6 +21,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /** 针对群成员 + 投影 + 持久事件原子性的真实 PostgreSQL 覆盖测试。 */
 class ChatMemberUnitOfWorkIntegrationTest {
@@ -88,8 +89,8 @@ class ChatMemberUnitOfWorkIntegrationTest {
         val staleAdmin = ctx.registerUser(uniqueUsername("add-locked-admin"))
         val target = ctx.registerUser(uniqueUsername("add-locked-target"))
         val group = ctx.chatService.createGroup("Add locked permission", null, owner, listOf(staleAdmin))
-        ctx.chatService.setRole(owner, group.chatId, staleAdmin, 1)
-        assertEquals(1, ctx.chatService.getMembers(group.chatId).single { it.uid == staleAdmin }.role)
+        ctx.chatService.setRole(owner, group.chatId, staleAdmin, GroupMemberRole.ADMIN.code)
+        assertEquals(GroupMemberRole.ADMIN, ctx.chatService.getMembers(group.chatId).single { it.uid == staleAdmin }.role)
         transaction(ctx.database) {
             GroupMembers.update({
                 (GroupMembers.chatId eq group.chatId) and (GroupMembers.uid eq staleAdmin)
@@ -294,10 +295,10 @@ class ChatMemberUnitOfWorkIntegrationTest {
         val staleAdmin = ctx.registerUser(uniqueUsername("locked-stale-admin"))
         val target = ctx.registerUser(uniqueUsername("locked-target"))
         val group = ctx.chatService.createGroup("Locked permissions", null, owner, listOf(staleAdmin, target))
-        ctx.chatService.setRole(owner, group.chatId, staleAdmin, 1)
+        ctx.chatService.setRole(owner, group.chatId, staleAdmin, GroupMemberRole.ADMIN.code)
         // 把 role=admin 加载进 ChatStore，然后模拟另一个服务器进程提交降级，
         // 而不触碰本进程的缓存。
-        assertEquals(1, ctx.chatService.getMembers(group.chatId).single { it.uid == staleAdmin }.role)
+        assertEquals(GroupMemberRole.ADMIN, ctx.chatService.getMembers(group.chatId).single { it.uid == staleAdmin }.role)
         transaction(ctx.database) {
             GroupMembers.update({
                 (GroupMembers.chatId eq group.chatId) and (GroupMembers.uid eq staleAdmin)

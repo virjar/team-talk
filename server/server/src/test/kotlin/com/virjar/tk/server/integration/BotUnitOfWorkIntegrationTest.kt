@@ -55,6 +55,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /** 针对 bot 身份/grant/成员/Conversation/事件聚合的真实 PostgreSQL 覆盖测试。 */
 class BotUnitOfWorkIntegrationTest {
@@ -105,7 +106,7 @@ class BotUnitOfWorkIntegrationTest {
         assertEquals(countsBefore, aggregateCounts())
         assertEquals(ownerEventBefore, latestEventSeq(owner))
         assertTrue(ctx.chatService.getMembers(group.chatId).none { member ->
-            ctx.userRepo.findByUid(member.uid)?.role == UserRole.BOT.code
+            ctx.userRepo.findByUid(member.uid)?.role == UserRole.BOT
         })
     }
 

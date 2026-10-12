@@ -42,6 +42,8 @@ import org.jetbrains.exposed.sql.or
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
+import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 
 fun interface OrganizationLockHooks {
     fun beforeStateAndProjectionLocks()
@@ -139,8 +141,8 @@ internal class ExposedOrganizationRepository(
                         avatar = row.toUserAvatar(),
                         phone = row[Users.phone],
                         sex = row[Users.sex],
-                        role = row[Users.role],
-                        status = row[Users.status],
+                        role = UserRole.fromCode(row[Users.role]),
+                        status = UserStatus.fromCode(row[Users.status]),
                         revision = row[Users.revision],
                     )
                 }

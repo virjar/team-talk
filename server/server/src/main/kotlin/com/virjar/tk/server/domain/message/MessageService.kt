@@ -30,6 +30,7 @@ import com.virjar.tk.protocol.model.ContentSearchPage
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.model.ChatType
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /**
  * 消息业务入口：校验命令、读写消息归档，并等待 [MessageProjector] 完成本次投影。
@@ -307,7 +308,7 @@ class MessageService(
             val actor = members.first { it.uid == uid }
             val message = messages.getMessage(chatId, serverSeq)
                 ?: throw IllegalArgumentException("消息不存在")
-            if (message.senderUid != uid && actor.role < 1) {
+            if (message.senderUid != uid && !actor.role.isAtLeast(GroupMemberRole.ADMIN)) {
                 throw IllegalArgumentException("需要管理员权限")
             }
             revokeUnderSnapshot(message, projectionTarget(chat, members))
@@ -537,7 +538,7 @@ class MessageService(
                     }
                 }
                 if (facts.senderMuted) throw IllegalArgumentException("你已被禁言")
-                if (facts.chat.mutedAll && sender.role < 1) {
+                if (facts.chat.mutedAll && !sender.role.isAtLeast(GroupMemberRole.ADMIN)) {
                     throw IllegalArgumentException("群聊已开启全员禁言")
                 }
                 validateMentionMembership(messageForMentions, facts.activeMemberUids)

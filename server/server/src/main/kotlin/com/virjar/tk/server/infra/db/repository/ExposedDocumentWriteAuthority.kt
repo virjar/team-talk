@@ -19,6 +19,8 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.selectAll
+import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 
 /** 一个文档空间写授权快照的 PostgreSQL 锁协议。 */
 internal object ExposedDocumentWriteAuthority {
@@ -198,7 +200,7 @@ internal fun ResultRow.toDocumentAclUser() = User(
     avatar = toUserAvatar(),
     phone = this[Users.phone],
     sex = this[Users.sex],
-    role = this[Users.role],
-    status = this[Users.status],
+    role = UserRole.fromCode(this[Users.role]),
+    status = UserStatus.fromCode(this[Users.status]),
     revision = this[Users.revision],
 )

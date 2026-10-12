@@ -2,6 +2,7 @@ package com.virjar.tk.server.domain.message
 
 import com.virjar.tk.protocol.body.MessageBody
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
+import com.virjar.tk.protocol.model.ScheduledMessageStatus
 
 /** 一条权威的定时发送调度行；状态契约与协议 [com.virjar.tk.protocol.model.ScheduledMessage] 一致。 */
 data class ScheduledMessageRow(
@@ -11,7 +12,7 @@ data class ScheduledMessageRow(
     val messageType: Int,
     val body: MessageBody?,
     val deliverAt: Long,
-    val status: Int,
+    val status: ScheduledMessageStatus,
     val operationId: String,
     val createdAt: Long,
     val settledAt: Long?,

@@ -9,6 +9,8 @@ import com.virjar.tk.protocol.model.User
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.like
 import org.jetbrains.exposed.sql.transactions.transaction
+import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 
 /** 仅限管理员的全局用户目录的 PostgreSQL 适配器。 */
 class ExposedAdminUserDirectory(
@@ -44,7 +46,7 @@ private fun ResultRow.toAdminUser() = User(
     avatar = toUserAvatar(),
     phone = this[Users.phone],
     sex = this[Users.sex],
-    role = this[Users.role],
-    status = this[Users.status],
+    role = UserRole.fromCode(this[Users.role]),
+    status = UserStatus.fromCode(this[Users.status]),
     revision = this[Users.revision],
 )

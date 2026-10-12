@@ -23,6 +23,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 class TransientUserProjectionLocalCacheTest {
     @Test
@@ -51,7 +52,7 @@ class TransientUserProjectionLocalCacheTest {
         val memberB = memberA.copy(name = "Member B", revision = 2L)
         assertFalse(cache.upsertTransientUserIfRelevant(memberB))
         assertNull(cache.getUser(memberB.uid))
-        cache.upsertMember(Member(memberA.uid, "group", role = 0, user = memberA))
+        cache.upsertMember(Member(memberA.uid, "group", role = GroupMemberRole.MEMBER, user = memberA))
         assertEquals(memberB, cache.getMembers("group").single().user)
 
         val organizationA = user("organization", "Organization A").copy(revision = 1L)
@@ -267,7 +268,7 @@ class TransientUserProjectionLocalCacheTest {
     @Test
     fun `chat member relation admits and hydrates a transient user`() {
         val cache = newMemoryCache()
-        val member = Member(uid = "member", chatId = "group", role = 0)
+        val member = Member(uid = "member", chatId = "group", role = GroupMemberRole.MEMBER)
         val updated = user(member.uid, "Fresh Member")
         cache.upsertMember(member)
 
@@ -290,7 +291,7 @@ class TransientUserProjectionLocalCacheTest {
         cache.upsertContact(contact)
         assertEquals(revisionTwo, cache.getContacts().single().user)
 
-        val member = Member(uid = revisionOne.uid, chatId = "group", role = 0, user = revisionOne)
+        val member = Member(uid = revisionOne.uid, chatId = "group", role = GroupMemberRole.MEMBER, user = revisionOne)
         cache.beginMemberSnapshot(member.chatId).also { lease ->
             assertTrue(cache.applyMemberSnapshot(lease, listOf(member.copy(user = revisionTwo))))
         }

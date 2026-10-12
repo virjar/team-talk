@@ -18,12 +18,12 @@ import androidx.compose.ui.unit.dp
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.model.UserRole
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
-import com.virjar.tk.protocol.model.roleValue
+import com.virjar.tk.protocol.model.GroupMemberRole
 
-/** 群成员角色：0=普通, 1=管理员, 2=群主。 */
+/** 群成员角色显示名；未知角色与普通成员不展示角标。 */
 internal fun Member.roleName(): String? = when (role) {
-    2 -> "群主"
-    1 -> "管理员"
+    GroupMemberRole.OWNER -> "群主"
+    GroupMemberRole.ADMIN -> "管理员"
     else -> null
 }
 
@@ -60,7 +60,7 @@ internal fun MemberRow(member: Member, modifier: Modifier = Modifier) {
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                if (member.user?.roleValue == UserRole.BOT) {
+                if (member.user?.role == UserRole.BOT) {
                     Spacer(Modifier.width(6.dp))
                     RoleChip("机器人")
                 }

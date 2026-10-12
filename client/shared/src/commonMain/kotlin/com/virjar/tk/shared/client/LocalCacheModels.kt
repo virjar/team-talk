@@ -11,6 +11,8 @@ import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.PacketBuffer
 import com.virjar.tk.protocol.ProtoCodec
+import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 
 /** 服务器派生本地投影的一个原子权威元组。 */
 data class ServerProjectionSyncState(
@@ -94,8 +96,8 @@ internal fun com.virjar.tk.shared.database.User.toLocalModel() = User(
     ),
     phone = phone,
     sex = sex?.toInt() ?: 0,
-    role = role?.toInt() ?: 0,
-    status = status?.toInt() ?: 1,
+    role = UserRole.fromCode(role?.toInt() ?: 0),
+    status = UserStatus.fromCode(status?.toInt() ?: 1),
     revision = revision,
 )
 
@@ -143,8 +145,8 @@ internal fun com.virjar.tk.shared.database.Organization_member.toLocalModel() = 
             ),
             phone = user_phone,
             sex = user_sex?.toInt() ?: 0,
-            role = user_role?.toInt() ?: 0,
-            status = user_status?.toInt() ?: 1,
+            role = UserRole.fromCode(user_role?.toInt() ?: 0),
+            status = UserStatus.fromCode(user_status?.toInt() ?: 1),
             revision = requireNotNull(user_revision) {
                 "Cached organization user $uid has no revision"
             },

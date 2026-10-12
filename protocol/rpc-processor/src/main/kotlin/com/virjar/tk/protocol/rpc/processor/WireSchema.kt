@@ -137,7 +137,7 @@ internal class WireSchemaGenerator(
             val name = declaration.qualifiedName?.asString() ?: return@forEach
             val fields = declaration.primaryConstructor?.parameters.orEmpty()
                 .filter { it.findAnnotation("com.virjar.tk.protocol.ProtocolLocal") == null }
-                .joinToString(",") { "${it.name?.asString()}:${typeName(it.type.resolve())}" }
+                .joinToString(",") { "${it.name?.asString()}:${wireTypeName(it.type.resolve())}" }
             entries += WireSchemaEntry("type", name, policy.availability(declaration, null, logger), "${declaration.classKind}($fields)")
         }
         classes.filter {
@@ -180,6 +180,22 @@ internal class WireSchemaGenerator(
         append(type.declaration.qualifiedName?.asString())
         if (type.arguments.isNotEmpty()) append(type.arguments.joinToString(",", "<", ">") { argument -> argument.type?.resolve()?.let(::typeName) ?: "*" })
         if (type.isMarkedNullable) append('?')
+    }
+
+    /**
+     * wire 契约签名按二进制语义比对：实现 [com.virjar.tk.protocol.WireCoded] 的类型
+     * 在 wire 上就是它的 Int code，字段声明在该类型与 kotlin.Int 之间切换不构成
+     * wire 变更。可空性不属于二进制语义（存在字节由手写 writeTo 决定），同样抹平。
+     * 集合泛型内的 WireCoded 目前没有 wire 场景，出现时再扩展。
+     */
+    private fun wireTypeName(type: KSType): String =
+        if (type.isWireCoded()) "kotlin.Int" else typeName(type)
+
+    private fun KSType.isWireCoded(): Boolean {
+        val classDeclaration = declaration as? KSClassDeclaration ?: return false
+        return classDeclaration.superTypes.any { supertype ->
+            supertype.resolve().declaration.qualifiedName?.asString() == "com.virjar.tk.protocol.WireCoded"
+        }
     }
 
     private fun generateRegistry(entries: List<WireSchemaEntry>) {

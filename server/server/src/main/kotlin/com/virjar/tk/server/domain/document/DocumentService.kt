@@ -30,8 +30,6 @@ import com.virjar.tk.protocol.model.isActiveHuman
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import kotlinx.coroutines.CancellationException
 import org.slf4j.LoggerFactory
-import com.virjar.tk.protocol.model.roleValue
-import com.virjar.tk.protocol.model.statusValue
 
 /**
  * 企业文档空间领域服务。
@@ -241,7 +239,7 @@ class DocumentService(
         ) { _ ->
             val steward = repository.findUser(transaction, validatedStewardUid)
                 ?: throw IllegalArgumentException("用户不存在")
-            DocumentCustodyTargetPolicy.requireActiveSteward(steward.roleValue, steward.statusValue)
+            DocumentCustodyTargetPolicy.requireActiveSteward(steward.role, steward.status)
             if (ownerPrincipalType == DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT) {
                 DocumentCustodyTargetPolicy.requireOwnerUnitActive(
                     repository.findActiveOrganizationUnitName(transaction, validatedOwnerPrincipalId) != null,

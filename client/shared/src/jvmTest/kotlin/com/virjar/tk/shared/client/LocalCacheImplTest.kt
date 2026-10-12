@@ -35,6 +35,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /**
  * LocalCacheImpl 内存治理与并发正确性（JVM 专属内存 SQLite 测试）。
@@ -1393,7 +1394,7 @@ class LocalCacheImplTest {
         cache.upsertUser(user(1))
         cache.upsertContact(Contact(uid = "me", friendUid = "u1"))
         cache.upsertChat(Chat(chatId = "c1", chatType = 1))
-        cache.upsertMember(Member(chatId = "c1", uid = "u1", role = 0))
+        cache.upsertMember(Member(chatId = "c1", uid = "u1", role = GroupMemberRole.MEMBER))
         cache.upsertConversation(conv("c1"))
         cache.setConversationDraft("c1", "pending")
         cache.insertMessage(message)
@@ -1441,7 +1442,7 @@ class LocalCacheImplTest {
         cache.upsertUser(User("stale-user", "stale", "Stale"))
         cache.upsertContact(Contact("current-user", "stale-user"))
         cache.upsertChat(Chat("stale-chat", 2, name = "Stale chat"))
-        cache.upsertMember(Member(uid = "stale-user", chatId = "stale-chat", role = 0))
+        cache.upsertMember(Member(uid = "stale-user", chatId = "stale-chat", role = GroupMemberRole.MEMBER))
         cache.upsertConversation(conv("checkpoint-chat", readSeq = 1L, draft = "stale remote"))
         val draftGeneration = cache.setConversationDraft("checkpoint-chat", "local draft")
         cache.insertMessage(Message("checkpoint-chat", "read-proof", 7L, "peer", 1, 1L))
@@ -1849,8 +1850,8 @@ class LocalCacheImplTest {
 
         cache.upsertChat(Chat(chatId = deletedChatId, chatType = 2, name = "deleted"))
         cache.upsertChat(Chat(chatId = retainedChatId, chatType = 2, name = "retained"))
-        cache.upsertMember(Member(chatId = deletedChatId, uid = "deleted-member", role = 0))
-        cache.upsertMember(Member(chatId = retainedChatId, uid = "retained-member", role = 0))
+        cache.upsertMember(Member(chatId = deletedChatId, uid = "deleted-member", role = GroupMemberRole.MEMBER))
+        cache.upsertMember(Member(chatId = retainedChatId, uid = "retained-member", role = GroupMemberRole.MEMBER))
         cache.upsertConversation(conv(deletedChatId))
         cache.upsertConversation(conv(retainedChatId))
         cache.setConversationDraft(deletedChatId, "deleted draft")

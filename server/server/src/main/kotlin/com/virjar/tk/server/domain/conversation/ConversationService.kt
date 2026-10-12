@@ -17,6 +17,7 @@ import com.virjar.tk.protocol.ReadSyncPayload
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Base64
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 class ConversationService(
     private val conversationRepo: ConversationRepository,
@@ -41,7 +42,7 @@ class ConversationService(
             val actor = members.first { it.uid == uid }
             val target = messages.getMessage(chatId, seq)
                 ?: throw IllegalArgumentException("目标消息不存在")
-            if (target.senderUid != uid && actor.role < 1) {
+            if (target.senderUid != uid && !actor.role.isAtLeast(GroupMemberRole.ADMIN)) {
                 throw com.virjar.tk.server.domain.chat.ChatAccessDeniedException(
                     "只有群主、管理员或消息发送者可以查看已读情况",
                 )

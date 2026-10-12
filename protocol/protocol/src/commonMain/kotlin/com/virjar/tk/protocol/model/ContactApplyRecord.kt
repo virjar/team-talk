@@ -4,32 +4,62 @@ import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.PacketBuffer
 import kotlinx.serialization.Serializable
+import com.virjar.tk.protocol.WireCoded
 
-/**
- * 好友申请方向；wire 存 Int code，逻辑代码经 [ContactApplyRecord.directionValue] 比较。
- */
-@com.virjar.tk.protocol.SinceProtocol(7)
-enum class ContactApplyDirection(val code: Int) {
-    INCOMING(1),
-    OUTGOING(2);
+/** 好友申请方向；未知取值承载为 [ContactApplyDirection.Unknown]。 */
+@Serializable(with = ContactApplyDirection.CodeSerializer::class)
+sealed interface ContactApplyDirection : WireCoded {
+    data object INCOMING : ContactApplyDirection {
+        override val code = 1
+    }
+    data object OUTGOING : ContactApplyDirection {
+        override val code = 2
+    }
+
+    data class Unknown(override val code: Int) : ContactApplyDirection
+
+    object CodeSerializer : com.virjar.tk.protocol.WireCodedSerializer<ContactApplyDirection>("ContactApplyDirection") {
+        override fun fromCode(code: Int) = ContactApplyDirection.fromCode(code)
+    }
 
     companion object {
-        fun fromCode(code: Int): ContactApplyDirection? = entries.find { it.code == code }
+        fun fromCode(code: Int): ContactApplyDirection = when (code) {
+            INCOMING.code -> INCOMING
+            OUTGOING.code -> OUTGOING
+            else -> Unknown(code)
+        }
     }
 }
 
 /**
  * 好友申请处理状态；与 friend_applies 表 status 列共用值空间。
- * 未知 code（未来版本）经 [ContactApplyRecord.statusValue] 映射为 null，按已终结处理。
+ * 未知取值承载为 [ContactApplyStatus.Unknown]，按已终结处理。
  */
-@com.virjar.tk.protocol.SinceProtocol(7)
-enum class ContactApplyStatus(val code: Int) {
-    PENDING(0),
-    ACCEPTED(1),
-    REJECTED(2);
+@Serializable(with = ContactApplyStatus.CodeSerializer::class)
+sealed interface ContactApplyStatus : WireCoded {
+    data object PENDING : ContactApplyStatus {
+        override val code = 0
+    }
+    data object ACCEPTED : ContactApplyStatus {
+        override val code = 1
+    }
+    data object REJECTED : ContactApplyStatus {
+        override val code = 2
+    }
+
+    data class Unknown(override val code: Int) : ContactApplyStatus
+
+    object CodeSerializer : com.virjar.tk.protocol.WireCodedSerializer<ContactApplyStatus>("ContactApplyStatus") {
+        override fun fromCode(code: Int) = ContactApplyStatus.fromCode(code)
+    }
 
     companion object {
-        fun fromCode(code: Int): ContactApplyStatus? = entries.find { it.code == code }
+        fun fromCode(code: Int): ContactApplyStatus = when (code) {
+            PENDING.code -> PENDING
+            ACCEPTED.code -> ACCEPTED
+            REJECTED.code -> REJECTED
+            else -> Unknown(code)
+        }
     }
 }
 
@@ -44,12 +74,10 @@ data class ContactApplyRecord(
     val id: Long,
     val fromUid: String,
     val toUid: String,
-    /** wire 仍为 Int code；逻辑代码使用 [directionValue] 枚举视图比较。 */
-    val direction: Int,
+    val direction: ContactApplyDirection,
     val token: String? = null,
     val remark: String? = null,
-    /** wire 仍为 Int code；逻辑代码使用 [statusValue] 枚举视图比较。 */
-    val status: Int,
+    val status: ContactApplyStatus,
     val createdAt: Long,
     val updatedAt: Long,
     val peerUser: User? = null,
@@ -58,10 +86,10 @@ data class ContactApplyRecord(
         buf.writeVarLong(id)
         buf.writeString(fromUid)
         buf.writeString(toUid)
-        buf.writeVarInt(direction)
+        buf.writeVarInt(direction.code)
         buf.writeString(token)
         buf.writeString(remark)
-        buf.writeVarInt(status)
+        buf.writeVarInt(status.code)
         buf.writeVarLong(createdAt)
         buf.writeVarLong(updatedAt)
         buf.writeBoolean(peerUser != null)
@@ -73,10 +101,10 @@ data class ContactApplyRecord(
             id = buf.readVarLong(),
             fromUid = buf.readRequiredString(),
             toUid = buf.readRequiredString(),
-            direction = buf.readVarInt(),
+            direction = ContactApplyDirection.fromCode(buf.readVarInt()),
             token = buf.readString(),
             remark = buf.readString(),
-            status = buf.readVarInt(),
+            status = ContactApplyStatus.fromCode(buf.readVarInt()),
             createdAt = buf.readVarLong(),
             updatedAt = buf.readVarLong(),
             peerUser = if (buf.readBoolean("contact apply peer user presence")) User.readFrom(buf) else null,
@@ -84,13 +112,6 @@ data class ContactApplyRecord(
     }
 }
 
-/** 申请方向的类型化视图；null = 未知取值（未来版本）。 */
-val ContactApplyRecord.directionValue: ContactApplyDirection?
-    get() = ContactApplyDirection.fromCode(direction)
-
-/** 申请状态的类型化视图；null = 未知取值，按已终结处理。 */
-val ContactApplyRecord.statusValue: ContactApplyStatus?
-    get() = ContactApplyStatus.fromCode(status)
 
 /** 可选结果包装器，因为 RPC payload 要求 IProto 有显式的存在字节。 */
 @Serializable

@@ -11,6 +11,7 @@ import kotlin.test.Test as KTest
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.ScheduledMessageStatus
 
 /** 定时发送（MSG-01/F3）：调度幂等、到点投递走完整发送管道、取消与失败结算、崩溃恢复幂等。 */
 class ScheduledMessageIntegrationTest {
@@ -40,7 +41,7 @@ class ScheduledMessageIntegrationTest {
                 body = buildRichTextBody("定时到达的消息"),
             ),
         )
-        assertEquals(0, scheduled.status)
+        assertEquals(ScheduledMessageStatus.WAITING, scheduled.status)
         assertEquals(1, service.listWaiting(sender, chat.chatId).size)
 
         assertEquals(0, service.deliverDue(System.currentTimeMillis()))
@@ -125,7 +126,7 @@ class ScheduledMessageIntegrationTest {
         service.deliverDue(System.currentTimeMillis())
         val waiting = service.listWaiting(owner, chat.chatId)
         assertEquals(1, waiting.size)
-        assertEquals(3, waiting.single().status)
+        assertEquals(ScheduledMessageStatus.FAILED, waiting.single().status)
     }
 
     @Test

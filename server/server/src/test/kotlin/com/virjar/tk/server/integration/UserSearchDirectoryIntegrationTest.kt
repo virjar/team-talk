@@ -47,7 +47,7 @@ class UserSearchDirectoryIntegrationTest {
 
         assertEquals(listOf(alpha, bravo), first.map { it.uid })
         assertEquals(first, repeated)
-        assertTrue(first.all { it.role == UserRole.HUMAN.code && it.status == STATUS_ACTIVE })
+        assertTrue(first.all { it.role == UserRole.HUMAN && it.status.code == STATUS_ACTIVE })
         assertTrue(charlie !in first.map { it.uid })
     }
 

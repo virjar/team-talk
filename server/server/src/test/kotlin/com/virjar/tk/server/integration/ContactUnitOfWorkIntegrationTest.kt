@@ -73,7 +73,7 @@ class ContactUnitOfWorkIntegrationTest {
         }.exceptionOrNull())
         assertFalse(ctx.contactRepo.isFriend(sender, recipient))
         assertFalse(ctx.contactRepo.isFriend(recipient, sender))
-        assertEquals(ContactApplyStatus.PENDING.code, ctx.contactRepo.getPendingApply(sender, recipient)?.status)
+        assertEquals(ContactApplyStatus.PENDING, ctx.contactRepo.getPendingApply(sender, recipient)?.status)
         assertEquals(
             acceptedEventsBefore,
             eventCount(sender, NotifyType.CONTACT_ACCEPTED) +
@@ -233,7 +233,7 @@ class ContactUnitOfWorkIntegrationTest {
 
         assertFalse(ctx.contactRepo.isBlocked(recipient, sender))
         assertEquals(
-            ContactApplyStatus.PENDING.code,
+            ContactApplyStatus.PENDING,
             ctx.contactRepo.getPendingApply(sender, recipient)?.status,
         )
         assertEquals(senderBefore, streamPosition(sender))
@@ -311,7 +311,7 @@ class ContactUnitOfWorkIntegrationTest {
             )
         }.exceptionOrNull())
         assertEquals(
-            ContactApplyStatus.PENDING.code,
+            ContactApplyStatus.PENDING,
             ctx.contactRepo.getPendingApply(rejectSender, rejectRecipient)?.status,
         )
         assertTrue(transaction(ctx.database) {
@@ -459,7 +459,7 @@ class ContactUnitOfWorkIntegrationTest {
 
         val retained = repository.listApplyRecords(sender, beforeId = 0, limit = 100)
         assertEquals(requestIds.takeLast(2).reversed(), retained.map { it.id })
-        assertTrue(retained.all { it.status == ContactApplyStatus.REJECTED.code && it.token == null })
+        assertTrue(retained.all { it.status == ContactApplyStatus.REJECTED && it.token == null })
         transaction(ctx.database) {
             val rows = FriendApplies.selectAll().where {
                 (FriendApplies.fromUid eq sender) or (FriendApplies.toUid eq sender)

@@ -48,7 +48,7 @@ class ExposedScheduledMessageRepository(
             it[messageType] = row.messageType
             it[bodyBytes] = row.body?.let { body -> ExposedBlob(encodeBody(body)) }
             it[deliverAt] = row.deliverAt
-            it[status] = row.status
+            it[status] = row.status.code
             it[operationId] = row.operationId
             it[createdAt] = row.createdAt
         }
@@ -114,7 +114,7 @@ class ExposedScheduledMessageRepository(
             messageType = type,
             body = this[ScheduledMessages.bodyBytes]?.bytes?.let { bytes -> decodeBody(type, bytes) },
             deliverAt = this[ScheduledMessages.deliverAt],
-            status = this[ScheduledMessages.status],
+            status = ScheduledMessageStatus.fromCode(this[ScheduledMessages.status]),
             operationId = this[ScheduledMessages.operationId],
             createdAt = this[ScheduledMessages.createdAt],
             settledAt = this[ScheduledMessages.settledAt],

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /** 使用隔离数据库，因为组织聚合有意只允许一个根节点。 */
 class OrganizationManagedChatEventIntegrationTest {
@@ -73,7 +74,7 @@ class OrganizationManagedChatEventIntegrationTest {
             )
         }
         assertEquals(
-            mapOf(leaderA to 0, leaderB to 2, observer to 0),
+            mapOf(leaderA to GroupMemberRole.MEMBER, leaderB to GroupMemberRole.OWNER, observer to GroupMemberRole.MEMBER),
             ctx.chatService.getMembers(unitId).associate { it.uid to it.role },
         )
 

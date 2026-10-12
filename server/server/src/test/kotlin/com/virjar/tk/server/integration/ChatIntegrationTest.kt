@@ -8,6 +8,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 class ChatIntegrationTest {
 
@@ -117,14 +118,14 @@ class ChatIntegrationTest {
         val owner = ctx.registerUser()
         val member = ctx.registerUser()
         val group = ctx.chatService.createGroup("RoleResetAdd", null, owner, listOf(member))
-        ctx.chatService.setRole(owner, group.chatId, member, 1)
+        ctx.chatService.setRole(owner, group.chatId, member, GroupMemberRole.ADMIN.code)
         ctx.chatService.addMembers(owner, group.chatId, listOf(member))
-        assertEquals(1, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
+        assertEquals(GroupMemberRole.ADMIN, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
         ctx.chatService.removeMember(owner, group.chatId, member)
 
         ctx.chatService.addMembers(owner, group.chatId, listOf(member))
 
-        assertEquals(0, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
+        assertEquals(GroupMemberRole.MEMBER, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
     }
 
     @Test
@@ -133,12 +134,12 @@ class ChatIntegrationTest {
         val member = ctx.registerUser()
         val group = ctx.chatService.createGroup("RoleResetInvite", null, owner, listOf(member))
         val token = ctx.chatService.createInviteLink(owner, group.chatId, "rejoin", 0, 0)
-        ctx.chatService.setRole(owner, group.chatId, member, 1)
+        ctx.chatService.setRole(owner, group.chatId, member, GroupMemberRole.ADMIN.code)
         ctx.chatService.removeMember(owner, group.chatId, member)
 
         ctx.chatService.joinByInvite(member, token)
 
-        assertEquals(0, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
+        assertEquals(GroupMemberRole.MEMBER, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
     }
 
     @Test
@@ -149,7 +150,7 @@ class ChatIntegrationTest {
         ctx.chatService.setRole(creator, group.chatId, member1, 1)
         val members = ctx.chatService.getMembers(group.chatId)
         val updatedMember = members.first { it.uid == member1 }
-        assertEquals(1, updatedMember.role)
+        assertEquals(GroupMemberRole.ADMIN, updatedMember.role)
     }
 
     @Test
@@ -174,8 +175,8 @@ class ChatIntegrationTest {
         val group = ctx.chatService.createGroup("Group", null, creator, listOf(member1))
         ctx.chatService.transferOwner(creator, group.chatId, member1)
         val members = ctx.chatService.getMembers(group.chatId)
-        assertEquals(2, members.first { it.uid == member1 }.role)
-        assertTrue(members.first { it.uid == creator }.role < 2)
+        assertEquals(GroupMemberRole.OWNER, members.first { it.uid == member1 }.role)
+        assertTrue(members.first { it.uid == creator }.role != GroupMemberRole.OWNER)
     }
 
     @Test

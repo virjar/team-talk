@@ -21,6 +21,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 class LocalEntityProjectionResidencyTest {
     @Test
@@ -31,7 +32,7 @@ class LocalEntityProjectionResidencyTest {
                 val user = user("u1", "Persisted User")
                 first.upsertContact(Contact(uid = "me", friendUid = user.uid, user = user))
                 first.upsertChat(chat("g1", "Persisted Group"))
-                first.upsertMember(Member(uid = user.uid, chatId = "g1", role = 0, user = user))
+                first.upsertMember(Member(uid = user.uid, chatId = "g1", role = GroupMemberRole.MEMBER, user = user))
                 first.close()
             }
 
@@ -107,7 +108,7 @@ class LocalEntityProjectionResidencyTest {
             cache.upsertUser(user("background-$index", "Background $index"))
             cache.upsertChat(chat("background-$index", "Background $index"))
             cache.upsertMember(
-                Member(uid = "background-$index", chatId = "background-chat-$index", role = 0),
+                Member(uid = "background-$index", chatId = "background-chat-$index", role = GroupMemberRole.MEMBER),
             )
         }
 
@@ -124,7 +125,7 @@ class LocalEntityProjectionResidencyTest {
         val cache = newCache()
         cache.upsertUser(user("u1", "User One"))
         cache.upsertChat(chat("g1", "Group One"))
-        cache.upsertMember(Member(uid = "u1", chatId = "g1", role = 0))
+        cache.upsertMember(Member(uid = "u1", chatId = "g1", role = GroupMemberRole.MEMBER))
 
         val firstUser = launch(start = CoroutineStart.UNDISPATCHED) { cache.observeUser("u1").collect { } }
         val secondUser = launch(start = CoroutineStart.UNDISPATCHED) { cache.observeUser("u1").collect { } }
@@ -159,7 +160,7 @@ class LocalEntityProjectionResidencyTest {
         val updated = original.copy(name = "Updated Name", revision = original.revision + 1L)
         cache.upsertContact(Contact(uid = "me", friendUid = original.uid, user = original))
         listOf("g1", "g2", "unobserved").forEach { chatId ->
-            cache.upsertMember(Member(uid = original.uid, chatId = chatId, role = 0, user = original))
+            cache.upsertMember(Member(uid = original.uid, chatId = chatId, role = GroupMemberRole.MEMBER, user = original))
         }
 
         val contactStates = mutableListOf<List<Contact>>()
@@ -225,7 +226,7 @@ class LocalEntityProjectionResidencyTest {
         val member = Member(
             uid = "u1",
             chatId = chat.chatId,
-            role = 0,
+            role = GroupMemberRole.MEMBER,
             user = user("u1", "Member"),
         )
         cache.upsertChat(chat)
@@ -271,7 +272,7 @@ class LocalEntityProjectionResidencyTest {
         cache.upsertUser(originalUser)
         cache.upsertContact(Contact(uid = "me", friendUid = originalUser.uid, user = originalUser))
         cache.upsertChat(originalChat)
-        cache.upsertMember(Member(uid = originalUser.uid, chatId = originalChat.chatId, role = 0))
+        cache.upsertMember(Member(uid = originalUser.uid, chatId = originalChat.chatId, role = GroupMemberRole.MEMBER))
 
         val users = mutableListOf<User?>()
         val contacts = mutableListOf<List<Contact>>()
@@ -301,7 +302,7 @@ class LocalEntityProjectionResidencyTest {
         cache.upsertUser(replayedUser)
         cache.upsertContact(Contact(uid = "me", friendUid = replayedUser.uid, user = replayedUser))
         cache.upsertChat(replayedChat)
-        cache.upsertMember(Member(uid = replayedUser.uid, chatId = replayedChat.chatId, role = 0))
+        cache.upsertMember(Member(uid = replayedUser.uid, chatId = replayedChat.chatId, role = GroupMemberRole.MEMBER))
         awaitSize(users, 3)
         awaitSize(contacts, 3)
         awaitSize(chats, 3)
@@ -324,7 +325,7 @@ class LocalEntityProjectionResidencyTest {
         val cachedUser = user("u1", "User")
         cache.upsertUser(cachedUser)
         cache.upsertChat(chat("g1", "Group"))
-        cache.upsertMember(Member(uid = cachedUser.uid, chatId = "g1", role = 0))
+        cache.upsertMember(Member(uid = cachedUser.uid, chatId = "g1", role = GroupMemberRole.MEMBER))
         val observers = listOf(
             launch(start = CoroutineStart.UNDISPATCHED) { cache.observeUser("u1").collect { } },
             // 这些已经是 null/empty 的状态证明 close 是一个独特的终局信号，

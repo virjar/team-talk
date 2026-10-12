@@ -17,6 +17,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.UserStatus
 
 class UserServiceAuthenticationPolicyTest {
     @Test
@@ -100,7 +101,7 @@ class UserServiceAuthenticationPolicyTest {
 
         val created = service.createServiceAccount(TestTransaction, "Notification Bot")
 
-        assertEquals(UserRole.BOT.code, created.role)
+        assertEquals(UserRole.BOT, created.role)
         assertTrue(created.username.startsWith("bot-"))
         assertEquals(0, hasher.hashInputs.size)
         assertEquals(0, hasher.verificationTargets.size)
@@ -127,8 +128,8 @@ class UserServiceAuthenticationPolicyTest {
         val repository = FakeUserRepository()
         val service = service(repository, RecordingPasswordHasher())
         listOf(
-            User(uid = "bot", username = "search-bot", name = "Search Bot", role = UserRole.BOT.code),
-            User(uid = "disabled", username = "search-disabled", name = "Disabled", status = 2),
+            User(uid = "bot", username = "search-bot", name = "Search Bot", role = UserRole.BOT),
+            User(uid = "disabled", username = "search-disabled", name = "Disabled", status = UserStatus.BANNED),
         ).forEach { hiddenIdentity ->
             repository.publicDirectoryResults = listOf(hiddenIdentity)
 
@@ -214,7 +215,7 @@ class UserServiceAuthenticationPolicyTest {
         ): User {
             assertSame(TestTransaction, transaction)
             serviceAccountCreates++
-            return User(uid = uid, username = username, name = name, role = role.code)
+            return User(uid = uid, username = username, name = name, role = role)
         }
 
         override fun updateProfile(
@@ -246,8 +247,8 @@ class UserServiceAuthenticationPolicyTest {
                 uid = "uid-$role-$status",
                 username = "user-$role-$status",
                 name = "User",
-                role = role,
-                status = status,
+                role = UserRole.fromCode(role),
+                status = UserStatus.fromCode(status),
             ),
             passwordHash = passwordHash,
             credentialEpoch = 1L,

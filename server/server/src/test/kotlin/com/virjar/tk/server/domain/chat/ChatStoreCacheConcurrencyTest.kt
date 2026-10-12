@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 class ChatStoreCacheConcurrencyTest {
     @Test
@@ -364,7 +365,7 @@ private class BlockingMemberRepository : PassiveMemberRepository() {
     private var active = true
 
     override fun getMembers(chatId: String): List<Member> {
-        val snapshot = if (active) listOf(Member("member", chatId, role = 1)) else emptyList()
+        val snapshot = if (active) listOf(Member("member", chatId, role = GroupMemberRole.ADMIN)) else emptyList()
         if (blockFirstLoad.compareAndSet(true, false)) {
             loadStarted.countDown()
             releaseLoad.await()
@@ -385,7 +386,7 @@ private class CountingLargeMemberRepository(
 
     override fun getMembers(chatId: String): List<Member> {
         memberListLoads += 1
-        return List(memberCount) { index -> Member("member-$index", chatId, role = 0) }
+        return List(memberCount) { index -> Member("member-$index", chatId, role = GroupMemberRole.MEMBER) }
     }
 
 

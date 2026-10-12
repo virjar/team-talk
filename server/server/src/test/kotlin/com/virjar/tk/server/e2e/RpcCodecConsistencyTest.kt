@@ -27,6 +27,7 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /**
  * 针对已部署服务器的跨端 RPC 契约测试。
@@ -63,13 +64,13 @@ class RpcCodecConsistencyTest {
         assertEquals(user2.uid, application.toUid)
         assertNull(application.token, "sender must not receive the contact-processing token")
         val incoming = user2Contacts.listPendingApplies()
-            .single { it.fromUid == user1.uid && it.status == ContactApplyStatus.PENDING.code }
+            .single { it.fromUid == user1.uid && it.status == ContactApplyStatus.PENDING }
         val accepted = user2Contacts.accept(
             UUID.randomUUID().toString(),
             System.currentTimeMillis(),
             requireNotNull(incoming.token),
         )
-        assertEquals(ContactApplyStatus.ACCEPTED.code, accepted.status)
+        assertEquals(ContactApplyStatus.ACCEPTED, accepted.status)
 
         val chat = ChatRpcProxy(user1.rpc).createPersonal(user2.uid)
         chatId = chat.chatId
@@ -128,7 +129,7 @@ class RpcCodecConsistencyTest {
             assertNull(application.token)
 
             val incoming = rpc.listPendingApplies().single { it.fromUid == applicant.uid }
-            assertEquals(ContactApplyStatus.PENDING.code, incoming.status)
+            assertEquals(ContactApplyStatus.PENDING, incoming.status)
             assertNotNull(incoming.token)
 
             val lookup = rpc.getPendingApply(applicant.uid).record
@@ -137,7 +138,7 @@ class RpcCodecConsistencyTest {
             assertEquals(ContactApplyDirection.INCOMING.code, lookup?.direction)
 
             val records = rpc.listApplyRecords(beforeId = 0, limit = 20)
-            assertTrue(records.any { it.id == incoming.id && it.status == ContactApplyStatus.PENDING.code })
+            assertTrue(records.any { it.id == incoming.id && it.status == ContactApplyStatus.PENDING })
 
             rpc.blacklist(blocked.uid)
             assertTrue(rpc.listBlacklist().any { it.friendUid == blocked.uid })
@@ -164,7 +165,7 @@ class RpcCodecConsistencyTest {
 
             rpc.addMembers(group.chatId, listOf(member.uid))
             val addedMembers = rpc.getMembers(group.chatId)
-            assertTrue(addedMembers.any { it.uid == user1.uid && it.role == 2 })
+            assertTrue(addedMembers.any { it.uid == user1.uid && it.role == GroupMemberRole.OWNER })
             assertTrue(addedMembers.any { it.uid == member.uid })
 
             rpc.removeMembers(group.chatId, member.uid)

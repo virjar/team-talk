@@ -9,6 +9,9 @@ import com.virjar.tk.protocol.model.Contact
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.model.OrganizationMember
 import com.virjar.tk.protocol.model.User
+import com.virjar.tk.protocol.model.GroupMemberRole
+import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 
 internal data class UserProjectionMerge(
     val canonical: User,
@@ -65,8 +68,8 @@ internal class LocalEntityProjectionDao(
             avatar?.size,
             user.phone,
             user.sex.toLong(),
-            user.role.toLong(),
-            user.status.toLong(),
+            user.role.code.toLong(),
+            user.status.code.toLong(),
             user.revision,
         )
     }
@@ -100,7 +103,7 @@ internal class LocalEntityProjectionDao(
         queries.upsertMember(
             member.chatId,
             member.uid,
-            member.role.toLong(),
+            member.role.code.toLong(),
             member.nickname,
             member.joinedAt,
         )
@@ -194,7 +197,7 @@ internal class LocalEntityProjectionDao(
     ) = Member(
         chatId = chatId,
         uid = uid,
-        role = role?.toInt() ?: 0,
+        role = GroupMemberRole.fromCode(role?.toInt() ?: 0),
         nickname = nickname,
         joinedAt = joinedAt ?: 0L,
         user = joinedUser(
@@ -241,8 +244,8 @@ internal class LocalEntityProjectionDao(
             ),
             phone = phone,
             sex = sex?.toInt() ?: 0,
-            role = role?.toInt() ?: 0,
-            status = status?.toInt() ?: 1,
+            role = UserRole.fromCode(role?.toInt() ?: 0),
+            status = UserStatus.fromCode(status?.toInt() ?: 1),
             revision = requireNotNull(revision) { "Cached user $uid has no revision" },
         )
     }

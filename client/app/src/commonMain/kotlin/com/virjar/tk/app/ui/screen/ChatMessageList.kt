@@ -43,7 +43,6 @@ import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.MessageReactionGroup
 import com.virjar.tk.app.ui.platform.rememberClipboardTextWriter
 import com.virjar.tk.protocol.model.GroupMemberRole
-import com.virjar.tk.protocol.model.isAtLeast
 import com.virjar.tk.app.ui.platform.localUiDateTime
 import com.virjar.tk.app.ui.theme.Tk
 import kotlinx.datetime.atTime
@@ -498,7 +497,7 @@ private fun messageMenuItems(
             modifier = Modifier.testTag("chat.multiselect.entry"),
         )
     }
-    if (onShowReadStates != null && msg.serverSeq > 0L && (isMe || myRole.isAtLeast(GroupMemberRole.ADMIN))) {
+    if (onShowReadStates != null && msg.serverSeq > 0L && (isMe || myRole?.isAtLeast(GroupMemberRole.ADMIN) == true)) {
         DropdownMenuItem(
             text = { Text("已读情况") },
             onClick = {

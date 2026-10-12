@@ -10,7 +10,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import com.virjar.tk.protocol.model.GroupMemberRole
-import com.virjar.tk.protocol.model.roleValue
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.shared.repository.ResolvedContentSearchHit
 import com.virjar.tk.app.viewmodel.ChatHistoryCategory
@@ -294,7 +293,7 @@ internal fun SubScreenContent(
             var avatarEditBusy by remember { mutableStateOf(false) }
             val avatarEditScope = rememberCoroutineScope()
             val currentUserCanManageGroup = detailMembers.any {
-                it.uid == data.userSession.uid && it.role >= 1
+                it.uid == data.userSession.uid && it.role.isAtLeast(GroupMemberRole.ADMIN)
             }
             val onEditGroupAvatar: (() -> Unit)? = if (!currentUserCanManageGroup) null else {
                 {
@@ -332,7 +331,7 @@ internal fun SubScreenContent(
             GroupDetailScreen(
                 chat = detailChat,
                 members = detailMembers,
-                isOwner = detailMembers.any { it.uid == data.userSession.uid && it.roleValue == GroupMemberRole.OWNER },
+                isOwner = detailMembers.any { it.uid == data.userSession.uid && it.role == GroupMemberRole.OWNER },
                 groupAvatar = detailChat?.chatId?.let { chatId -> groupAvatars[chatId] },
                 onEditGroupAvatar = onEditGroupAvatar,
                 myUid = data.userSession.uid,

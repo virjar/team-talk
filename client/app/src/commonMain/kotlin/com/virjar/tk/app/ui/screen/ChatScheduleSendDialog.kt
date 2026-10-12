@@ -45,7 +45,6 @@ import kotlinx.datetime.atTime
 import kotlinx.datetime.toInstant
 import kotlin.time.Duration.Companion.hours
 import com.virjar.tk.protocol.model.ScheduledMessageStatus
-import com.virjar.tk.protocol.model.statusValue
 
 /**
  * 定时发送对话框（MSG-01/F3）：同屏承载既有待发列表（可取消）与新建表单。
@@ -168,7 +167,7 @@ internal fun ChatScheduleSendDialog(
                     Text("已定时（${pending.size}）", style = MaterialTheme.typography.titleSmall)
                     LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp)) {
                         items(pending, key = { it.scheduledId }) { item ->
-                            val statusLabel = if (item.statusValue == ScheduledMessageStatus.FAILED) " · 投递失败" else ""
+                            val statusLabel = if (item.status == ScheduledMessageStatus.FAILED) " · 投递失败" else ""
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = Tk.spacing.xs),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -177,7 +176,7 @@ internal fun ChatScheduleSendDialog(
                                     Text(
                                         formatChatTime(item.deliverAt) + statusLabel,
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = if (item.statusValue == ScheduledMessageStatus.FAILED) MaterialTheme.colorScheme.error else Tk.colors.secondaryText,
+                                        color = if (item.status == ScheduledMessageStatus.FAILED) MaterialTheme.colorScheme.error else Tk.colors.secondaryText,
                                     )
                                     Text(
                                         item.body?.let { body ->
@@ -189,7 +188,7 @@ internal fun ChatScheduleSendDialog(
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
-                                if (item.statusValue == ScheduledMessageStatus.WAITING) {
+                                if (item.status == ScheduledMessageStatus.WAITING) {
                                     TextButton(
                                         onClick = {
                                             scope.launch {

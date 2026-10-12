@@ -36,6 +36,7 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
 import com.virjar.tk.protocol.model.ChatType
 import com.virjar.tk.protocol.model.Contact
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 enum class ChatRepositoryStage {
     BEFORE_CHAT_LOCK,
@@ -761,7 +762,7 @@ class ExposedChatRepository(
 private fun ResultRow.toMemberSnapshot() = Member(
     uid = this[GroupMembers.uid],
     chatId = this[GroupMembers.chatId],
-    role = this[GroupMembers.role],
+    role = GroupMemberRole.fromCode(this[GroupMembers.role]),
     nickname = this[GroupMembers.nickname],
     joinedAt = this[GroupMembers.joinedAt],
 )

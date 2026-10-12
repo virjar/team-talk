@@ -42,7 +42,6 @@ import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.GroupMemberRole
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.model.UserRole
-import com.virjar.tk.protocol.model.roleValue
 import com.virjar.tk.app.ui.theme.Tk
 
 /** 群主可管理非群主；管理员只能管理普通成员；普通成员（及未知角色）永远不能因目标角色而获得权限。 */
@@ -90,7 +89,7 @@ fun GroupDetailScreen(
     var showNoticeEdit by remember(chat?.chatId) { mutableStateOf(false) }
     var noticeText by remember(chat?.chatId, chat?.notice) { mutableStateOf(chat?.notice ?: "") }
     val listState = key(chat?.chatId) { rememberLazyListState() }
-    val myRole = members.firstOrNull { it.uid == myUid }?.roleValue
+    val myRole = members.firstOrNull { it.uid == myUid }?.role
     // isOwner 来自平台路由；成员快照也必须确认同一登录者身份，缺任一项时 fail-safe。
     val currentUserIsOwner = isOwner && myRole == GroupMemberRole.OWNER
     val currentUserCanManage = myRole == GroupMemberRole.ADMIN || currentUserIsOwner
@@ -182,9 +181,9 @@ fun GroupDetailScreen(
                 itemsIndexed(members, key = { _, member -> "member.${member.uid}" }, contentType = { _, _ -> "member" }) { index, member ->
                     val canManage = canManageGroupMember(
                         actorRole = myRole,
-                        targetRole = member.roleValue,
+                        targetRole = member.role,
                         isSelf = member.uid == myUid,
-                        targetUserRole = member.user?.roleValue ?: UserRole.SYSTEM,
+                        targetUserRole = member.user?.role ?: UserRole.SYSTEM,
                     )
                     var showMenu by remember { mutableStateOf(false) }
                     // 成员逐项惰性布局，首尾圆角把整份名单连成同一张卡片。
@@ -206,12 +205,12 @@ fun GroupDetailScreen(
                             MemberContextMenu(
                                 expanded = showMenu,
                                 onDismiss = { showMenu = false },
-                                isAdmin = member.roleValue == GroupMemberRole.ADMIN,
+                                isAdmin = member.role == GroupMemberRole.ADMIN,
                                 onViewProfile = { showMenu = false; onMemberClick(member.uid) },
-                                onSetAdmin = if (currentUserIsOwner && member.roleValue == GroupMemberRole.MEMBER) {
+                                onSetAdmin = if (currentUserIsOwner && member.role == GroupMemberRole.MEMBER) {
                                     ({ showMenu = false; onSetAdmin?.invoke(member.uid) })
                                 } else null,
-                                onRemoveAdmin = if (currentUserIsOwner && member.roleValue == GroupMemberRole.ADMIN) {
+                                onRemoveAdmin = if (currentUserIsOwner && member.role == GroupMemberRole.ADMIN) {
                                     ({ showMenu = false; onRemoveAdmin?.invoke(member.uid) })
                                 } else null,
                                 onMute = { showMenu = false; onMuteMember?.invoke(member.uid) },
@@ -356,7 +355,7 @@ private fun NoticeSection(notice: String?, canEdit: Boolean, onClick: () -> Unit
 @Composable
 private fun OwnerSection(members: List<Member>) {
     // 创建者不会随群主转让改变；当前群主与成员徽标、管理权限共用成员角色快照。
-    val owner = members.firstOrNull { it.roleValue == GroupMemberRole.OWNER } ?: return
+    val owner = members.firstOrNull { it.role == GroupMemberRole.OWNER } ?: return
     Row(
         modifier = Modifier.fillMaxWidth().padding(Tk.spacing.md).testTag("group.detail.owner"),
         verticalAlignment = Alignment.CenterVertically,

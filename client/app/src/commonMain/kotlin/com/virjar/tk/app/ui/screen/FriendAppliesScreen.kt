@@ -14,14 +14,12 @@ import com.virjar.tk.app.ui.component.ScreenHeader
 import kotlinx.coroutines.launch
 import com.virjar.tk.protocol.model.ContactApplyStatus
 import com.virjar.tk.protocol.model.ContactApplyDirection
-import com.virjar.tk.protocol.model.statusValue
-import com.virjar.tk.protocol.model.directionValue
 
 internal fun friendApplyPeerUid(record: ContactApplyRecord): String =
-    if (record.directionValue == ContactApplyDirection.INCOMING) record.fromUid else record.toUid
+    if (record.direction == ContactApplyDirection.INCOMING) record.fromUid else record.toUid
 
-internal fun friendApplyStatusText(record: ContactApplyRecord): String = when (record.statusValue) {
-    ContactApplyStatus.PENDING -> if (record.directionValue == ContactApplyDirection.OUTGOING) {
+internal fun friendApplyStatusText(record: ContactApplyRecord): String = when (record.status) {
+    ContactApplyStatus.PENDING -> if (record.direction == ContactApplyDirection.OUTGOING) {
         "等待验证"
     } else {
         "待处理"
@@ -32,19 +30,19 @@ internal fun friendApplyStatusText(record: ContactApplyRecord): String = when (r
 }
 
 internal fun friendApplyDescription(record: ContactApplyRecord): String {
-    val directionText = if (record.directionValue == ContactApplyDirection.INCOMING) "收到的申请" else "发出的申请"
-    val statusText = when (record.statusValue) {
-        ContactApplyStatus.PENDING -> if (record.directionValue == ContactApplyDirection.OUTGOING) {
+    val directionText = if (record.direction == ContactApplyDirection.INCOMING) "收到的申请" else "发出的申请"
+    val statusText = when (record.status) {
+        ContactApplyStatus.PENDING -> if (record.direction == ContactApplyDirection.OUTGOING) {
             "等待对方验证"
         } else {
             "等待你处理"
         }
-        ContactApplyStatus.ACCEPTED -> if (record.directionValue == ContactApplyDirection.OUTGOING) {
+        ContactApplyStatus.ACCEPTED -> if (record.direction == ContactApplyDirection.OUTGOING) {
             "对方已接受"
         } else {
             "你已接受"
         }
-        ContactApplyStatus.REJECTED -> if (record.directionValue == ContactApplyDirection.OUTGOING) {
+        ContactApplyStatus.REJECTED -> if (record.direction == ContactApplyDirection.OUTGOING) {
             "对方已拒绝"
         } else {
             "你已拒绝"
@@ -55,8 +53,8 @@ internal fun friendApplyDescription(record: ContactApplyRecord): String {
 }
 
 internal fun canProcessFriendApply(record: ContactApplyRecord): Boolean =
-    record.directionValue == ContactApplyDirection.INCOMING &&
-        record.statusValue == ContactApplyStatus.PENDING &&
+    record.direction == ContactApplyDirection.INCOMING &&
+        record.status == ContactApplyStatus.PENDING &&
         !record.token.isNullOrBlank()
 
 @Composable

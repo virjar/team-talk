@@ -23,13 +23,13 @@ import com.virjar.tk.protocol.model.ContactApplyStatus
 import com.virjar.tk.protocol.model.ContactApplyDirection
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.model.UserRole
-import com.virjar.tk.protocol.model.roleValue
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
+import com.virjar.tk.protocol.model.UserStatus
 
 internal data class ContactCapacityLimits(
     val friendsPerUser: Int = ContactPolicy.MAX_FRIENDS_PER_USER,
@@ -321,7 +321,7 @@ class ExposedContactRepository internal constructor(
     ): ContactApplyCreation = inWriteTransaction(transaction) {
             val users = lockUserPair(fromUid, toUid)
             val target = users.getValue(toUid).toUser()
-            require(target.roleValue == UserRole.HUMAN) { "不能向机器人或系统账户发起好友申请" }
+            require(target.role == UserRole.HUMAN) { "不能向机器人或系统账户发起好友申请" }
 
             val blocked = Friends.selectAll().where {
                 ((((Friends.uid eq fromUid) and (Friends.friendUid eq toUid)) or
@@ -714,8 +714,8 @@ class ExposedContactRepository internal constructor(
         avatar = toUserAvatar(),
         phone = this[Users.phone],
         sex = this[Users.sex],
-        role = this[Users.role],
-        status = this[Users.status],
+        role = UserRole.fromCode(this[Users.role]),
+        status = UserStatus.fromCode(this[Users.status]),
         revision = this[Users.revision],
     )
 
@@ -729,14 +729,10 @@ class ExposedContactRepository internal constructor(
             id = id,
             fromUid = fromUid,
             toUid = toUid,
-            direction = if (incoming) {
-                ContactApplyDirection.INCOMING.code
-            } else {
-                ContactApplyDirection.OUTGOING.code
-            },
+            direction = if (incoming) ContactApplyDirection.INCOMING else ContactApplyDirection.OUTGOING,
             token = token.takeIf { incoming && status == ContactApplyStatus.PENDING.code },
             remark = remark,
-            status = status,
+            status = ContactApplyStatus.fromCode(status),
             createdAt = createdAt,
             updatedAt = updatedAt,
             peerUser = peerUser,
@@ -749,7 +745,7 @@ class ExposedContactRepository internal constructor(
         toUid = toUid,
         token = token,
         remark = remark,
-        status = status,
+        status = ContactApplyStatus.fromCode(status),
         createdAt = createdAt,
         fromUser = fromUser,
     )

@@ -32,6 +32,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.model.GroupMemberRole
 
 /**
  * EventProcessor 全 NOTIFY 类型处理语义（绕过监听协程，直调 handleNotifyPayload）。
@@ -191,7 +192,7 @@ class EventProcessorTest {
     fun `USER_UPDATED converges profile and embedded member observers through one user projection`() = runBlocking {
         val original = User(uid = "u2", username = "user-2", name = "Old Name")
         val updated = original.copy(name = "Updated Name", revision = 2L)
-        cache.upsertMember(Member(uid = original.uid, chatId = "g1", role = 0, user = original))
+        cache.upsertMember(Member(uid = original.uid, chatId = "g1", role = GroupMemberRole.MEMBER, user = original))
 
         val observedUser = async {
             withTimeout(2_000) { cache.observeUser(original.uid).first { it == updated } }
@@ -209,7 +210,7 @@ class EventProcessorTest {
 
     @Test
     fun `MEMBER_ROLE_CHANGED upserts final chat and emits an exact member refresh hint`() = runBlocking {
-        val member = Member(uid = "u2", chatId = "g1", role = 0)
+        val member = Member(uid = "u2", chatId = "g1", role = GroupMemberRole.MEMBER)
         val summary = Chat(chatId = member.chatId, chatType = 2, name = "Updated Group", memberCount = 1)
         cache.upsertMember(member)
         val received = launch {
@@ -343,8 +344,8 @@ class EventProcessorTest {
         val retained = Chat(chatId = "retained-chat", chatType = 2, name = "retained")
         cache.upsertChat(deleted)
         cache.upsertChat(retained)
-        cache.upsertMember(Member(chatId = deleted.chatId, uid = "removed", role = 0))
-        cache.upsertMember(Member(chatId = retained.chatId, uid = "retained", role = 0))
+        cache.upsertMember(Member(chatId = deleted.chatId, uid = "removed", role = GroupMemberRole.MEMBER))
+        cache.upsertMember(Member(chatId = retained.chatId, uid = "retained", role = GroupMemberRole.MEMBER))
         cache.upsertConversation(Conversation(chatId = deleted.chatId, chatType = 2))
         cache.upsertConversation(Conversation(chatId = retained.chatId, chatType = 2))
         cache.setConversationDraft(deleted.chatId, "deleted draft")

@@ -49,8 +49,8 @@ internal class LocalOrganizationProjectionStore(
             avatar?.size,
             user.phone,
             user.sex.toLong(),
-            user.role.toLong(),
-            user.status.toLong(),
+            user.role.code.toLong(),
+            user.status.code.toLong(),
             user.revision,
             user.uid,
             user.revision,
@@ -498,8 +498,8 @@ internal class LocalOrganizationProjectionStore(
             avatar?.size,
             user?.phone,
             user?.sex?.toLong(),
-            user?.role?.toLong(),
-            user?.status?.toLong(),
+            user?.role?.code?.toLong(),
+            user?.status?.code?.toLong(),
             user?.revision,
         )
     }

@@ -1,41 +1,53 @@
 package com.virjar.tk.protocol.model
 
+import com.virjar.tk.protocol.WireCoded
 import kotlinx.serialization.Serializable
 
 /**
- * 群成员角色枚举。wire/DB 列仍存 Int code（[Member.role] 字段类型受已发行契约锁定），
- * 逻辑代码通过 [Member.roleValue] 取本枚举比较——类型层面无法再与账号状态等其他
- * Int 值空间混用。
+ * 群成员角色。wire/DB 上以其 [code] Int 值传输（实现 [WireCoded]：字段在
+ * `Int` 与本类型之间切换不构成 wire 变更）；模型字段直接使用本类型，逻辑代码
+ * 比较 `member.role == GroupMemberRole.OWNER`——类型层面无法再与账号状态等
+ * 其他 Int 值空间混用。
  *
- * 未知 code（未来版本新增角色）映射为 null，权限裁决按低于普通成员处理（fail closed）。
- * [rank] 是权限层级，"管理员及以上/不能管理同级或更高"等裁决用 rank 比较。
- *
- * code 值与既有 [Member.role] Int 字段自 0.0 起的取值一致；枚举包装自 protocol 0.7 起登记。
+ * [Unknown] 保留未来版本新增的未知取值：读取端不崩溃、往返写回无损，权限裁决按
+ * 低于普通成员处理（fail closed）。[rank] 是权限层级，"管理员及以上/不能管理
+ * 同级或更高"等裁决用 rank 比较。
  */
-@com.virjar.tk.protocol.SinceProtocol(7)
-@Serializable
-enum class GroupMemberRole(val code: Int) {
-    MEMBER(0),
-    ADMIN(1),
-    OWNER(2);
+@Serializable(with = GroupMemberRole.CodeSerializer::class)
+sealed interface GroupMemberRole : WireCoded {
+    val rank: Int
 
-    /** 权限层级，与 code 同序：越大越高。 */
-    val rank: Int get() = code
+    data object MEMBER : GroupMemberRole {
+        override val code = 0
+        override val rank = 0
+    }
+
+    data object ADMIN : GroupMemberRole {
+        override val code = 1
+        override val rank = 1
+    }
+
+    data object OWNER : GroupMemberRole {
+        override val code = 2
+        override val rank = 2
+    }
+
+    data class Unknown(override val code: Int) : GroupMemberRole {
+        override val rank = -1
+    }
 
     fun isAtLeast(min: GroupMemberRole): Boolean = rank >= min.rank
 
+    object CodeSerializer : com.virjar.tk.protocol.WireCodedSerializer<GroupMemberRole>("GroupMemberRole") {
+        override fun fromCode(code: Int) = GroupMemberRole.fromCode(code)
+    }
+
     companion object {
-        fun fromCode(code: Int): GroupMemberRole? = entries.find { it.code == code }
+        fun fromCode(code: Int): GroupMemberRole = when (code) {
+            MEMBER.code -> MEMBER
+            ADMIN.code -> ADMIN
+            OWNER.code -> OWNER
+            else -> Unknown(code)
+        }
     }
 }
-
-/** 成员角色的类型化视图；null = 未知取值（未来版本），权限裁决应按无特权处理。 */
-val Member.roleValue: GroupMemberRole?
-    get() = GroupMemberRole.fromCode(role)
-
-/** 未知角色按低于普通成员的层级参与裁决（fail closed）。 */
-val Member.roleRank: Int
-    get() = roleValue?.rank ?: -1
-
-/** 可空角色（非成员/未知值）不满足任何最低权限要求。 */
-fun GroupMemberRole?.isAtLeast(min: GroupMemberRole): Boolean = this != null && rank >= min.rank

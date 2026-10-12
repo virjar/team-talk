@@ -1,6 +1,7 @@
 package com.virjar.tk.protocol.http
 
 import kotlinx.serialization.Serializable
+import com.virjar.tk.protocol.WireCoded
 
 /** 可选的 webhook 请求头。重试同一业务事件时复用相同的值。 */
 const val BOT_IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
@@ -32,7 +33,7 @@ data class GroupBotMessageResponse(
 data class GroupBotSummary(
     val botId: String,
     val name: String,
-    val status: Int,
+    val status: GroupBotStatus,
     val lastUsedAt: Long?,
     val createdAt: Long,
     /** 本列表上下文中目标绑定的 `/api/v1/groups/{chatId}/bots/{botId}/messages` 路径。 */
@@ -90,19 +91,27 @@ data class GroupBotCommandReceipt(
     val bot: GroupBotSummary,
 )
 
-/**
- * 群机器人运行状态；未知 code 经 [GroupBotSummary.statusValue] 映射为 null，按已停用展示。
- */
-@com.virjar.tk.protocol.SinceProtocol(7)
-enum class GroupBotStatus(val code: Int) {
-    DISABLED(0),
-    ACTIVE(1);
+/** 群机器人运行状态；未知取值承载为 [GroupBotStatus.Unknown]，按已停用展示。 */
+@Serializable(with = GroupBotStatus.CodeSerializer::class)
+sealed interface GroupBotStatus : WireCoded {
+    data object DISABLED : GroupBotStatus {
+        override val code = 0
+    }
+    data object ACTIVE : GroupBotStatus {
+        override val code = 1
+    }
+
+    data class Unknown(override val code: Int) : GroupBotStatus
+
+    object CodeSerializer : com.virjar.tk.protocol.WireCodedSerializer<GroupBotStatus>("GroupBotStatus") {
+        override fun fromCode(code: Int) = GroupBotStatus.fromCode(code)
+    }
 
     companion object {
-        fun fromCode(code: Int): GroupBotStatus? = entries.find { it.code == code }
+        fun fromCode(code: Int): GroupBotStatus = when (code) {
+            DISABLED.code -> DISABLED
+            ACTIVE.code -> ACTIVE
+            else -> Unknown(code)
+        }
     }
 }
-
-/** 机器人状态的类型化视图；null = 未知取值。 */
-val GroupBotSummary.statusValue: GroupBotStatus?
-    get() = GroupBotStatus.fromCode(status)

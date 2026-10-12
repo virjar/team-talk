@@ -23,8 +23,6 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 import com.virjar.tk.protocol.model.ChatType
 import com.virjar.tk.protocol.model.GroupMemberRole
-import com.virjar.tk.protocol.model.roleValue
-import com.virjar.tk.protocol.model.roleRank
 
 private const val MAX_GROUP_AVATAR_LENGTH = 500
 private const val MAX_INVITE_LINK_NAME_LENGTH = 200
@@ -329,7 +327,7 @@ class ChatService(
         ) { facts ->
             require(facts.chat.chatType == ChatType.GROUP.code) { "单聊不能添加成员" }
             val operator = facts.operator ?: throw IllegalArgumentException("操作者不是群成员")
-            require(operator.role >= 1) { "需要管理员权限" }
+            require(operator.role.isAtLeast(GroupMemberRole.ADMIN)) { "需要管理员权限" }
         }
     }
 
@@ -377,14 +375,14 @@ class ChatService(
             val target = facts.target
                 ?: throw IllegalArgumentException("目标不是群成员")
             if (operatorUid == targetUid) {
-                if (operator.roleValue == GroupMemberRole.OWNER) {
+                if (operator.role == GroupMemberRole.OWNER) {
                     throw IllegalArgumentException("群主不能退出，请先转让群主")
                 }
             } else {
-                if (operator.roleRank < GroupMemberRole.ADMIN.rank) throw IllegalArgumentException("需要管理员权限")
+                if (operator.role.rank < GroupMemberRole.ADMIN.rank) throw IllegalArgumentException("需要管理员权限")
                 requireHumanMemberTarget(targetUid)
-                if (target.roleValue == GroupMemberRole.OWNER) throw IllegalArgumentException("不能踢出群主")
-                if (target.roleValue == GroupMemberRole.ADMIN && operator.roleValue != GroupMemberRole.OWNER) {
+                if (target.role == GroupMemberRole.OWNER) throw IllegalArgumentException("不能踢出群主")
+                if (target.role == GroupMemberRole.ADMIN && operator.role != GroupMemberRole.OWNER) {
                     throw IllegalArgumentException("只有群主能踢管理员")
                 }
             }
@@ -441,7 +439,7 @@ class ChatService(
                 require(facts.chat.chatType == ChatType.GROUP.code) { "群聊不存在" }
                 requireOwner(facts.operator)
                 require(facts.target != null) { "目标不是群成员" }
-                require(facts.target.roleValue != GroupMemberRole.OWNER) { "目标已经是群主" }
+                require(facts.target.role != GroupMemberRole.OWNER) { "目标已经是群主" }
             }
             mutation.recipientUids.forEach { uid ->
                 appendEvent(uid, NotifyType.MEMBER_ROLE_CHANGED, mutation.chat)
@@ -460,7 +458,7 @@ class ChatService(
         require(operatorUid != targetUid) { "群主不能修改自己的角色，请先转让群主" }
         requireHumanMemberTarget(targetUid)
         val target = access.requireGroupMember(targetUid, chatId, "目标不是群成员")
-        require(target.roleValue != GroupMemberRole.OWNER) { "不能直接修改群主角色，请使用转让群主" }
+        require(target.role != GroupMemberRole.OWNER) { "不能直接修改群主角色，请使用转让群主" }
         unitOfWork.write {
             requireUserWritableAuthority(transaction, chatId)
             val mutation = members.setRole(
@@ -473,7 +471,7 @@ class ChatService(
                 require(facts.chat.chatType == ChatType.GROUP.code) { "群聊不存在" }
                 requireOwner(facts.operator)
                 require(facts.target != null) { "目标不是群成员" }
-                require(facts.target.roleValue != GroupMemberRole.OWNER) { "不能直接修改群主角色，请使用转让群主" }
+                require(facts.target.role != GroupMemberRole.OWNER) { "不能直接修改群主角色，请使用转让群主" }
             }
             mutation.recipientUids.forEach { uid ->
                 appendEvent(uid, NotifyType.MEMBER_ROLE_CHANGED, mutation.chat)
@@ -657,23 +655,23 @@ class ChatService(
     suspend fun previewInvite(uid: String, token: String): InvitePreview = unitOfWork.read {
         require(users.findByUid(uid)?.isActiveHuman == true) { "用户不存在或已停用" }
         if (canonicalUuidOrNull(token) == null) {
-            return@read InvitePreview(InvitePreviewStatus.NOT_FOUND.code)
+            return@read InvitePreview(InvitePreviewStatus.NOT_FOUND)
         }
         val facts = invites.readPreview(transaction, uid, token)
-            ?: return@read InvitePreview(InvitePreviewStatus.NOT_FOUND.code)
+            ?: return@read InvitePreview(InvitePreviewStatus.NOT_FOUND)
         val authority = managedChats.authority(facts.invite.chatId)
         if (facts.groupName == null || authority.managed || !authority.ready) {
-            return@read InvitePreview(InvitePreviewStatus.GROUP_UNAVAILABLE.code)
+            return@read InvitePreview(InvitePreviewStatus.GROUP_UNAVAILABLE)
         }
         val invite = facts.invite
         val status = when {
-            invite.revokedAt != 0L -> InvitePreviewStatus.REVOKED.code
-            invite.expiresAt > 0L && invite.expiresAt < System.currentTimeMillis() -> InvitePreviewStatus.EXPIRED.code
-            invite.maxUses > 0 && invite.useCount >= invite.maxUses -> InvitePreviewStatus.EXHAUSTED.code
-            else -> InvitePreviewStatus.VALID.code
+            invite.revokedAt != 0L -> InvitePreviewStatus.REVOKED
+            invite.expiresAt > 0L && invite.expiresAt < System.currentTimeMillis() -> InvitePreviewStatus.EXPIRED
+            invite.maxUses > 0 && invite.useCount >= invite.maxUses -> InvitePreviewStatus.EXHAUSTED
+            else -> InvitePreviewStatus.VALID
         }
         // 已加入者保留“打开群聊”，包括第一次成功入群却丢失响应后的重试。
-        if (status != InvitePreviewStatus.VALID.code && !facts.alreadyJoined) return@read InvitePreview(status)
+        if (status != InvitePreviewStatus.VALID && !facts.alreadyJoined) return@read InvitePreview(status)
         InvitePreview(status, invite.chatId, facts.groupName, facts.memberCount, facts.alreadyJoined)
     }
 
@@ -854,22 +852,22 @@ class ChatService(
         val actor = operator ?: throw IllegalArgumentException("操作者不是群成员")
         val subject = target ?: throw IllegalArgumentException("目标不是群成员")
         require(actor.uid != subject.uid) { "不能管理自己" }
-        require(actor.role >= 1) { "需要管理员权限" }
-        require(actor.role > subject.role) { "不能管理同级或更高角色" }
+        require(actor.role.isAtLeast(GroupMemberRole.ADMIN)) { "需要管理员权限" }
+        require(actor.role.rank > subject.role.rank) { "不能管理同级或更高角色" }
     }
 
     private fun requireAdmin(operator: Member?) {
         val actor = operator ?: throw ChatAccessDeniedException("操作者不是群成员")
-        if (actor.roleRank < GroupMemberRole.ADMIN.rank) throw ChatAccessDeniedException("需要管理员权限")
+        if (actor.role.rank < GroupMemberRole.ADMIN.rank) throw ChatAccessDeniedException("需要管理员权限")
     }
 
     private fun requireOwner(operator: Member?) {
         val actor = operator ?: throw IllegalArgumentException("操作者不是群成员")
-        require(actor.roleValue == GroupMemberRole.OWNER) { "需要群主权限" }
+        require(actor.role == GroupMemberRole.OWNER) { "需要群主权限" }
     }
 
     private fun requireHumanMemberTarget(uid: String) {
-        require(users.findByUid(uid)?.roleValue == UserRole.HUMAN) {
+        require(users.findByUid(uid)?.role == UserRole.HUMAN) {
             "机器人或系统成员只能通过对应的管理入口操作"
         }
     }
