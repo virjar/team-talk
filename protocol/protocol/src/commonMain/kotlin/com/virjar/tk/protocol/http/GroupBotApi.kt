@@ -44,7 +44,12 @@ data class GroupBotSummary(
     val canRotateToken: Boolean,
     /** 创建者、群管理员或群主可以移除群范围机器人。 */
     val canRemove: Boolean,
-)
+) {
+    companion object {
+        const val STATUS_DISABLED = 0
+        const val STATUS_ACTIVE = 1
+    }
+}
 
 /**
  * 客户端由其持久命令与服务端回执组装出的一次性凭据。

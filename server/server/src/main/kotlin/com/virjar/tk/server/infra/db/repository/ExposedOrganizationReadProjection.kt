@@ -306,7 +306,7 @@ internal val ORGANIZATION_MEMBER_RECURSIVE_BRANCH = """
     FROM unit_walk walk
     JOIN organization_units child
       ON child.parent_id = walk.unit_id
-     AND child.status = 1
+     AND child.status = ${OrganizationUnit.STATUS_ACTIVE}
     WHERE walk.depth < ${OrganizationCapacityPolicy.MAX_TREE_DEPTH}
 """.trimIndent()
 
@@ -323,7 +323,7 @@ internal val ORGANIZATION_MEMBER_PAGE_SQL = """
                1
         FROM organization_units unit
         WHERE unit.unit_id = ?::varchar
-          AND unit.status = 1
+          AND unit.status = ${OrganizationUnit.STATUS_ACTIVE}
         /* recursive-branch */
     ),
     scope_status AS (
@@ -334,7 +334,7 @@ internal val ORGANIZATION_MEMBER_PAGE_SQL = """
                    FROM unit_walk frontier
                    JOIN organization_units child
                      ON child.parent_id = frontier.unit_id
-                    AND child.status = 1
+                    AND child.status = ${OrganizationUnit.STATUS_ACTIVE}
                    WHERE frontier.depth = ${OrganizationCapacityPolicy.MAX_TREE_DEPTH}
                ) AS depth_exceeded
         FROM unit_walk
@@ -378,14 +378,14 @@ internal val ORGANIZATION_HIERARCHY_VALIDATION_SQL = """
     active_probe AS MATERIALIZED (
         SELECT unit_id
         FROM organization_units
-        WHERE status = 1
+        WHERE status = ${OrganizationUnit.STATUS_ACTIVE}
         ORDER BY unit_id ASC
         LIMIT ${OrganizationCapacityPolicy.MAX_ACTIVE_UNITS + 1}
     ),
     root_probe AS MATERIALIZED (
         SELECT unit_id
         FROM organization_units
-        WHERE status = 1
+        WHERE status = ${OrganizationUnit.STATUS_ACTIVE}
           AND parent_id IS NULL
         ORDER BY unit_id ASC
         LIMIT 2
@@ -399,7 +399,7 @@ internal val ORGANIZATION_HIERARCHY_VALIDATION_SQL = """
         FROM tree
         JOIN organization_units child
           ON child.parent_id = tree.unit_id
-         AND child.status = 1
+         AND child.status = ${OrganizationUnit.STATUS_ACTIVE}
         WHERE tree.depth <= ${OrganizationCapacityPolicy.MAX_TREE_DEPTH}
     )
     SELECT (SELECT COUNT(*) FROM active_probe) AS active_count,

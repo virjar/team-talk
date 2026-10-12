@@ -40,6 +40,7 @@ import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.jetbrains.exposed.sql.update
+import com.virjar.tk.protocol.model.ChatType
 
 class ExposedGroupFileRepository(
     private val database: Database,
@@ -59,7 +60,7 @@ class ExposedGroupFileRepository(
         val entries = GroupFileEntries.selectAll().where {
             (GroupFileEntries.chatId eq chatId) and
                 (GroupFileEntries.parentKey eq parentId.orEmpty()) and
-                (GroupFileEntries.status eq STATUS_ACTIVE)
+                (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE)
         }.orderBy(
             GroupFileEntries.kind to SortOrder.ASC,
             GroupFileEntries.nameKey to SortOrder.ASC,
@@ -71,7 +72,7 @@ class ExposedGroupFileRepository(
 
     override fun find(entryId: String): GroupFileEntry? = transaction(database) {
         GroupFileEntries.selectAll().where {
-            (GroupFileEntries.entryId eq entryId) and (GroupFileEntries.status eq STATUS_ACTIVE)
+            (GroupFileEntries.entryId eq entryId) and (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE)
         }.singleOrNull()?.toGroupFileEntry()
     }
 
@@ -120,7 +121,7 @@ class ExposedGroupFileRepository(
             it[revision] = entry.revision
             it[contentVersion] = entry.contentVersion
             it[activeVersionBytes] = incomingBytes
-            it[status] = STATUS_ACTIVE
+            it[status] = GroupFileEntries.STATUS_ACTIVE
             it[createdBy] = entry.createdBy
             it[createdAt] = entry.createdAt
             it[updatedBy] = entry.updatedBy
@@ -185,7 +186,7 @@ class ExposedGroupFileRepository(
         val nextEntryBytes = Math.addExact(currentEntryBytes, command.attachment.size)
         val updated = GroupFileEntries.update({
             (GroupFileEntries.entryId eq command.entryId) and
-                (GroupFileEntries.status eq STATUS_ACTIVE) and
+                (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE) and
                 (GroupFileEntries.revision eq command.expectedRevision)
         }) {
             it[attachmentPath] = command.attachment.path
@@ -262,7 +263,7 @@ class ExposedGroupFileRepository(
         requireAvailableName(command.chatId, command.targetParentId, current.name, excludingEntryId = command.entryId)
         val updated = GroupFileEntries.update({
             (GroupFileEntries.entryId eq command.entryId) and
-                (GroupFileEntries.status eq STATUS_ACTIVE) and
+                (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE) and
                 (GroupFileEntries.revision eq command.expectedRevision)
         }) {
             it[parentId] = command.targetParentId
@@ -325,7 +326,7 @@ class ExposedGroupFileRepository(
         requireAvailableName(current.chatId, current.parentId, command.name, excludingEntryId = command.entryId)
         val updated = GroupFileEntries.update({
             (GroupFileEntries.entryId eq command.entryId) and
-                (GroupFileEntries.status eq STATUS_ACTIVE) and
+                (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE) and
                 (GroupFileEntries.revision eq command.expectedRevision)
         }) {
             it[GroupFileEntries.name] = command.name
@@ -382,10 +383,10 @@ class ExposedGroupFileRepository(
         ) { "群文件容量台账与条目不一致" }
         val updated = GroupFileEntries.update({
             (GroupFileEntries.entryId eq command.entryId) and
-                (GroupFileEntries.status eq STATUS_ACTIVE) and
+                (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE) and
                 (GroupFileEntries.revision eq command.expectedRevision)
         }) {
-            it[status] = STATUS_DELETED
+            it[status] = GroupFileEntries.STATUS_DELETED
             it[nameKey] = "${GroupFileService.nameKey(current.name)}#deleted#${command.entryId}"
             it[revision] = Math.addExact(command.expectedRevision, 1L)
             it[updatedBy] = command.actorUid
@@ -419,7 +420,7 @@ class ExposedGroupFileRepository(
 
     private fun hasActiveChildrenInternal(entryId: String): Boolean =
         GroupFileEntries.selectAll().where {
-            (GroupFileEntries.parentId eq entryId) and (GroupFileEntries.status eq STATUS_ACTIVE)
+            (GroupFileEntries.parentId eq entryId) and (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE)
         }.limit(1).any()
 
     override fun listVersions(entryId: String): List<GroupFileVersion> = transaction(database) {
@@ -450,7 +451,7 @@ class ExposedGroupFileRepository(
         // 离职盘点只覆盖单个用户创建的活跃条目，行数有界；取出后在内存聚合。
         val rows = transaction(database) {
             GroupFileEntries.selectAll()
-                .where { (GroupFileEntries.createdBy eq uid) and (GroupFileEntries.status eq STATUS_ACTIVE) }
+                .where { (GroupFileEntries.createdBy eq uid) and (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE) }
                 .map { row ->
                     row[GroupFileEntries.chatId] to (row[GroupFileEntries.activeVersionBytes] ?: 0L)
                 }
@@ -466,7 +467,7 @@ class ExposedGroupFileRepository(
     override fun getAttachmentChatIds(path: String): Set<String> = transaction(database) {
         versionEntryJoin().select(GroupFileEntries.chatId).where {
             (GroupFileVersions.attachmentPath eq path) and
-                (GroupFileEntries.status eq STATUS_ACTIVE)
+                (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE)
         }.mapTo(linkedSetOf()) { it[GroupFileEntries.chatId] }
     }
 
@@ -476,7 +477,7 @@ class ExposedGroupFileRepository(
             versionEntryJoin().select(GroupFileEntries.chatId).where {
                 (GroupFileVersions.attachmentPath eq path) and
                     (GroupFileEntries.chatId inList chatIds.sorted()) and
-                    (GroupFileEntries.status eq STATUS_ACTIVE)
+                    (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE)
             }.limit(1).any()
         }
     }
@@ -486,7 +487,7 @@ class ExposedGroupFileRepository(
         return transaction(database) {
             versionEntryJoin().select(GroupFileVersions.attachmentPath).where {
                 (GroupFileVersions.attachmentPath inList paths.sorted()) and
-                    (GroupFileEntries.status eq STATUS_ACTIVE)
+                    (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE)
             }.groupBy(GroupFileVersions.attachmentPath)
                 .mapTo(linkedSetOf()) { it[GroupFileVersions.attachmentPath] }
         }
@@ -496,7 +497,7 @@ class ExposedGroupFileRepository(
         GroupFileEntries.selectAll().where {
             (GroupFileEntries.chatId eq chatId) and
                 (GroupFileEntries.parentKey eq parentId.orEmpty()) and
-                (GroupFileEntries.status eq STATUS_ACTIVE)
+                (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE)
         }.count()
 
     /** 精确回执在容量准入之前解析，因此绝不会两次消耗名额。 */
@@ -524,7 +525,7 @@ class ExposedGroupFileRepository(
                 existingRow[GroupFileEntries.creationFingerprint] == command.fingerprint &&
                 existingRow[GroupFileEntries.createdBy] == requested.createdBy,
         ) { "群文件资源标识已用于不同的创建请求" }
-        require(existingRow[GroupFileEntries.status] == STATUS_ACTIVE) { "群文件条目已删除" }
+        require(existingRow[GroupFileEntries.status] == GroupFileEntries.STATUS_ACTIVE) { "群文件条目已删除" }
 
         val versionReceipt = findVersionByCommand(command.commandId)
         if (command.initialVersion == null) {
@@ -731,7 +732,7 @@ class ExposedGroupFileRepository(
             (GroupFileEntries.chatId eq chatId) and
                 (GroupFileEntries.parentKey eq parentId.orEmpty()) and
                 (GroupFileEntries.nameKey eq GroupFileService.nameKey(name)) and
-                (GroupFileEntries.status eq STATUS_ACTIVE)
+                (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE)
         }.singleOrNull()
         if (found != null && found[GroupFileEntries.entryId] != excludingEntryId) throw SiblingNameConflictException()
     }
@@ -763,15 +764,15 @@ class ExposedGroupFileRepository(
         require(authority.ready) { "受管群投影尚未收敛" }
         val activeGroup = Chats.selectAll().where {
             (Chats.chatId eq chatId) and
-                (Chats.chatType eq 2) and
-                (Chats.status eq 1)
+                (Chats.chatType eq ChatType.GROUP.code) and
+                (Chats.status eq Chats.STATUS_ACTIVE)
         }.forUpdate().singleOrNull()
         require(activeGroup != null) { "群聊不存在或已解散" }
 
         val activeMember = GroupMembers.selectAll().where {
             (GroupMembers.chatId eq chatId) and
                 (GroupMembers.uid eq actorUid) and
-                (GroupMembers.status eq 1)
+                (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.limit(1).any()
         require(activeMember) { "你不是当前群成员" }
     }
@@ -781,7 +782,7 @@ class ExposedGroupFileRepository(
 
     private fun requireActiveEntryRow(entryId: String): ResultRow =
         GroupFileEntries.selectAll().where {
-            (GroupFileEntries.entryId eq entryId) and (GroupFileEntries.status eq STATUS_ACTIVE)
+            (GroupFileEntries.entryId eq entryId) and (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE)
         }.singleOrNull() ?: throw IllegalArgumentException("文件条目不存在")
 
     private fun insertVersion(version: GroupFileVersion, commandId: String, commandFingerprint: String) {
@@ -833,8 +834,6 @@ class ExposedGroupFileRepository(
     }
 
     companion object {
-        private const val STATUS_DELETED = 0
-        private const val STATUS_ACTIVE = 1
         private const val COMMAND_CREATE_FOLDER = 1
         private const val COMMAND_CREATE_FILE = 2
         private const val COMMAND_ADD_VERSION = 3

@@ -39,6 +39,7 @@ import com.virjar.tk.shared.client.FriendPresence
 import com.virjar.tk.desktop.media.DesktopSessionResources
 import com.virjar.tk.protocol.model.ChatType
 import com.virjar.tk.protocol.model.Message
+import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.model.Contact
 import com.virjar.tk.protocol.model.Conversation
 import com.virjar.tk.protocol.model.User
@@ -849,7 +850,7 @@ private fun BoxScope.ChatInspectorHost(
                     onLeaveGroup = { chatId ->
                         presentationGate.runIfOpen {
                             val isOwner = nav.groups.members.any {
-                                it.uid == nav.userSession.uid && it.role == 2
+                                it.uid == nav.userSession.uid && it.role == Member.ROLE_OWNER
                             }
                             nav.groups.exit(chatId, dissolve = isOwner) {
                                 presentationGate.runIfOpen {

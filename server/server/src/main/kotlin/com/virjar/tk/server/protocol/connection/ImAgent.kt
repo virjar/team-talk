@@ -35,6 +35,7 @@ import kotlinx.coroutines.CancellationException
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import com.virjar.tk.protocol.payload.ResponsePayload
 
 /**
  * 连接级处理器。管理认证状态和包分发。
@@ -568,7 +569,7 @@ class ImAgent internal constructor(
                     "event=response service=$serviceId method=$methodId status=$responseStatus"
                 }
                 if (
-                    response.status == 0 && payload.serviceId == AuthRpcContract.SERVICE &&
+                    response.status == ResponsePayload.STATUS_OK && payload.serviceId == AuthRpcContract.SERVICE &&
                     (payload.methodId == AuthRpcContract.M_UPDATE_PASSWORD ||
                         payload.methodId == AuthRpcContract.M_LOGOUT)
                 ) {

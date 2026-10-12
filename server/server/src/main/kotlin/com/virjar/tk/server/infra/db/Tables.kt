@@ -2,6 +2,7 @@ package com.virjar.tk.server.infra.db
 
 import com.virjar.tk.protocol.body.AttachmentPolicy
 import com.virjar.tk.protocol.telemetry.ClientTelemetryLimits
+import com.virjar.tk.protocol.model.ContactApplyRecord
 import com.virjar.tk.protocol.model.ConversationCapacityPolicy
 import com.virjar.tk.protocol.model.UserAvatarPolicy
 import org.jetbrains.exposed.dao.id.LongIdTable
@@ -98,6 +99,10 @@ object Devices : LongIdTable("devices") {
     val lastLogin = long("last_login").default(0)
     val createdAt = long("created_at")
 
+    /** 设备行状态：1 正常；2 凭据吊销（踢出设备后失效，不再参与认证与推送）。 */
+    const val STATUS_ACTIVE = 1
+    const val STATUS_REVOKED = 2
+
     init {
         uniqueIndex("idx_device_uid_id", uid, deviceId)
         check("ck_devices_status") { (status greaterEq 1) and (status lessEq 2) }
@@ -152,6 +157,9 @@ object Chats : LongIdTable("chats") {
     val status = integer("status").default(1)
     val createdAt = long("created_at")
     val updatedAt = long("updated_at")
+
+    /** 会话行状态：1 活跃；DB 私有值空间，解散等终态由服务端演进。 */
+    const val STATUS_ACTIVE = 1
 }
 
 object GroupChats : Table("group_chats") {
@@ -181,12 +189,14 @@ object GroupMembers : LongIdTable("group_members") {
     val status = integer("status").default(1)
     val joinedAt = long("joined_at")
 
+    /** 成员行状态：1 在群；0 表示退出/移除后保留的投影片。 */
+    const val STATUS_ACTIVE = 1
     init {
         uniqueIndex("idx_member_chat_uid", chatId, uid)
         uniqueIndex(
             "uq_group_members_active_owner",
             chatId,
-            filterCondition = { (status eq 1) and (role eq 2) },
+            filterCondition = { (status eq STATUS_ACTIVE) and (role eq com.virjar.tk.protocol.model.Member.ROLE_OWNER) },
         )
     }
 }
@@ -291,23 +301,23 @@ object FriendApplies : LongIdTable("friend_applies") {
             "idx_friend_applies_pending_sender",
             false,
             fromUid,
-            filterCondition = { status eq 0 },
+            filterCondition = { status eq ContactApplyRecord.STATUS_PENDING },
         )
         index(
             "idx_friend_applies_pending_recipient",
             false,
             toUid,
-            filterCondition = { status eq 0 },
+            filterCondition = { status eq ContactApplyRecord.STATUS_PENDING },
         )
         uniqueIndex(
             "uq_friend_applies_pending_direction",
             fromUid,
             toUid,
-            filterCondition = { status eq 0 },
+            filterCondition = { status eq ContactApplyRecord.STATUS_PENDING },
         )
         check("ck_friend_applies_status") { status inList listOf(0, 1, 2) }
         check("ck_friend_applies_token_lifecycle") {
-            ((status eq 0) and token.isNotNull()) or ((status neq 0) and token.isNull())
+            ((status eq ContactApplyRecord.STATUS_PENDING) and token.isNotNull()) or ((status neq ContactApplyRecord.STATUS_PENDING) and token.isNull())
         }
     }
 }
@@ -599,6 +609,10 @@ object GroupFileEntries : Table("group_file_entries") {
 
     override val primaryKey = PrimaryKey(entryId)
 
+    /** 条目行状态：1 活跃；软删除后保留版本与统计历史。 */
+    const val STATUS_ACTIVE = 1
+    const val STATUS_DELETED = 0
+
     init {
         uniqueIndex("idx_group_file_sibling_name", chatId, parentKey, nameKey)
         uniqueIndex("idx_group_file_creation_command", chatId, creationCommandId)
@@ -761,7 +775,7 @@ object ScheduledMessages : Table("scheduled_messages") {
         index("idx_scheduled_operation", true, senderUid, operationId)
         // 到期扫描：WAITING 按 deliverAt 升序。
         index("idx_scheduled_due", false, deliverAt, scheduledId,
-            filterCondition = { status eq 0 })
+            filterCondition = { status eq com.virjar.tk.protocol.model.ScheduledMessage.STATUS_WAITING })
         check("ck_scheduled_status") { status inList listOf(0, 1, 2, 3) }
     }
 }

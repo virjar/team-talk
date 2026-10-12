@@ -59,7 +59,7 @@ data class InvokePayload(
 
 data class ResponsePayload(
     val requestId: Int,
-    val status: Int,        // 0=成功, 非0=错误码
+    val status: Int,
     val payload: ByteArray?,
 ) : IProto {
     override fun writeTo(buf: PacketBuffer) {
@@ -70,6 +70,9 @@ data class ResponsePayload(
     }
 
     companion object : IProtoReader<ResponsePayload> {
+        /** RPC 应答状态：0 成功，非 0 为错误码。 */
+        const val STATUS_OK = 0
+
         override fun readFrom(buf: PacketBuffer) = ResponsePayload(
             requestId = buf.readVarInt(),
             status = buf.readVarInt(),

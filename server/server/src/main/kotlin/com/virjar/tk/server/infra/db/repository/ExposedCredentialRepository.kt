@@ -22,6 +22,7 @@ import com.virjar.tk.server.infra.db.Users
 import com.virjar.tk.server.infra.db.requireExposedTransaction
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -87,7 +88,7 @@ class ExposedCredentialRepository(
         transaction.requireExposedTransaction()
         val storedUser = lockUser(user.uid)
             ?: error("Registration user disappeared inside its aggregate transaction")
-        check(storedUser[Users.role] == UserRole.HUMAN && storedUser[Users.status] == STATUS_ACTIVE) {
+        check(storedUser[Users.role] == UserRole.HUMAN && storedUser[Users.status] == UserStatus.ACTIVE) {
             "Initial credentials require a newly registered active human"
         }
         check(storedUser[Users.credentialEpoch] == INITIAL_USER_CREDENTIAL_EPOCH) {
@@ -111,7 +112,7 @@ class ExposedCredentialRepository(
             it[deviceName] = device.deviceName
             it[deviceModel] = device.deviceModel
             it[deviceFlag] = device.deviceFlag
-            it[status] = STATUS_ACTIVE
+            it[status] = Devices.STATUS_ACTIVE
             it[credentialEpoch] = deviceEpoch
             it[lastLogin] = now
             it[createdAt] = now
@@ -131,7 +132,7 @@ class ExposedCredentialRepository(
         credentialTransaction {
             hooks.beforeUserLock(CredentialMutation.ISSUE, request.uid, request.device.deviceId)
             val user = lockUser(request.uid) ?: return@credentialTransaction null
-            if (user[Users.status] != STATUS_ACTIVE || user[Users.role] != UserRole.HUMAN) {
+            if (user[Users.status] != UserStatus.ACTIVE || user[Users.role] != UserRole.HUMAN) {
                 return@credentialTransaction null
             }
             if (user[Users.credentialEpoch] != request.expectedUserCredentialEpoch ||
@@ -187,8 +188,8 @@ class ExposedCredentialRepository(
             val now = clock()
             val userEpoch = user[Users.credentialEpoch]
             val previousDeviceEpoch = deviceRow[Devices.credentialEpoch]
-            if (user[Users.status] != STATUS_ACTIVE || user[Users.role] != UserRole.HUMAN ||
-                deviceRow[Devices.status] != STATUS_ACTIVE ||
+            if (user[Users.status] != UserStatus.ACTIVE || user[Users.role] != UserRole.HUMAN ||
+                deviceRow[Devices.status] != Devices.STATUS_ACTIVE ||
                 credential[Credentials.uid] != uid ||
                 credential[Credentials.deviceId] != device.deviceId ||
                 credential[Credentials.deviceFlag] != device.deviceFlag ||
@@ -244,10 +245,10 @@ class ExposedCredentialRepository(
             val device = lockDevice(uid, deviceId) ?: return@credentialTransaction null
             val currentDeviceEpoch = device[Devices.credentialEpoch]
 
-            val committedEpoch = if (device[Devices.status] == STATUS_ACTIVE) {
+            val committedEpoch = if (device[Devices.status] == Devices.STATUS_ACTIVE) {
                 allocateDeviceCredentialEpoch(user).also { next ->
                     Devices.update({ (Devices.uid eq uid) and (Devices.deviceId eq deviceId) }) {
-                        it[status] = STATUS_REVOKED
+                        it[status] = Devices.STATUS_REVOKED
                         it[credentialEpoch] = next
                     }
                 }
@@ -282,10 +283,10 @@ class ExposedCredentialRepository(
             return@credentialTransaction currentDeviceEpoch
         }
 
-        val committedEpoch = if (device[Devices.status] == STATUS_ACTIVE) {
+        val committedEpoch = if (device[Devices.status] == Devices.STATUS_ACTIVE) {
             allocateDeviceCredentialEpoch(user).also { next ->
                 Devices.update({ (Devices.uid eq uid) and (Devices.deviceId eq deviceId) }) {
-                    it[status] = STATUS_REVOKED
+                    it[status] = Devices.STATUS_REVOKED
                     it[credentialEpoch] = next
                 }
             }
@@ -307,7 +308,7 @@ class ExposedCredentialRepository(
         hooks.beforeUserLock(CredentialMutation.CHANGE_PASSWORD, uid, null)
         val user = lockUser(uid) ?: return@credentialTransaction null
         hooks.afterUserLock(CredentialMutation.CHANGE_PASSWORD, uid, null)
-        if (user[Users.status] != STATUS_ACTIVE || user[Users.role] != UserRole.HUMAN ||
+        if (user[Users.status] != UserStatus.ACTIVE || user[Users.role] != UserRole.HUMAN ||
             user[Users.passwordHash] != expectedPasswordHash
         ) {
             return@credentialTransaction null
@@ -327,11 +328,11 @@ class ExposedCredentialRepository(
         val user = lockUser(uid) ?: throw IllegalArgumentException("用户不存在: $uid")
         hooks.afterUserLock(CredentialMutation.BAN_USER, uid, null)
         val currentEpoch = user[Users.credentialEpoch]
-        val committedEpoch = if (user[Users.status] == STATUS_ACTIVE) {
+        val committedEpoch = if (user[Users.status] == UserStatus.ACTIVE) {
             val nextRevision = checkedNextUserRevision(user[Users.revision])
             checkedNextEpoch(currentEpoch).also { next ->
                 Users.update({ Users.uid eq uid }) {
-                    it[status] = STATUS_REVOKED
+                    it[status] = Devices.STATUS_REVOKED
                     it[revision] = nextRevision
                     it[credentialEpoch] = next
                     it[updatedAt] = clock()
@@ -366,7 +367,7 @@ class ExposedCredentialRepository(
                 .singleOrNull()?.get(BannedCredentialTombstones.uid)
                 ?: return@credentialTransaction null
             val banned = Users.selectAll().where { Users.uid eq uid }.singleOrNull()
-                ?.get(Users.status) != STATUS_ACTIVE
+                ?.get(Users.status) != UserStatus.ACTIVE
             uid.takeIf { banned }
         }
     }
@@ -376,10 +377,10 @@ class ExposedCredentialRepository(
             hooks.beforeUserLock(CredentialMutation.UNBAN_USER, uid, null)
             val user = lockUser(uid) ?: throw IllegalArgumentException("用户不存在: $uid")
             hooks.afterUserLock(CredentialMutation.UNBAN_USER, uid, null)
-            if (user[Users.status] != STATUS_ACTIVE) {
+            if (user[Users.status] != UserStatus.ACTIVE) {
                 val nextRevision = checkedNextUserRevision(user[Users.revision])
                 Users.update({ Users.uid eq uid }) {
-                    it[status] = STATUS_ACTIVE
+                    it[status] = Devices.STATUS_ACTIVE
                     it[revision] = nextRevision
                     it[updatedAt] = clock()
                 }
@@ -433,10 +434,10 @@ class ExposedCredentialRepository(
                         (Credentials.tokenHash eq tokenHash(token)) and
                             (Credentials.tokenType eq TYPE_ACCESS) and
                             (Credentials.expiresAt greaterEq now) and
-                            (Users.status eq STATUS_ACTIVE) and
+                            (Users.status eq UserStatus.ACTIVE) and
                             (Users.role eq UserRole.HUMAN) and
                             (Users.credentialEpoch eq Credentials.userCredentialEpoch) and
-                            (Devices.status eq STATUS_ACTIVE) and
+                            (Devices.status eq Devices.STATUS_ACTIVE) and
                             (Devices.credentialEpoch eq Credentials.deviceCredentialEpoch)
                     }
                     .singleOrNull()
@@ -477,11 +478,11 @@ class ExposedCredentialRepository(
                     .selectAll()
                     .where {
                         (Users.uid eq uid) and
-                            (Users.status eq STATUS_ACTIVE) and
+                            (Users.status eq UserStatus.ACTIVE) and
                             (Users.role eq UserRole.HUMAN) and
                             (Users.credentialEpoch eq userCredentialEpoch) and
                             (Devices.deviceId eq deviceId) and
-                            (Devices.status eq STATUS_ACTIVE) and
+                            (Devices.status eq Devices.STATUS_ACTIVE) and
                             (Devices.credentialEpoch eq deviceCredentialEpoch)
                     }
                     .limit(1)
@@ -526,14 +527,14 @@ class ExposedCredentialRepository(
                 it[deviceName] = device.deviceName
                 it[deviceModel] = device.deviceModel
                 it[deviceFlag] = device.deviceFlag
-                it[status] = STATUS_ACTIVE
+                it[status] = Devices.STATUS_ACTIVE
                 it[credentialEpoch] = epoch
                 it[lastLogin] = now
                 it[createdAt] = now
             }
             return epoch
         }
-        if (existing[Devices.status] == STATUS_REVOKED) {
+        if (existing[Devices.status] == Devices.STATUS_REVOKED) {
             // 重新激活的设备 id 是一个新的已鉴权安装世代。它绝不能
             // 继承已退休世代的运行时档案或精确诊断采集规则。
             deleteTelemetryInstallationControl(uid, device.deviceId)
@@ -556,7 +557,7 @@ class ExposedCredentialRepository(
         }
 
         val reclaimed = Devices.selectAll()
-            .where { (Devices.uid eq uid) and (Devices.status eq STATUS_REVOKED) }
+            .where { (Devices.uid eq uid) and (Devices.status eq Devices.STATUS_REVOKED) }
             .orderBy(
                 Devices.lastLogin to SortOrder.ASC,
                 Devices.createdAt to SortOrder.ASC,
@@ -603,7 +604,7 @@ class ExposedCredentialRepository(
             it[deviceName] = device.deviceName
             it[deviceModel] = device.deviceModel
             it[deviceFlag] = device.deviceFlag
-            it[status] = STATUS_ACTIVE
+            it[status] = Devices.STATUS_ACTIVE
             it[credentialEpoch] = epoch
             it[lastLogin] = now
         }
@@ -721,8 +722,6 @@ class ExposedCredentialRepository(
 
     private companion object {
         const val INITIAL_USER_CREDENTIAL_EPOCH = 1L
-        const val STATUS_ACTIVE = 1
-        const val STATUS_REVOKED = 2
         const val TYPE_ACCESS = 1
         const val TYPE_REFRESH = 2
         const val TOKEN_BYTES = 32

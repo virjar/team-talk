@@ -20,8 +20,8 @@ class ExposedChatDraftRepository(private val maxActiveDrafts: Int = 1_000) : Cha
         val readable = GroupMembers.join(Chats, JoinType.INNER, GroupMembers.chatId, Chats.chatId)
             .join(OrganizationManagedChatProjections, JoinType.LEFT, Chats.chatId, OrganizationManagedChatProjections.chatId)
             .select(GroupMembers.uid).where {
-                (Chats.chatId eq chatId) and (Chats.status eq 1) and (GroupMembers.uid eq uid) and
-                    (GroupMembers.status eq 1) and (OrganizationManagedChatProjections.chatId.isNull() or (
+                (Chats.chatId eq chatId) and (Chats.status eq Chats.STATUS_ACTIVE) and (GroupMembers.uid eq uid) and
+                    (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) and (OrganizationManagedChatProjections.chatId.isNull() or (
                         (OrganizationManagedChatProjections.desiredActive eq true) and
                             (OrganizationManagedChatProjections.desiredRevision eq OrganizationManagedChatProjections.appliedRevision) and
                             OrganizationManagedChatProjections.lastFailure.isNull()))

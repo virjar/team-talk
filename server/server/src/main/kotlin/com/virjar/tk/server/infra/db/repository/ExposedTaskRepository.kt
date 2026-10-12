@@ -14,6 +14,8 @@ import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import org.jetbrains.exposed.sql.statements.UpdateBuilder
+import com.virjar.tk.protocol.model.ChatType
+import com.virjar.tk.protocol.model.OrganizationUnit
 
 class ExposedTaskRepository : TaskRepository {
     private val json = Json { ignoreUnknownKeys = true }
@@ -46,8 +48,8 @@ class ExposedTaskRepository : TaskRepository {
                     .join(GroupChats, JoinType.INNER, Chats.chatId, GroupChats.chatId)
                     .join(OrganizationManagedChatProjections, JoinType.LEFT, Chats.chatId, OrganizationManagedChatProjections.chatId)
                 membership.select(GroupMembers.uid).where {
-                    (Chats.chatId eq contextId) and (Chats.chatType eq 2) and (Chats.status eq 1) and
-                        (GroupMembers.uid eq actorUid) and (GroupMembers.status eq 1) and
+                    (Chats.chatId eq contextId) and (Chats.chatType eq ChatType.GROUP.code) and (Chats.status eq Chats.STATUS_ACTIVE) and
+                        (GroupMembers.uid eq actorUid) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) and
                         (OrganizationManagedChatProjections.chatId.isNull() or (
                             (OrganizationManagedChatProjections.desiredActive eq true) and
                                 (OrganizationManagedChatProjections.desiredRevision eq OrganizationManagedChatProjections.appliedRevision) and
@@ -59,7 +61,7 @@ class ExposedTaskRepository : TaskRepository {
                 OrganizationMemberships.join(OrganizationUnits, JoinType.INNER, OrganizationMemberships.unitId, OrganizationUnits.unitId)
                     .join(target, JoinType.INNER, additionalConstraint = { target[OrganizationUnits.unitId] eq contextId })
                     .select(OrganizationMemberships.uid).where {
-                        (OrganizationMemberships.uid eq actorUid) and (OrganizationUnits.status eq 1) and
+                        (OrganizationMemberships.uid eq actorUid) and (OrganizationUnits.status eq OrganizationUnit.STATUS_ACTIVE) and
                             (target[OrganizationUnits.status] eq 1)
                     }.limit(1).any()
             }
@@ -229,7 +231,7 @@ class ExposedTaskRepository : TaskRepository {
             .join(GroupChats, JoinType.INNER, Chats.chatId, GroupChats.chatId)
             .join(OrganizationManagedChatProjections, JoinType.LEFT, Chats.chatId, OrganizationManagedChatProjections.chatId)
             .select(GroupMembers.uid).where {
-                (Chats.chatId eq groupId) and (Chats.chatType eq 2) and (Chats.status eq 1) and (GroupMembers.status eq 1) and
+                (Chats.chatId eq groupId) and (Chats.chatType eq ChatType.GROUP.code) and (Chats.status eq Chats.STATUS_ACTIVE) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) and
                     (OrganizationManagedChatProjections.chatId.isNull() or ((OrganizationManagedChatProjections.desiredActive eq true) and
                         (OrganizationManagedChatProjections.desiredRevision eq OrganizationManagedChatProjections.appliedRevision) and
                         OrganizationManagedChatProjections.lastFailure.isNull()))

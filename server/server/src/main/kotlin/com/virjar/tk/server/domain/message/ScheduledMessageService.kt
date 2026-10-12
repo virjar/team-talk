@@ -131,10 +131,11 @@ class ScheduledMessageService(
     )
 
     companion object {
-        const val STATUS_WAITING = 0
-        const val STATUS_CANCELLED = 2
-        const val STATUS_DELIVERED = 1
-        const val STATUS_FAILED = 3
+        /** 状态值与 wire 投影 [ScheduledMessage.STATUS_*] 共用同一事实源。 */
+        const val STATUS_WAITING = ScheduledMessage.STATUS_WAITING
+        const val STATUS_CANCELLED = ScheduledMessage.STATUS_CANCELLED
+        const val STATUS_DELIVERED = ScheduledMessage.STATUS_DELIVERED
+        const val STATUS_FAILED = ScheduledMessage.STATUS_FAILED
 
         const val DELIVER_BATCH = 50
         const val CLOCK_SKEW_TOLERANCE_MILLIS = 60_000L

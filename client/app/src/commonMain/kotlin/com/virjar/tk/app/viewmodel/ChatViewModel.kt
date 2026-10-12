@@ -37,6 +37,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.virjar.tk.protocol.model.ChatType
 
 /** 带一个有界 [LocalCache.pager] 租约和显式退役的 chat 状态 owner。 */
 class ChatViewModel(
@@ -197,7 +198,7 @@ class ChatViewModel(
 
     /** 私聊对端 uid（仅 chatType=1 非空）；@ 可见性按会话范围过滤候选（内测 T047）。 */
     val chatPeerUid: StateFlow<String?> = localCache.observeConversation(chatId)
-        .map { conversation -> conversation?.takeIf { it.chatType == 1 }?.peerUid }
+        .map { conversation -> conversation?.takeIf { it.chatType == ChatType.PERSONAL.code }?.peerUid }
         .stateIn(scope, SharingStarted.Eagerly, null)
 
     /**

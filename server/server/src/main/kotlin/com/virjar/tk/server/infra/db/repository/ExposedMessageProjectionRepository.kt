@@ -54,7 +54,7 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
         }
 
         val chat = Chats.selectAll().where {
-            (Chats.chatId eq operation.message.chatId) and (Chats.status eq 1)
+            (Chats.chatId eq operation.message.chatId) and (Chats.status eq Chats.STATUS_ACTIVE)
         }.forUpdate().singleOrNull()
             ?: return MessageProjectionApplyResult(applied = true, recipients = emptyList())
         val chatType = chat[Chats.chatType]
@@ -446,7 +446,7 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
         }
 
         val memberUids = GroupMembers.select(GroupMembers.uid).where {
-            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.orderBy(GroupMembers.uid to SortOrder.ASC)
             .map { row -> row[GroupMembers.uid] }
         val usersByUid = if (memberUids.isEmpty()) {

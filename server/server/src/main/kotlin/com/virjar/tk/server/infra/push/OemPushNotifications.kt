@@ -5,23 +5,19 @@ import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.model.AuthRules
 import com.virjar.tk.protocol.model.ConversationCapacityPolicy
 import com.virjar.tk.protocol.model.Message
+import com.virjar.tk.protocol.model.UserStatus
 import com.virjar.tk.server.domain.message.MessageRepository
 import com.virjar.tk.server.infra.db.*
 import com.virjar.tk.server.infra.db.repository.ExposedConversationRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.greater
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.lessEq
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.security.MessageDigest
-import java.util.UUID
+import java.util.*
 
 /** 移动端提示共享持久的同步分发事务；只有 HTTP 投递尝试发生在事务之外。 */
 internal class OemPushNotifications(
@@ -90,7 +86,7 @@ internal class OemPushNotifications(
             val device = Devices.selectAll().where {
                 (Devices.uid eq uid) and (Devices.deviceId eq deviceId)
             }.forUpdate().singleOrNull() ?: return@transaction false
-            if (user[Users.status] != 1 || device[Devices.status] != 1 ||
+            if (user[Users.status] != UserStatus.ACTIVE || device[Devices.status] != Devices.STATUS_ACTIVE ||
                 device[Devices.credentialEpoch] != deviceCredentialEpoch ||
                 device[Devices.deviceFlag] != deviceFlag
             ) return@transaction false
@@ -230,9 +226,9 @@ internal class OemPushNotifications(
         val credential = Credentials.join(Users, JoinType.INNER, Credentials.uid, Users.uid)
             .join(Devices, JoinType.INNER, Credentials.uid, Devices.uid).selectAll().where {
             (Credentials.tokenHash eq refreshHash) and (Credentials.tokenType eq REFRESH_TOKEN_TYPE) and
-                (Credentials.expiresAt greater clock()) and (Users.status eq 1) and
+                (Credentials.expiresAt greater clock()) and (Users.status eq UserStatus.ACTIVE) and
                 (Users.credentialEpoch eq Credentials.userCredentialEpoch) and
-                (Devices.deviceId eq Credentials.deviceId) and (Devices.status eq 1) and
+                (Devices.deviceId eq Credentials.deviceId) and (Devices.status eq Devices.STATUS_ACTIVE) and
                 (Devices.credentialEpoch eq Credentials.deviceCredentialEpoch) and
                 (Devices.deviceFlag eq deviceFlag)
         }.singleOrNull() ?: return null

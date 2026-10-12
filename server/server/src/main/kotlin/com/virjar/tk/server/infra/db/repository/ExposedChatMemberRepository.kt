@@ -59,21 +59,21 @@ class ExposedChatMemberRepository internal constructor(
     override fun getMembers(chatId: String): List<Member> {
         return transaction(database) {
             GroupMembers.selectAll()
-                .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
+                .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) }
                 .map { it.toMember() }
         }
     }
 
     override fun getActiveChatIds(uid: String): Set<String> = transaction(database) {
         GroupMembers.selectAll()
-            .where { (GroupMembers.uid eq uid) and (GroupMembers.status eq 1) }
+            .where { (GroupMembers.uid eq uid) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) }
             .mapTo(linkedSetOf()) { it[GroupMembers.chatId] }
     }
 
     override fun getActiveChatIds(transaction: PgReadTransactionContext, uid: String): Set<String> =
         inReadTransaction(transaction) {
             GroupMembers.selectAll()
-                .where { (GroupMembers.uid eq uid) and (GroupMembers.status eq 1) }
+                .where { (GroupMembers.uid eq uid) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) }
                 .mapTo(linkedSetOf()) { it[GroupMembers.chatId] }
         }
 
@@ -116,7 +116,7 @@ class ExposedChatMemberRepository internal constructor(
         GroupMembers.selectAll().where {
             (GroupMembers.chatId eq chatId) and
                 (GroupMembers.uid eq uid) and
-                (GroupMembers.status eq 1)
+                (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.singleOrNull()?.toMember()
     }
 
@@ -125,7 +125,7 @@ class ExposedChatMemberRepository internal constructor(
         chatId: String,
     ): List<String> = inReadTransaction(transaction) {
         GroupMembers.selectAll().where {
-            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.orderBy(GroupMembers.uid, SortOrder.ASC).map { it[GroupMembers.uid] }
     }
 
@@ -142,7 +142,7 @@ class ExposedChatMemberRepository internal constructor(
         // 成员资格与禁言锁在每个进程上都严格位于该缝隙之后。
         afterChatLocked()
         val members = GroupMembers.selectAll().where {
-            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate().map(ResultRow::toMember)
         val sender = members.firstOrNull { it.uid == senderUid }
         val senderMuted = GroupMemberMutes.selectAll().where {
@@ -177,7 +177,7 @@ class ExposedChatMemberRepository internal constructor(
         hooks.hit(ChatMemberRepositoryStage.AFTER_CHAT_LOCK, chatId)
         lockRequiredHumanUsers(requiredHumanUids)
         val activeMembers = GroupMembers.selectAll().where {
-            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate()
             .map(ResultRow::toMember)
         val membersByUid = activeMembers.associateBy(Member::uid)
@@ -303,7 +303,7 @@ class ExposedChatMemberRepository internal constructor(
         // 绝不要在此重新查询缺失的 Chat：如果该 id 被并发重建，在 User/Bot 锁
         // 之后再获取那行新数据，就会颠倒全局的 Chat -> User -> Bot 顺序。
         val activeMembers = GroupMembers.selectAll().where {
-            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate().toList()
         val activeByUid = activeMembers.associateBy { it[GroupMembers.uid] }
         val targetRow = activeByUid[uid] ?: GroupMembers.selectAll().where {
@@ -332,7 +332,7 @@ class ExposedChatMemberRepository internal constructor(
             GroupMembers.update({
                 (GroupMembers.chatId eq chatId) and
                     (GroupMembers.uid eq uid) and
-                    (GroupMembers.status eq 1)
+                    (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
             }) { it[GroupMembers.status] = 0 } > 0
         val muteDeleted = muteRows.isNotEmpty() && GroupMemberMutes.deleteWhere {
             (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq uid)
@@ -392,7 +392,7 @@ class ExposedChatMemberRepository internal constructor(
         val chatRow = lockChat(chatId, requireActiveChat)
         if (validateHumanActors) lockRemovalHumanUsers(operatorUid, targetUid)
         val activeMembers = GroupMembers.selectAll().where {
-            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate()
             .map(ResultRow::toMember)
         val membersByUid = activeMembers.associateBy(Member::uid)
@@ -418,7 +418,7 @@ class ExposedChatMemberRepository internal constructor(
         val changed = GroupMembers.update({
             (GroupMembers.chatId eq chatId) and
                 (GroupMembers.uid eq targetUid) and
-                (GroupMembers.status eq 1)
+                (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }) { it[GroupMembers.status] = 0 }
         check(changed == 1) { "Locked target membership changed before removal" }
         GroupMemberMutes.selectAll().where {
@@ -475,12 +475,12 @@ class ExposedChatMemberRepository internal constructor(
         check(GroupMembers.update({
             (GroupMembers.chatId eq chatId) and
                 (GroupMembers.uid eq oldOwnerUid) and
-                (GroupMembers.status eq 1)
+                (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }) { it[GroupMembers.role] = 1 } == 1) { "操作者成员身份在锁定后发生变化" }
         check(GroupMembers.update({
             (GroupMembers.chatId eq chatId) and
                 (GroupMembers.uid eq newOwnerUid) and
-                (GroupMembers.status eq 1)
+                (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }) { it[GroupMembers.role] = 2 } == 1) { "目标成员身份在锁定后发生变化" }
         check(GroupChats.update({ GroupChats.chatId eq chatId }) {
             it[GroupChats.creator] = newOwnerUid
@@ -515,7 +515,7 @@ class ExposedChatMemberRepository internal constructor(
         check(GroupMembers.update({
             (GroupMembers.chatId eq chatId) and
                 (GroupMembers.uid eq targetUid) and
-                (GroupMembers.status eq 1)
+                (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }) { it[GroupMembers.role] = role } == 1) { "目标成员身份在锁定后发生变化" }
         ChatMutation(before, members.map(Member::uid))
     }
@@ -589,7 +589,7 @@ class ExposedChatMemberRepository internal constructor(
     private fun lockActiveChat(chatId: String): ResultRow = lockChat(chatId, requireActive = true)
 
     private fun lockActiveMembers(chatId: String): List<Member> = GroupMembers.selectAll().where {
-        (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+        (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
     }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate().map(ResultRow::toMember)
 
     private fun lockRequiredHumanUsers(uids: Collection<String>) {
@@ -626,7 +626,7 @@ class ExposedChatMemberRepository internal constructor(
     private fun projectedChatIdsInternal(uid: String): Set<String> = buildSet {
         addAll(
             GroupMembers.selectAll().where {
-                (GroupMembers.uid eq uid) and (GroupMembers.status eq 1)
+                (GroupMembers.uid eq uid) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
             }.map { it[GroupMembers.chatId] },
         )
         addAll(

@@ -15,6 +15,7 @@ import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.User
 import kotlinx.serialization.Serializable
+import com.virjar.tk.protocol.model.ChatType
 
 /**
  * 管理后台聚合服务：运维查询与治理操作。
@@ -57,7 +58,7 @@ class AdminService internal constructor(
             user = user,
             devices = deviceRepository.getDevices(uid),
             friends = contactRepository.listFriends(uid),
-            groups = chatRepository.listUserChats(uid).filter { it.chatType == 2 },
+            groups = chatRepository.listUserChats(uid).filter { it.chatType == ChatType.GROUP.code },
             online = onlineSessions.isOnline(uid),
         )
     }

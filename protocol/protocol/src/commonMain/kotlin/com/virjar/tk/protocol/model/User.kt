@@ -98,9 +98,10 @@ object UserRole {
     const val SYSTEM = 20
 }
 
-/** 用户账号状态；服务端是唯一权威，客户端只消费投影。 */
+/** 用户账号状态；服务端是唯一权威，客户端只消费投影。与 users 表 status 列共用值空间。 */
 object UserStatus {
     const val ACTIVE = 1
+    const val BANNED = 2
 }
 
 /** 各业务入口共用的“活动普通用户”判定；封禁或服务身份都不是有效业务 actor。 */

@@ -63,7 +63,7 @@ class ExposedContactRepository internal constructor(
 
     override fun listFriends(uid: String): List<Contact> = transaction(database) {
         val contacts = friendUserJoin().selectAll()
-            .where { (Friends.uid eq uid) and (Friends.status eq 1) }
+            .where { (Friends.uid eq uid) and (Friends.status eq Contact.STATUS_NORMAL) }
             .orderBy(Friends.friendUid, SortOrder.ASC)
             .limit(capacity.friendsPerUser + 1)
             .map { row ->
@@ -110,7 +110,7 @@ class ExposedContactRepository internal constructor(
         }
 
     private fun listFriendUidsInCurrentTransaction(uid: String): Set<String> {
-        val friendUids = Friends.selectAll().where { (Friends.uid eq uid) and (Friends.status eq 1) }
+        val friendUids = Friends.selectAll().where { (Friends.uid eq uid) and (Friends.status eq Contact.STATUS_NORMAL) }
             .orderBy(Friends.friendUid, SortOrder.ASC)
             .limit(capacity.friendsPerUser + 1)
             .mapTo(linkedSetOf()) { it[Friends.friendUid] }
@@ -121,14 +121,14 @@ class ExposedContactRepository internal constructor(
     override fun isFriend(uid: String, friendUid: String): Boolean {
         return transaction(database) {
             Friends.selectAll().where {
-                (Friends.uid eq uid) and (Friends.friendUid eq friendUid) and (Friends.status eq 1)
+                (Friends.uid eq uid) and (Friends.friendUid eq friendUid) and (Friends.status eq Contact.STATUS_NORMAL)
             }.count() > 0
         }
     }
 
     override fun isBlocked(uid: String, targetUid: String): Boolean = transaction(database) {
         Friends.selectAll().where {
-            (Friends.uid eq uid) and (Friends.friendUid eq targetUid) and (Friends.status eq 2)
+            (Friends.uid eq uid) and (Friends.friendUid eq targetUid) and (Friends.status eq Contact.STATUS_BLOCKED)
         }.limit(1).any()
     }
 
@@ -147,27 +147,27 @@ class ExposedContactRepository internal constructor(
                 (Friends.uid eq uid) and (Friends.friendUid eq friendUid)
             }) {
                 it[Friends.remark] = remark
-                it[Friends.status] = 1
+                it[Friends.status] = Contact.STATUS_NORMAL
             }
             if (firstUpdated == 0) {
                 Friends.insert {
                     it[Friends.uid] = uid
                     it[Friends.friendUid] = friendUid
                     it[Friends.remark] = remark
-                    it[Friends.status] = 1
+                    it[Friends.status] = Contact.STATUS_NORMAL
                     it[Friends.createdAt] = now
                 }
             }
             val secondUpdated = Friends.update({
                 (Friends.uid eq friendUid) and (Friends.friendUid eq uid)
             }) {
-                it[Friends.status] = 1
+                it[Friends.status] = Contact.STATUS_NORMAL
             }
             if (secondUpdated == 0) {
                 Friends.insert {
                     it[Friends.uid] = friendUid
                     it[Friends.friendUid] = uid
-                    it[Friends.status] = 1
+                    it[Friends.status] = Contact.STATUS_NORMAL
                     it[Friends.createdAt] = now
                 }
             }
@@ -183,16 +183,16 @@ class ExposedContactRepository internal constructor(
         val actorRemoved = Friends.update({
             (Friends.uid eq uid) and
                 (Friends.friendUid eq friendUid) and
-                (Friends.status eq 1)
+                (Friends.status eq Contact.STATUS_NORMAL)
         }) {
-            it[status] = 0
+            it[status] = ContactApplyRecord.STATUS_PENDING
         } > 0
         val targetRemoved = Friends.update({
             (Friends.uid eq friendUid) and
                 (Friends.friendUid eq uid) and
-                (Friends.status eq 1)
+                (Friends.status eq Contact.STATUS_NORMAL)
         }) {
-            it[status] = 0
+            it[status] = ContactApplyRecord.STATUS_PENDING
         } > 0
         ContactPairMutationResult(
             actorChanged = actorRemoved,
@@ -208,7 +208,7 @@ class ExposedContactRepository internal constructor(
     ): Contact? = inWriteTransaction(transaction) {
         lockUserPair(uid, friendUid)
         val row = friendUserJoin().selectAll().where {
-            (Friends.uid eq uid) and (Friends.friendUid eq friendUid) and (Friends.status eq 1)
+            (Friends.uid eq uid) and (Friends.friendUid eq friendUid) and (Friends.status eq Contact.STATUS_NORMAL)
         }.singleOrNull() ?: throw IllegalArgumentException("只能为好友设置备注")
         if (row[Friends.remark] == remark) return@inWriteTransaction null
         Friends.update({ (Friends.uid eq uid) and (Friends.friendUid eq friendUid) }) {
@@ -239,7 +239,7 @@ class ExposedContactRepository internal constructor(
             null -> Friends.insert {
                 it[Friends.uid] = uid
                 it[Friends.friendUid] = targetUid
-                it[Friends.status] = 2
+                it[Friends.status] = Contact.STATUS_BLOCKED
                 it[Friends.createdAt] = System.currentTimeMillis()
             }
             0, 1 -> {
@@ -258,9 +258,9 @@ class ExposedContactRepository internal constructor(
         // 拉黑会终止双方用户的好友投影。之后解除拉黑
         // 绝不能在没有新请求的情况下静默重建关系。
         val targetFriendshipRemoved = Friends.update({
-            (Friends.uid eq targetUid) and (Friends.friendUid eq uid) and (Friends.status eq 1)
+            (Friends.uid eq targetUid) and (Friends.friendUid eq uid) and (Friends.status eq Contact.STATUS_NORMAL)
         }) {
-            it[status] = 0
+            it[status] = ContactApplyRecord.STATUS_PENDING
         } > 0
 
         // 拉黑在关系语义上同时终止双方之间尚未处理的申请。否则 apply 先完成、
@@ -285,15 +285,15 @@ class ExposedContactRepository internal constructor(
     override fun removeFromBlacklist(transaction: PgWriteTransactionContext, uid: String, targetUid: String) {
         inWriteTransaction(transaction) {
             lockUserPair(uid, targetUid)
-            Friends.update({ (Friends.uid eq uid) and (Friends.friendUid eq targetUid) and (Friends.status eq 2) }) {
-                it[status] = 0
+            Friends.update({ (Friends.uid eq uid) and (Friends.friendUid eq targetUid) and (Friends.status eq Contact.STATUS_BLOCKED) }) {
+                it[status] = ContactApplyRecord.STATUS_PENDING
             }
         }
     }
 
     override fun listBlacklist(uid: String): List<Contact> = transaction(database) {
         val contacts = friendUserJoin().selectAll()
-            .where { (Friends.uid eq uid) and (Friends.status eq 2) }
+            .where { (Friends.uid eq uid) and (Friends.status eq Contact.STATUS_BLOCKED) }
             .orderBy(Friends.friendUid, SortOrder.ASC)
             .limit(capacity.blacklistEntriesPerUser + 1)
             .map { row ->
@@ -323,14 +323,14 @@ class ExposedContactRepository internal constructor(
             val blocked = Friends.selectAll().where {
                 ((((Friends.uid eq fromUid) and (Friends.friendUid eq toUid)) or
                     ((Friends.uid eq toUid) and (Friends.friendUid eq fromUid))) and
-                    (Friends.status eq 2))
+                    (Friends.status eq Contact.STATUS_BLOCKED))
             }.limit(1).any()
             require(!blocked) { "黑名单关系下不能发起好友申请" }
 
             val alreadyFriends = Friends.selectAll().where {
                 ((((Friends.uid eq fromUid) and (Friends.friendUid eq toUid)) or
                     ((Friends.uid eq toUid) and (Friends.friendUid eq fromUid))) and
-                    (Friends.status eq 1))
+                    (Friends.status eq Contact.STATUS_NORMAL))
             }.limit(1).any()
             require(!alreadyFriends) { "已经是好友" }
 
@@ -443,7 +443,7 @@ class ExposedContactRepository internal constructor(
         val blocked = Friends.selectAll().where {
             (((Friends.uid eq fromUid) and (Friends.friendUid eq toUid)) or
                 ((Friends.uid eq toUid) and (Friends.friendUid eq fromUid))) and
-                (Friends.status eq 2)
+                (Friends.status eq Contact.STATUS_BLOCKED)
         }.limit(1).any()
         require(!blocked) { "对方已在黑名单中，不能建立好友关系" }
 
@@ -463,23 +463,23 @@ class ExposedContactRepository internal constructor(
         // 已删除/拉黑的关系行保留其唯一身份，因此在插入之前先复活。
         val fromUpdated = Friends.update({
             (Friends.uid eq fromUid) and (Friends.friendUid eq toUid)
-        }) { it[Friends.status] = 1 }
+        }) { it[Friends.status] = Contact.STATUS_NORMAL }
         if (fromUpdated == 0) {
             Friends.insert {
                 it[Friends.uid] = fromUid
                 it[Friends.friendUid] = toUid
-                it[Friends.status] = 1
+                it[Friends.status] = Contact.STATUS_NORMAL
                 it[Friends.createdAt] = updatedAt
             }
         }
         val toUpdated = Friends.update({
             (Friends.uid eq toUid) and (Friends.friendUid eq fromUid)
-        }) { it[Friends.status] = 1 }
+        }) { it[Friends.status] = Contact.STATUS_NORMAL }
         if (toUpdated == 0) {
             Friends.insert {
                 it[Friends.uid] = toUid
                 it[Friends.friendUid] = fromUid
-                it[Friends.status] = 1
+                it[Friends.status] = Contact.STATUS_NORMAL
                 it[Friends.createdAt] = updatedAt
             }
         }
@@ -528,7 +528,7 @@ class ExposedContactRepository internal constructor(
     override fun listPendingApplies(uid: String): List<ContactApply> {
         return transaction(database) {
             val pending = applySenderJoin().selectAll()
-                .where { (FriendApplies.toUid eq uid) and (FriendApplies.status eq 0) }
+                .where { (FriendApplies.toUid eq uid) and (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING) }
                 .orderBy(FriendApplies.id, SortOrder.DESC)
                 .limit(capacity.incomingPendingAppliesPerUser + 1)
                 .map { row ->
@@ -562,7 +562,7 @@ class ExposedContactRepository internal constructor(
             val alreadyFriends = Friends.selectAll().where {
                 ((((Friends.uid eq uid) and (Friends.friendUid eq targetUid)) or
                     ((Friends.uid eq targetUid) and (Friends.friendUid eq uid))) and
-                    (Friends.status eq 1))
+                    (Friends.status eq Contact.STATUS_NORMAL))
             }.limit(1).any()
             if (alreadyFriends) return@transaction null
 
@@ -693,7 +693,7 @@ class ExposedContactRepository internal constructor(
 
     private fun activeContact(uid: String, friendUid: String, friendUser: User): Contact {
         val row = Friends.selectAll().where {
-            (Friends.uid eq uid) and (Friends.friendUid eq friendUid) and (Friends.status eq 1)
+            (Friends.uid eq uid) and (Friends.friendUid eq friendUid) and (Friends.status eq Contact.STATUS_NORMAL)
         }.single()
         return Contact(
             uid = uid,

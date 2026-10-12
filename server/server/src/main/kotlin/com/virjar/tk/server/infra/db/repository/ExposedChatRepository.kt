@@ -34,6 +34,8 @@ import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
+import com.virjar.tk.protocol.model.ChatType
+import com.virjar.tk.protocol.model.Contact
 
 enum class ChatRepositoryStage {
     BEFORE_CHAT_LOCK,
@@ -76,7 +78,7 @@ class ExposedChatRepository(
         val blocked = Friends.selectAll().where {
             (((Friends.uid eq uid1) and (Friends.friendUid eq uid2)) or
                 ((Friends.uid eq uid2) and (Friends.friendUid eq uid1))) and
-                (Friends.status eq 2)
+                (Friends.status eq Contact.STATUS_BLOCKED)
         }.orderBy(Friends.id, SortOrder.ASC).forUpdate().any()
         require(!blocked) { "黑名单关系下不能创建私聊" }
 
@@ -100,7 +102,7 @@ class ExposedChatRepository(
         val now = System.currentTimeMillis()
         Chats.insert {
             it[Chats.chatId] = chatId
-            it[Chats.chatType] = 1
+            it[Chats.chatType] = ChatType.PERSONAL.code
             it[Chats.personalKey] = personalChatKey(uid1, uid2)
             it[Chats.maxSeq] = 0
             it[Chats.status] = 1
@@ -134,8 +136,8 @@ class ExposedChatRepository(
         val existingChatId = Chats.selectAll()
             .where {
                 (Chats.personalKey eq savedChatKey(uid)) and
-                    (Chats.chatType eq 3) and
-                    (Chats.status eq 1)
+                    (Chats.chatType eq ChatType.SAVED.code) and
+                    (Chats.status eq Chats.STATUS_ACTIVE)
             }
             .singleOrNull()
             ?.get(Chats.chatId)
@@ -197,7 +199,7 @@ class ExposedChatRepository(
         val blocked = Friends.selectAll().where {
             (((Friends.uid eq uid) and (Friends.friendUid eq systemUid)) or
                 ((Friends.uid eq systemUid) and (Friends.friendUid eq uid))) and
-                (Friends.status eq 2)
+                (Friends.status eq Contact.STATUS_BLOCKED)
         }.limit(1).any()
         require(!blocked) { "黑名单关系下不能创建私聊" }
 
@@ -221,7 +223,7 @@ class ExposedChatRepository(
         val now = System.currentTimeMillis()
         Chats.insert {
             it[Chats.chatId] = chatId
-            it[Chats.chatType] = 1
+            it[Chats.chatType] = ChatType.PERSONAL.code
             it[Chats.personalKey] = personalChatKey(uid, systemUid)
             it[Chats.maxSeq] = 0
             it[Chats.status] = 1
@@ -268,7 +270,7 @@ class ExposedChatRepository(
         val now = System.currentTimeMillis()
         Chats.insert {
             it[Chats.chatId] = chatId
-            it[Chats.chatType] = 2
+            it[Chats.chatType] = ChatType.GROUP.code
             it[Chats.maxSeq] = 0
             it[Chats.status] = 1
             it[Chats.createdAt] = now
@@ -323,7 +325,7 @@ class ExposedChatRepository(
         val chat = checkNotNull(getChatByIdInternal(chatId)) {
             "Group creation receipt points to an inactive or missing chat"
         }
-        check(chat.chatType == 2 && chat.creator == command.creatorUid) {
+        check(chat.chatType == ChatType.GROUP.code && chat.creator == command.creatorUid) {
             "Group creation receipt result identity is inconsistent"
         }
         return ChatCreation(chat = chat, created = false, recipientUids = emptyList())
@@ -401,7 +403,7 @@ class ExposedChatRepository(
             // 每个成员资格写入器都先取 Chat 行。它会把此活跃成员数
             // 谓词与添加、另一次邀请、Bot 授权/恢复及托管对账序列化。
             val activeMemberCount = GroupMembers.selectAll().where {
-                (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+                (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
             }.count()
             if (activeMemberCount > GroupPolicy.MAX_MEMBERS.toLong()) {
                 throw IllegalArgumentException(GroupPolicy.CAPACITY_LIMIT_REASON)
@@ -437,7 +439,7 @@ class ExposedChatRepository(
         ensureConversation(uid = uid, chatId = chatId, chatType = 2, now = nowMillis)
         val chat = getChatByIdInternal(chatId) ?: throw IllegalArgumentException("聊天不存在")
         val members = GroupMembers.selectAll()
-            .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
+            .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) }
             .map(ResultRow::toMemberSnapshot)
         InviteJoinResult(chat = chat, joined = joined, members = members)
     }
@@ -591,7 +593,7 @@ class ExposedChatRepository(
             .forUpdate()
             .toList()
         val memberRows = GroupMembers.selectAll()
-            .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
+            .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) }
             .orderBy(GroupMembers.uid, SortOrder.ASC)
             .forUpdate()
             .toList()
@@ -642,11 +644,11 @@ class ExposedChatRepository(
     override fun listUserChats(uid: String): List<Chat> {
         return transaction(database) {
             val chatIds = GroupMembers.selectAll()
-                .where { (GroupMembers.uid eq uid) and (GroupMembers.status eq 1) }
+                .where { (GroupMembers.uid eq uid) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) }
                 .map { it[GroupMembers.chatId] }.toSet()
 
             Chats.selectAll()
-                .where { (Chats.chatId inList chatIds) and (Chats.status eq 1) }
+                .where { (Chats.chatId inList chatIds) and (Chats.status eq Chats.STATUS_ACTIVE) }
                 .map { row -> buildChatFromRow(row) }
         }
     }
@@ -657,8 +659,8 @@ class ExposedChatRepository(
         return Chats.selectAll()
             .where {
                 (Chats.personalKey eq personalChatKey(uid1, uid2)) and
-                    (Chats.chatType eq 1) and
-                    (Chats.status eq 1)
+                    (Chats.chatType eq ChatType.PERSONAL.code) and
+                    (Chats.status eq Chats.STATUS_ACTIVE)
             }
             .singleOrNull()
             ?.get(Chats.chatId)
@@ -715,7 +717,7 @@ class ExposedChatRepository(
 
     private fun activeMembers(chatId: String, forUpdate: Boolean): List<Member> {
         val query = GroupMembers.selectAll()
-            .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
+            .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) }
             .orderBy(GroupMembers.uid, SortOrder.ASC)
         val rows = if (forUpdate) query.forUpdate().toList() else query.toList()
         return rows.map(ResultRow::toMemberSnapshot)
@@ -723,7 +725,7 @@ class ExposedChatRepository(
 
     private fun getChatByIdInternal(chatId: String): Chat? {
         val row = Chats.selectAll()
-            .where { (Chats.chatId eq chatId) and (Chats.status eq 1) }
+            .where { (Chats.chatId eq chatId) and (Chats.status eq Chats.STATUS_ACTIVE) }
             .singleOrNull() ?: return null
         return buildChatFromRow(row)
     }
@@ -739,7 +741,7 @@ class ExposedChatRepository(
 
         val gc = GroupChats.selectAll().where { GroupChats.chatId eq chatId }.singleOrNull()
         val memberCount = GroupMembers.selectAll()
-            .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
+            .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) }
             .count().toInt()
 
         return Chat(

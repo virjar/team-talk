@@ -20,6 +20,7 @@ import com.virjar.tk.protocol.NotifyType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import com.virjar.tk.protocol.model.ChatType
 
 private const val MAX_GROUP_AVATAR_LENGTH = 500
 private const val MAX_INVITE_LINK_NAME_LENGTH = 200
@@ -211,7 +212,7 @@ class ChatService(
                         val mutation = chats.updateGroupAvatar(
                             transaction, chatId, operatorUid, requested,
                         ) { facts ->
-                            require(facts.chat.chatType == 2) { "单聊没有群头像" }
+                            require(facts.chat.chatType == ChatType.GROUP.code) { "单聊没有群头像" }
                             if (managedChats.lockAuthority(transaction, listOf(chatId))
                                     .getValue(chatId).managed
                             ) {
@@ -279,7 +280,7 @@ class ChatService(
 
     suspend fun dissolveGroup(operatorUid: String, chatId: String) = lifecycleGate.withChat(chatId) {
         deactivateGroupWithDurableEvents(chatId, operatorUid) { facts ->
-            require(facts.chat.chatType == 2) { "单聊不能解散，请删除自己的会话视图" }
+            require(facts.chat.chatType == ChatType.GROUP.code) { "单聊不能解散，请删除自己的会话视图" }
             requireOwner(facts.operator)
         }
     }
@@ -322,7 +323,7 @@ class ChatService(
             uids = targets,
             requiredHumanUids = (targets + operatorUid).toSet(),
         ) { facts ->
-            require(facts.chat.chatType == 2) { "单聊不能添加成员" }
+            require(facts.chat.chatType == ChatType.GROUP.code) { "单聊不能添加成员" }
             val operator = facts.operator ?: throw IllegalArgumentException("操作者不是群成员")
             require(operator.role >= 1) { "需要管理员权限" }
         }
@@ -366,20 +367,20 @@ class ChatService(
             operatorUid = operatorUid,
             targetUid = targetUid,
         ) { facts ->
-            require(facts.chat.chatType == 2) { "单聊不能退出，请删除自己的会话视图" }
+            require(facts.chat.chatType == ChatType.GROUP.code) { "单聊不能退出，请删除自己的会话视图" }
             val operator = facts.operator
                 ?: throw IllegalArgumentException("操作者不是群成员")
             val target = facts.target
                 ?: throw IllegalArgumentException("目标不是群成员")
             if (operatorUid == targetUid) {
-                if (operator.role == 2) {
+                if (operator.role == Member.ROLE_OWNER) {
                     throw IllegalArgumentException("群主不能退出，请先转让群主")
                 }
             } else {
-                if (operator.role < 1) throw IllegalArgumentException("需要管理员权限")
+                if (operator.role < Member.ROLE_ADMIN) throw IllegalArgumentException("需要管理员权限")
                 requireHumanMemberTarget(targetUid)
-                if (target.role == 2) throw IllegalArgumentException("不能踢出群主")
-                if (target.role == 1 && operator.role != 2) {
+                if (target.role == Member.ROLE_OWNER) throw IllegalArgumentException("不能踢出群主")
+                if (target.role == Member.ROLE_ADMIN && operator.role != Member.ROLE_OWNER) {
                     throw IllegalArgumentException("只有群主能踢管理员")
                 }
             }
@@ -433,10 +434,10 @@ class ChatService(
                 operatorUid,
                 newOwnerUid,
             ) { facts ->
-                require(facts.chat.chatType == 2) { "群聊不存在" }
+                require(facts.chat.chatType == ChatType.GROUP.code) { "群聊不存在" }
                 requireOwner(facts.operator)
                 require(facts.target != null) { "目标不是群成员" }
-                require(facts.target.role != 2) { "目标已经是群主" }
+                require(facts.target.role != Member.ROLE_OWNER) { "目标已经是群主" }
             }
             mutation.recipientUids.forEach { uid ->
                 appendEvent(uid, NotifyType.MEMBER_ROLE_CHANGED, mutation.chat)
@@ -455,7 +456,7 @@ class ChatService(
         require(operatorUid != targetUid) { "群主不能修改自己的角色，请先转让群主" }
         requireHumanMemberTarget(targetUid)
         val target = access.requireGroupMember(targetUid, chatId, "目标不是群成员")
-        require(target.role != 2) { "不能直接修改群主角色，请使用转让群主" }
+        require(target.role != Member.ROLE_OWNER) { "不能直接修改群主角色，请使用转让群主" }
         unitOfWork.write {
             requireUserWritableAuthority(transaction, chatId)
             val mutation = members.setRole(
@@ -465,10 +466,10 @@ class ChatService(
                 targetUid,
                 role,
             ) { facts ->
-                require(facts.chat.chatType == 2) { "群聊不存在" }
+                require(facts.chat.chatType == ChatType.GROUP.code) { "群聊不存在" }
                 requireOwner(facts.operator)
                 require(facts.target != null) { "目标不是群成员" }
-                require(facts.target.role != 2) { "不能直接修改群主角色，请使用转让群主" }
+                require(facts.target.role != Member.ROLE_OWNER) { "不能直接修改群主角色，请使用转让群主" }
             }
             mutation.recipientUids.forEach { uid ->
                 appendEvent(uid, NotifyType.MEMBER_ROLE_CHANGED, mutation.chat)
@@ -676,7 +677,7 @@ class ChatService(
 
     suspend fun adminDissolve(chatId: String) = lifecycleGate.withChat(chatId) {
         deactivateGroupWithDurableEvents(chatId, operatorUid = null) { facts ->
-            require(facts.chat.chatType == 2) { "单聊不能解散" }
+            require(facts.chat.chatType == ChatType.GROUP.code) { "单聊不能解散" }
         }
     }
 
@@ -812,7 +813,7 @@ class ChatService(
                 targetUid,
                 expiresAt,
             ) { facts ->
-                require(facts.chat.chatType == 2) { "群聊不存在" }
+                require(facts.chat.chatType == ChatType.GROUP.code) { "群聊不存在" }
                 requireCanManageLocked(facts.operator, facts.target)
             }
             mutation.recipientUids.forEach { uid -> appendEvent(uid, notifyType, mutation.chat) }
@@ -829,7 +830,7 @@ class ChatService(
                 operatorUid,
                 mutedAll,
             ) { facts ->
-                require(facts.chat.chatType == 2) { "群聊不存在" }
+                require(facts.chat.chatType == ChatType.GROUP.code) { "群聊不存在" }
                 if (operatorUid != null) requireOwner(facts.operator)
             }
             mutation.recipientUids.forEach { uid ->
@@ -855,12 +856,12 @@ class ChatService(
 
     private fun requireAdmin(operator: Member?) {
         val actor = operator ?: throw ChatAccessDeniedException("操作者不是群成员")
-        if (actor.role < 1) throw ChatAccessDeniedException("需要管理员权限")
+        if (actor.role < Member.ROLE_ADMIN) throw ChatAccessDeniedException("需要管理员权限")
     }
 
     private fun requireOwner(operator: Member?) {
         val actor = operator ?: throw IllegalArgumentException("操作者不是群成员")
-        require(actor.role == 2) { "需要群主权限" }
+        require(actor.role == Member.ROLE_OWNER) { "需要群主权限" }
     }
 
     private fun requireHumanMemberTarget(uid: String) {

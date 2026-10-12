@@ -22,7 +22,7 @@ class ExposedChatDraftAttachmentReferences(private val database: Database) : Cha
             .join(OrganizationManagedChatProjections, JoinType.LEFT, Chats.chatId, OrganizationManagedChatProjections.chatId)
             .select(ChatDraftAssets.path).where {
                 (ChatDraftAssets.uid eq uid) and (ChatDraftAssets.path eq path) and (GroupMembers.uid eq uid) and
-                    (GroupMembers.status eq 1) and (Chats.status eq 1) and
+                    (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) and (Chats.status eq Chats.STATUS_ACTIVE) and
                     (OrganizationManagedChatProjections.chatId.isNull() or (
                         (OrganizationManagedChatProjections.desiredActive eq true) and
                             (OrganizationManagedChatProjections.desiredRevision eq OrganizationManagedChatProjections.appliedRevision) and

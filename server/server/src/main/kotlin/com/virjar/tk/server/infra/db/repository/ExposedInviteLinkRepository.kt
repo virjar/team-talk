@@ -30,6 +30,7 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.neq
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
+import com.virjar.tk.protocol.model.ChatType
 
 /** GroupInviteLinks 表访问 + 邀请链接业务记录模型。 */
 enum class InviteLinkRepositoryStage { BEFORE_CREATION_RESERVATION }
@@ -274,16 +275,16 @@ class ExposedInviteLinkRepository internal constructor(
         val invite = GroupInviteLinks.selectAll().where { GroupInviteLinks.token eq token }
             .singleOrNull()?.toInviteLinkRecord() ?: return null
         val chat = Chats.selectAll().where {
-            (Chats.chatId eq invite.chatId) and (Chats.status eq 1) and (Chats.chatType eq 2)
+            (Chats.chatId eq invite.chatId) and (Chats.status eq Chats.STATUS_ACTIVE) and (Chats.chatType eq ChatType.GROUP.code)
         }.singleOrNull() ?: return InvitePreviewFacts(invite, groupName = null)
         val group = GroupChats.selectAll().where { GroupChats.chatId eq chat[Chats.chatId] }
             .singleOrNull() ?: return InvitePreviewFacts(invite, groupName = null)
         val memberCount = GroupMembers.selectAll().where {
-            (GroupMembers.chatId eq invite.chatId) and (GroupMembers.status eq 1)
+            (GroupMembers.chatId eq invite.chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.count()
         check(memberCount <= com.virjar.tk.protocol.model.GroupPolicy.MAX_MEMBERS)
         val alreadyJoined = GroupMembers.selectAll().where {
-            (GroupMembers.chatId eq invite.chatId) and (GroupMembers.uid eq uid) and (GroupMembers.status eq 1)
+            (GroupMembers.chatId eq invite.chatId) and (GroupMembers.uid eq uid) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.any()
         return InvitePreviewFacts(invite, group[GroupChats.name], memberCount.toInt(), alreadyJoined)
     }
@@ -310,7 +311,7 @@ class ExposedInviteLinkRepository internal constructor(
     }
 
     private fun lockActiveMembers(chatId: String): List<Member> = GroupMembers.selectAll().where {
-        (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+        (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
     }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate().map { row ->
         Member(
             uid = row[GroupMembers.uid],

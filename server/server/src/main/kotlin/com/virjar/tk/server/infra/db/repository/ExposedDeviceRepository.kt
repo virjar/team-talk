@@ -13,7 +13,7 @@ class ExposedDeviceRepository(
     override fun getDevices(uid: String): List<Device> {
         return transaction(database) {
             Devices.selectAll()
-                .where { (Devices.uid eq uid) and (Devices.status eq 1) }
+                .where { (Devices.uid eq uid) and (Devices.status eq Devices.STATUS_ACTIVE) }
                 .orderBy(Devices.lastLogin, SortOrder.DESC)
                 .map { it.toDevice() }
         }

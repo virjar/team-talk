@@ -9,7 +9,7 @@ import com.virjar.tk.protocol.PacketBuffer
 data class Member(
     val uid: String,
     val chatId: String,
-    val role: Int,           // 0=成员，1=管理员，2=群主
+    val role: Int,
     val nickname: String? = null,
     val joinedAt: Long = 0,
     val user: User? = null,
@@ -26,6 +26,10 @@ data class Member(
     }
 
     companion object : com.virjar.tk.protocol.IProtoReader<Member> {
+        const val ROLE_MEMBER = 0
+        const val ROLE_ADMIN = 1
+        const val ROLE_OWNER = 2
+
         override fun readFrom(buf: PacketBuffer): Member = Member(
             uid = buf.readRequiredString(),
             chatId = buf.readRequiredString(),

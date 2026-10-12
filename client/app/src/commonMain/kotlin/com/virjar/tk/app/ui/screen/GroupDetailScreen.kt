@@ -204,12 +204,12 @@ fun GroupDetailScreen(
                             MemberContextMenu(
                                 expanded = showMenu,
                                 onDismiss = { showMenu = false },
-                                isAdmin = member.role == 1,
+                                isAdmin = member.role == Member.ROLE_ADMIN,
                                 onViewProfile = { showMenu = false; onMemberClick(member.uid) },
-                                onSetAdmin = if (currentUserIsOwner && member.role == 0) {
+                                onSetAdmin = if (currentUserIsOwner && member.role == Member.ROLE_MEMBER) {
                                     ({ showMenu = false; onSetAdmin?.invoke(member.uid) })
                                 } else null,
-                                onRemoveAdmin = if (currentUserIsOwner && member.role == 1) {
+                                onRemoveAdmin = if (currentUserIsOwner && member.role == Member.ROLE_ADMIN) {
                                     ({ showMenu = false; onRemoveAdmin?.invoke(member.uid) })
                                 } else null,
                                 onMute = { showMenu = false; onMuteMember?.invoke(member.uid) },
@@ -354,7 +354,7 @@ private fun NoticeSection(notice: String?, canEdit: Boolean, onClick: () -> Unit
 @Composable
 private fun OwnerSection(members: List<Member>) {
     // 创建者不会随群主转让改变；当前群主与成员徽标、管理权限共用成员角色快照。
-    val owner = members.firstOrNull { it.role == 2 } ?: return
+    val owner = members.firstOrNull { it.role == Member.ROLE_OWNER } ?: return
     Row(
         modifier = Modifier.fillMaxWidth().padding(Tk.spacing.md).testTag("group.detail.owner"),
         verticalAlignment = Alignment.CenterVertically,

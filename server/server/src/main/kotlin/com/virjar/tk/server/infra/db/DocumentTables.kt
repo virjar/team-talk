@@ -29,6 +29,8 @@ object DocumentSpaces : Table("document_spaces") {
     val createdAt = long("created_at")
     val updatedAt = long("updated_at").index()
 
+    /** 空间行状态：1 活跃；软删除（归档）后不再参与授权与目录。 */
+    const val STATUS_ACTIVE = 1
     override val primaryKey = PrimaryKey(spaceId)
 
     init {
@@ -183,6 +185,8 @@ object DocumentNodes : Table("document_nodes") {
 
     override val primaryKey = PrimaryKey(nodeId)
 
+    /** 节点行状态：1 活跃；软删除后保留给修订历史。 */
+    const val STATUS_ACTIVE = 1
     init {
         index("idx_document_node_parent", false, spaceId, parentId, status, createdAt, nodeId)
         index("idx_document_node_created", false, spaceId, status, createdAt)

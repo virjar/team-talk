@@ -331,7 +331,7 @@ internal object GroupBotHttpContract {
             "机器人凭据响应目标群不匹配"
         }
         require(
-            receipt.bot.status == 1 && receipt.bot.groupManaged && receipt.bot.createdByMe &&
+            receipt.bot.status == GroupBotSummary.STATUS_ACTIVE && receipt.bot.groupManaged && receipt.bot.createdByMe &&
                 receipt.bot.canRotateToken && receipt.bot.canRemove,
         ) { "机器人凭据响应不是当前创建者的活动群机器人" }
         if (command.kind == GroupBotCredentialCommandKind.CREATE) {

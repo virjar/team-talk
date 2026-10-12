@@ -9,6 +9,7 @@ import com.virjar.tk.app.ui.screen.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
+import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.shared.repository.ResolvedContentSearchHit
 import com.virjar.tk.app.viewmodel.ChatHistoryCategory
 import com.virjar.tk.app.viewmodel.ChatHistorySenderOption
@@ -329,7 +330,7 @@ internal fun SubScreenContent(
             GroupDetailScreen(
                 chat = detailChat,
                 members = detailMembers,
-                isOwner = detailMembers.any { it.uid == data.userSession.uid && it.role == 2 },
+                isOwner = detailMembers.any { it.uid == data.userSession.uid && it.role == Member.ROLE_OWNER },
                 groupAvatar = detailChat?.chatId?.let { chatId -> groupAvatars[chatId] },
                 onEditGroupAvatar = onEditGroupAvatar,
                 myUid = data.userSession.uid,

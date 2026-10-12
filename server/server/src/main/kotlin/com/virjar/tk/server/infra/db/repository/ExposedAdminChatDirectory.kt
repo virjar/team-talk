@@ -13,6 +13,7 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.greater
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.like
 import org.jetbrains.exposed.sql.transactions.transaction
+import com.virjar.tk.protocol.model.ChatType
 
 /** 仅限管理员的全局聊天读取与概览计数器的 PostgreSQL 适配器。 */
 class ExposedAdminChatDirectory(
@@ -21,9 +22,9 @@ class ExposedAdminChatDirectory(
     override fun listGroups(query: String?, pagination: AdminPageRequest): AdminPage<Chat> =
         transaction(database) {
             val condition = if (query.isNullOrBlank()) {
-                Op.TRUE and (Chats.chatType eq 2)
+                Op.TRUE and (Chats.chatType eq ChatType.GROUP.code)
             } else {
-                (Chats.chatType eq 2) and (GroupChats.name like "%$query%")
+                (Chats.chatType eq ChatType.GROUP.code) and (GroupChats.name like "%$query%")
             }
             val filtered = (Chats innerJoin GroupChats).selectAll().where { condition }
             val total = filtered.count()
@@ -42,13 +43,13 @@ class ExposedAdminChatDirectory(
 
     override fun findGroup(chatId: String): Chat? = transaction(database) {
         val row = (Chats innerJoin GroupChats).selectAll().where {
-            (Chats.chatId eq chatId) and (Chats.chatType eq 2)
+            (Chats.chatId eq chatId) and (Chats.chatType eq ChatType.GROUP.code)
         }.singleOrNull() ?: return@transaction null
         row.toAdminGroup(activeMemberCounts(listOf(chatId))[chatId] ?: 0)
     }
 
     override fun countGroups(): Long = transaction(database) {
-        Chats.selectAll().where { Chats.chatType eq 2 }.count()
+        Chats.selectAll().where { Chats.chatType eq ChatType.GROUP.code }.count()
     }
 
     override fun countEventsSince(sinceMillis: Long): Long = transaction(database) {
@@ -59,7 +60,7 @@ class ExposedAdminChatDirectory(
         if (chatIds.isEmpty()) return emptyMap()
         val memberCount = GroupMembers.id.count()
         return GroupMembers.select(GroupMembers.chatId, memberCount)
-            .where { (GroupMembers.chatId inList chatIds.distinct()) and (GroupMembers.status eq 1) }
+            .where { (GroupMembers.chatId inList chatIds.distinct()) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) }
             .groupBy(GroupMembers.chatId)
             .associate { row ->
                 row[GroupMembers.chatId] to row[memberCount].coerceAtMost(Int.MAX_VALUE.toLong()).toInt()

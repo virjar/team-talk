@@ -4,7 +4,9 @@ import com.virjar.tk.protocol.model.DocumentSpace
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.OrganizationUnit
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
+import com.virjar.tk.server.infra.db.DocumentSpaces
 import com.virjar.tk.server.infra.db.execRawSql
 import com.virjar.tk.server.infra.db.requireExposedReadTransaction
 import org.jetbrains.exposed.sql.VarCharColumnType
@@ -26,7 +28,7 @@ internal object ExposedDocumentEventAudience {
 private val DOCUMENT_EVENT_AUDIENCE_SQL = """
     WITH RECURSIVE
     selected_space AS (
-        SELECT space_id, steward_uid FROM document_spaces WHERE space_id = ?::varchar AND status = 1
+        SELECT space_id, steward_uid FROM document_spaces WHERE space_id = ?::varchar AND status = ${DocumentSpaces.STATUS_ACTIVE}
     ),
     grants AS (
         SELECT grant_row.* FROM document_space_grants grant_row
@@ -73,6 +75,6 @@ private val DOCUMENT_EVENT_AUDIENCE_SQL = """
         JOIN matching_units unit ON unit.unit_id = membership.unit_id
     )
     SELECT users.uid FROM users JOIN candidates ON candidates.uid = users.uid
-    WHERE users.status = 1 AND users.role = ${UserRole.HUMAN}
+    WHERE users.status = ${UserStatus.ACTIVE} AND users.role = ${UserRole.HUMAN}
     ORDER BY users.uid
 """.trimIndent()

@@ -354,9 +354,9 @@ private fun GroupBotRow(
         supportingContent = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    if (bot.status == 1) "运行中" else "已停用",
+                    if (bot.status == GroupBotSummary.STATUS_ACTIVE) "运行中" else "已停用",
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (bot.status == 1) MaterialTheme.colorScheme.primary
+                    color = if (bot.status == GroupBotSummary.STATUS_ACTIVE) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(endpoint, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)

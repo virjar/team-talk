@@ -15,6 +15,7 @@ import com.virjar.tk.protocol.model.ProfilePatchValue
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.model.UserAvatarPolicy
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 import com.virjar.tk.protocol.NotifyType
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -76,7 +77,7 @@ class UserService(
             throw IllegalArgumentException("服务账户不能使用客户端密码登录")
         }
         if (!passwordMatches) throw invalidCredentials()
-        if (internal.user.status != STATUS_ACTIVE) {
+        if (internal.user.status != UserStatus.ACTIVE) {
             throw AccountBannedException(internal.user.uid)
         }
         return CredentialLoginProof(internal.user, internal.credentialEpoch, internal.passwordHash)
@@ -306,7 +307,7 @@ class UserService(
         AuthRules.validatePassword(newPassword)?.let { throw IllegalArgumentException(it) }
         if (AuthRules.validatePassword(oldPassword) != null) throw IllegalArgumentException("旧密码错误")
         val internal = users.findInternalByUid(uid) ?: throw IllegalArgumentException("用户不存在")
-        val eligibleHuman = internal.user.status == STATUS_ACTIVE && internal.user.role == UserRole.HUMAN
+        val eligibleHuman = internal.user.status == UserStatus.ACTIVE && internal.user.role == UserRole.HUMAN
         val oldPasswordMatches = passwordHasher.verify(
             rawPassword = oldPassword,
             encodedHash = internal.passwordHash.takeIf { eligibleHuman },
@@ -325,10 +326,9 @@ class UserService(
 
     private companion object {
         const val USER_AVATAR_MUTATION_KEY_PREFIX = "user-avatar-mutation:"
-        const val STATUS_ACTIVE = 1
         val PUBLIC_DIRECTORY_ORDER = compareBy<User>(User::name, User::username, User::uid)
 
         fun isPublicDirectoryUser(user: User): Boolean =
-            user.status == STATUS_ACTIVE && user.role == UserRole.HUMAN
+            user.status == UserStatus.ACTIVE && user.role == UserRole.HUMAN
     }
 }

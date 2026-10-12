@@ -29,6 +29,7 @@ import com.virjar.tk.protocol.model.ContentSearchRequest
 import com.virjar.tk.protocol.model.ContentSearchPage
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.ProtoCodec
+import com.virjar.tk.protocol.model.ChatType
 
 /**
  * 消息业务入口：校验命令、读写消息归档，并等待 [MessageProjector] 完成本次投影。
@@ -528,7 +529,7 @@ class MessageService(
                 afterChatLocked = { authorizeAfterChatLock?.invoke(transaction) },
             ) { facts ->
                 val sender = facts.sender ?: throw IllegalArgumentException("不是聊天成员")
-                if (facts.chat.chatType == 1) {
+                if (facts.chat.chatType == ChatType.PERSONAL.code) {
                     val peerUid = facts.activeMemberUids.firstOrNull { it != senderUid }
                         ?: throw IllegalArgumentException("私聊成员不完整")
                     require(!contacts.isBlockedEither(senderUid, peerUid)) {

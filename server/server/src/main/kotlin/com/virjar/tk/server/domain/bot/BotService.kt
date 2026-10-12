@@ -29,6 +29,7 @@ import kotlinx.serialization.Serializable
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.UUID
+import com.virjar.tk.protocol.model.ChatType
 
 class BotAuthenticationException : IllegalArgumentException("机器人凭据无效")
 class BotAuthorizationException(message: String) : IllegalArgumentException(message)
@@ -182,7 +183,7 @@ class BotService(
                     operatorUid = actorUid,
                     uid = created.userUid,
                 ) { facts ->
-                    require(facts.chat.chatType == 2) { "机器人只能授权到群聊" }
+                    require(facts.chat.chatType == ChatType.GROUP.code) { "机器人只能授权到群聊" }
                     if (facts.operator == null) throw BotAuthorizationException("不是当前群成员")
                 }
                 appendMembershipAdditionEvents(
@@ -319,7 +320,7 @@ class BotService(
                         requireActive = true,
                     ).getValue(chatId)
                     val chat = lockedChat.chat
-                    require(chat.chatType == 2) { "机器人只能在群聊中管理" }
+                    require(chat.chatType == ChatType.GROUP.code) { "机器人只能在群聊中管理" }
                     repository.lockServiceIdentity(transaction, snapshot.userUid)
                     val bot = requireBotForUpdate(transaction, botId)
                     requireBotIdentity(bot, snapshot.userUid)
@@ -400,7 +401,7 @@ class BotService(
                     listOf(chatId),
                     requireActive = true,
                 ).getValue(chatId).chat
-                require(chat.chatType == 2) { "机器人只能授权到群聊" }
+                require(chat.chatType == ChatType.GROUP.code) { "机器人只能授权到群聊" }
                 repository.lockServiceIdentity(transaction, snapshot.userUid)
                 val bot = requireBotForUpdate(transaction, botId)
                 requireBotIdentity(bot, snapshot.userUid)
@@ -415,7 +416,7 @@ class BotService(
                     operatorUid = bot.userUid,
                     uid = bot.userUid,
                 ) { facts ->
-                    require(facts.chat.chatType == 2) { "机器人只能授权到群聊" }
+                    require(facts.chat.chatType == ChatType.GROUP.code) { "机器人只能授权到群聊" }
                 }
                 appendMembershipAdditionEvents(
                     chat = addition.chat,
@@ -520,7 +521,7 @@ class BotService(
                         val managedChat = bot.managedChatId
                         val managedChatIsUsable = managedChat == null || (
                             lockedChats[managedChat]?.active == true &&
-                                lockedChats.getValue(managedChat).chat.chatType == 2 &&
+                                lockedChats.getValue(managedChat).chat.chatType == ChatType.GROUP.code &&
                                 managedChat in bot.grantedChatIds
                             )
                         val shouldDisable =
@@ -533,7 +534,7 @@ class BotService(
                             emptySet()
                         } else {
                             bot.grantedChatIds.filterTo(linkedSetOf()) { chatId ->
-                                lockedChats[chatId]?.let { it.active && it.chat.chatType == 2 } == true
+                                lockedChats[chatId]?.let { it.active && it.chat.chatType == ChatType.GROUP.code } == true
                             }
                         }
 
@@ -545,7 +546,7 @@ class BotService(
                                     operatorUid = bot.userUid,
                                     uid = bot.userUid,
                                 ) { facts ->
-                                    require(facts.chat.chatType == 2) { "机器人只能授权到群聊" }
+                                    require(facts.chat.chatType == ChatType.GROUP.code) { "机器人只能授权到群聊" }
                                 }
                                 appendMembershipAdditionEvents(
                                     chat = addition.chat,
@@ -681,7 +682,7 @@ class BotService(
 
     private fun requireUsableCredentialTargetGroup(target: LockedChat?) {
         if (target == null) throw BotResourceNotFoundException("目标群不存在")
-        if (target.chat.chatType != 2) throw BotAuthorizationException("机器人只能在群聊中管理")
+        if (target.chat.chatType != ChatType.GROUP.code) throw BotAuthorizationException("机器人只能在群聊中管理")
         if (!target.active) throw BotCredentialCommandTerminalException("目标群已不可用")
     }
 

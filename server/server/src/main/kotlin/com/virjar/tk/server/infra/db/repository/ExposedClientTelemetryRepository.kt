@@ -1,5 +1,6 @@
 package com.virjar.tk.server.infra.db.repository
 
+import com.virjar.tk.protocol.model.UserStatus
 import com.virjar.tk.server.domain.telemetry.ClientTelemetryDeviceProfile
 import com.virjar.tk.server.domain.telemetry.ClientTelemetryPolicy
 import com.virjar.tk.server.domain.telemetry.ClientTelemetryControlRepository
@@ -58,7 +59,7 @@ class ExposedClientTelemetryControlRepository(
         // 或把旧运行时事实附着到复用了同一设备 id 的新安装上。
         val user = Users.selectAll().where { Users.uid eq authority.uid }.forUpdate().singleOrNull()
             ?: return@transaction false
-        if (user[Users.status] != STATUS_ACTIVE ||
+        if (user[Users.status] != UserStatus.ACTIVE ||
             user[Users.credentialEpoch] != authority.userCredentialEpoch
         ) {
             return@transaction false
@@ -66,7 +67,7 @@ class ExposedClientTelemetryControlRepository(
         val device = Devices.selectAll().where {
             (Devices.uid eq authority.uid) and (Devices.deviceId eq authority.deviceId)
         }.forUpdate().singleOrNull() ?: return@transaction false
-        if (device[Devices.status] != STATUS_ACTIVE ||
+        if (device[Devices.status] != Devices.STATUS_ACTIVE ||
             device[Devices.credentialEpoch] != authority.deviceCredentialEpoch
         ) {
             return@transaction false
@@ -555,7 +556,6 @@ class ExposedClientTelemetryControlRepository(
     }
 
     private companion object {
-        const val STATUS_ACTIVE = 1
         const val MODE_BASELINE = 0
         const val MODE_DIAGNOSTIC = 1
         const val SYSTEM_ACTOR = "system"

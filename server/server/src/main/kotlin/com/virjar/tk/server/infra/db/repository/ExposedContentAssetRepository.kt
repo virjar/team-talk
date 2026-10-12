@@ -15,6 +15,7 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.greater
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.transactions.transaction
+import com.virjar.tk.protocol.model.UserStatus
 
 class ExposedContentAssetRepository(private val database: Database) : ContentAssetRepository {
     override fun pending(limit: Int): List<ContentAssetPending> = transaction(database) {
@@ -56,7 +57,7 @@ class ExposedContentAssetRepository(private val database: Database) : ContentAss
 
     override fun documentScopes(transaction: PgReadTransactionContext, uid: String, scopeId: String): Set<String> = transaction.inExposedReadTransaction {
         val actor = Users.select(Users.uid).where {
-            (Users.uid eq uid) and (Users.status eq 1) and (Users.role eq UserRole.HUMAN)
+            (Users.uid eq uid) and (Users.status eq UserStatus.ACTIVE) and (Users.role eq UserRole.HUMAN)
         }.singleOrNull() ?: throw DocumentAccessDeniedException("当前账号不能读取文档")
         check(actor[Users.uid] == uid)
         val access = ExposedDocumentActorAccess.read(transaction, uid)
@@ -64,7 +65,7 @@ class ExposedContentAssetRepository(private val database: Database) : ContentAss
         val ids = DocumentSpaces.join(DocumentSpaceGrants, JoinType.LEFT,
             DocumentSpaces.spaceId, DocumentSpaceGrants.spaceId)
             .select(DocumentSpaces.spaceId).where {
-                (DocumentSpaces.status eq 1) and ((DocumentSpaces.stewardUid eq uid) or grant) and
+                (DocumentSpaces.status eq DocumentSpaces.STATUS_ACTIVE) and ((DocumentSpaces.stewardUid eq uid) or grant) and
                     (if (scopeId.isEmpty()) Op.TRUE else DocumentSpaces.spaceId eq scopeId)
             }.withDistinct().orderBy(DocumentSpaces.spaceId).limit(MAX_SEARCH_SCOPES + 1)
             .mapTo(linkedSetOf()) { it[DocumentSpaces.spaceId] }
@@ -77,7 +78,7 @@ class ExposedContentAssetRepository(private val database: Database) : ContentAss
         require(spaceIds.size <= 100)
         val access = ExposedDocumentActorAccess.read(transaction, uid)
         val spaces = if (spaceIds.isEmpty()) emptyList() else DocumentSpaces.selectAll().where {
-            (DocumentSpaces.spaceId inList spaceIds) and (DocumentSpaces.status eq 1)
+            (DocumentSpaces.spaceId inList spaceIds) and (DocumentSpaces.status eq DocumentSpaces.STATUS_ACTIVE)
         }.map { it.toDocumentSpace() }
         val grants = if (spaceIds.isEmpty()) emptyMap() else DocumentSpaceGrants.selectAll().where {
             (DocumentSpaceGrants.spaceId inList spaceIds) and relevantDocumentGrantCondition(uid, access)
@@ -94,14 +95,14 @@ class ExposedContentAssetRepository(private val database: Database) : ContentAss
             1 -> DocumentNodes.join(DocumentSpaces, JoinType.INNER, DocumentNodes.spaceId, DocumentSpaces.spaceId)
                 .select(DocumentNodes.nodeId, DocumentNodes.spaceId, DocumentNodes.name, DocumentNodes.excerpt,
                     DocumentNodes.revision, DocumentNodes.updatedAt, DocumentSpaces.name)
-                .where { (DocumentNodes.nodeId inList ids) and (DocumentNodes.status eq 1) and (DocumentSpaces.status eq 1) }
+                .where { (DocumentNodes.nodeId inList ids) and (DocumentNodes.status eq DocumentNodes.STATUS_ACTIVE) and (DocumentSpaces.status eq DocumentSpaces.STATUS_ACTIVE) }
                 .associate { row -> row[DocumentNodes.nodeId] to ContentSearchHit(1, row[DocumentNodes.spaceId], row[DocumentNodes.nodeId],
                     row[DocumentNodes.name], row[DocumentNodes.excerpt], row[DocumentSpaces.name], row[DocumentNodes.revision], row[DocumentNodes.updatedAt]) }
             2 -> GroupFileEntries.join(GroupChats, JoinType.INNER, GroupFileEntries.chatId, GroupChats.chatId)
                 .join(Chats, JoinType.INNER, GroupFileEntries.chatId, Chats.chatId)
                 .select(GroupFileEntries.columns + listOf(GroupChats.name))
-                .where { (GroupFileEntries.entryId inList ids) and (GroupFileEntries.status eq 1) and
-                    (GroupFileEntries.kind eq GroupFileEntry.KIND_FILE) and (Chats.status eq 1) }
+                .where { (GroupFileEntries.entryId inList ids) and (GroupFileEntries.status eq GroupFileEntries.STATUS_ACTIVE) and
+                    (GroupFileEntries.kind eq GroupFileEntry.KIND_FILE) and (Chats.status eq Chats.STATUS_ACTIVE) }
                 .associate { row -> row[GroupFileEntries.entryId] to ContentSearchHit(2, row[GroupFileEntries.chatId], row[GroupFileEntries.entryId],
                     row[GroupFileEntries.name], "", row[GroupChats.name], row[GroupFileEntries.revision], row[GroupFileEntries.updatedAt],
                     checkNotNull(row[GroupFileEntries.attachmentContentType]), checkNotNull(row[GroupFileEntries.attachmentSize])) }
@@ -116,7 +117,7 @@ class ExposedContentAssetRepository(private val database: Database) : ContentAss
     }
 
     private fun ResultRow.groupProjection(): ContentAssetProjection {
-        val active = this[GroupFileEntries.status] == 1
+        val active = this[GroupFileEntries.status] == GroupFileEntries.STATUS_ACTIVE
         return ContentAssetProjection(ContentAssetKey(2, this[GroupFileEntries.entryId]), this[GroupFileEntries.chatId], this[GroupFileEntries.revision],
             this[GroupFileEntries.updatedAt], active, if (active) this[GroupFileEntries.name] else "", "", this[GroupFileEntries.attachmentContentType])
     }

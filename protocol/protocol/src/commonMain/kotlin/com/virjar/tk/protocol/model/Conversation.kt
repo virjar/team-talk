@@ -191,7 +191,7 @@ object ConversationWirePolicy {
         conversation: Conversation,
         failure: (String) -> Nothing,
     ) {
-        if (conversation.chatType != 1 && conversation.chatAvatar != null) {
+        if (conversation.chatType != ChatType.PERSONAL.code && conversation.chatAvatar != null) {
             failure("Non-personal Conversation must not carry chatAvatar")
         }
     }

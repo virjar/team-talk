@@ -12,7 +12,7 @@ class RpcStatusException(
 ) : Exception(message)
 
 fun ResponsePayload.ensureSuccess() {
-    if (status == 0) return
+    if (status == ResponsePayload.STATUS_OK) return
     val msg = payload?.decodeToString() ?: "RPC failed (status=$status)"
     throw RpcStatusException(status, msg)
 }

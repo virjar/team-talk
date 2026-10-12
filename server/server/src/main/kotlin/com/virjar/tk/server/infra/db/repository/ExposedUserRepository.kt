@@ -33,6 +33,7 @@ import org.slf4j.LoggerFactory
 import java.security.SecureRandom
 import java.sql.SQLException
 import java.util.Base64
+import com.virjar.tk.protocol.model.Contact
 
 /** PostgreSQL LIKE 对绑定模式值默认使用反斜杠作为转义字符。 */
 internal fun escapePostgresLikeLiteral(value: String): String = buildString(value.length) {
@@ -244,7 +245,7 @@ class ExposedUserRepository internal constructor(
             val query = Users.selectAll().where {
                 val orgUids = OrganizationMemberships.select(OrganizationMemberships.uid)
                 val friendUids = Friends.select(Friends.friendUid)
-                    .where { (Friends.uid eq callerUid) and (Friends.status eq 1) }
+                    .where { (Friends.uid eq callerUid) and (Friends.status eq Contact.STATUS_NORMAL) }
                 (Users.status eq STATUS_ACTIVE) and
                     (Users.role eq UserRole.HUMAN) and
                     (
@@ -304,7 +305,7 @@ class ExposedUserRepository internal constructor(
             .count() > 0
         if (orgMember) return@transaction true
         Friends.selectAll()
-            .where { (Friends.uid eq callerUid) and (Friends.status eq 1) }
+            .where { (Friends.uid eq callerUid) and (Friends.status eq Contact.STATUS_NORMAL) }
             .limit(1)
             .count() > 0
     }

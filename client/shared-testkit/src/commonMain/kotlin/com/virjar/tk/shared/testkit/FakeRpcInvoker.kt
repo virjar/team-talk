@@ -29,7 +29,7 @@ class FakeRpcInvoker : RpcInvoker {
     }
 
     fun enqueueOk(payload: ByteArray? = null) {
-        enqueue(ResponsePayload(requestId = calls.size + 1, status = 0, payload = payload))
+        enqueue(ResponsePayload(requestId = calls.size + 1, status = ResponsePayload.STATUS_OK, payload = payload))
     }
 
     fun enqueueError(status: Int, msg: String = "error") {

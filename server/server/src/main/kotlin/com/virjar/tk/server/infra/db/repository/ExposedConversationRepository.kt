@@ -201,7 +201,7 @@ internal class ExposedConversationRepository(
         // peerReadSeq 值都是最大水位线；后续事务只能观察并推进
         // 先前事务已提交的值。
         val memberUids = GroupMembers.selectAll().where {
-            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.orderBy(GroupMembers.uid, SortOrder.ASC).map { it[GroupMembers.uid] }
         val rowsByUid = Conversations.selectAll().where {
             (Conversations.chatId eq chatId) and (Conversations.uid inList memberUids)
@@ -310,7 +310,7 @@ internal class ExposedConversationRepository(
             readQueryObserver.beforeQuery(ConversationReadQueryStage.PERSONAL_PEER)
             GroupMembers.selectAll().where {
                 (GroupMembers.chatId inList personalChatIds) and
-                    (GroupMembers.status eq 1) and
+                    (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) and
                     (GroupMembers.uid neq uid)
             }.orderBy(
                 GroupMembers.chatId to SortOrder.ASC,
@@ -379,8 +379,8 @@ internal class ExposedConversationRepository(
         (Conversations.uid eq uid) and
             (Conversations.isHidden eq false) and
             (GroupMembers.uid eq uid) and
-            (GroupMembers.status eq 1) and
-            (Chats.status eq 1) and
+            (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) and
+            (Chats.status eq Chats.STATUS_ACTIVE) and
             (
                 OrganizationManagedChatProjections.chatId.isNull() or
                     (
@@ -394,14 +394,14 @@ internal class ExposedConversationRepository(
 
     private fun requireActiveMembership(uid: String, chatId: String): ResultRow {
         val chat = Chats.selectAll().where {
-            (Chats.chatId eq chatId) and (Chats.status eq 1)
+            (Chats.chatId eq chatId) and (Chats.status eq Chats.STATUS_ACTIVE)
         }.forUpdate().singleOrNull()
         require(chat != null) { "聊天不存在或已解散" }
 
         val member = GroupMembers.selectAll().where {
             (GroupMembers.chatId eq chatId) and
                 (GroupMembers.uid eq uid) and
-                (GroupMembers.status eq 1)
+                (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
         }.forUpdate().singleOrNull()
         require(member != null) { "不是聊天成员" }
         return chat
@@ -434,7 +434,7 @@ internal class ExposedConversationRepository(
         val peerUid = if (chatType == PERSONAL_CHAT_TYPE) {
             GroupMembers.selectAll().where {
                 (GroupMembers.chatId eq chatId) and
-                    (GroupMembers.status eq 1) and
+                    (GroupMembers.status eq GroupMembers.STATUS_ACTIVE) and
                     (GroupMembers.uid neq uid)
             }.orderBy(GroupMembers.uid, SortOrder.ASC).limit(1)
                 .firstOrNull()?.get(GroupMembers.uid)
