@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
@@ -105,8 +106,10 @@ internal fun CommonEmojiGrid(
                 )
             }
         }
-        // 全量候选
-        items(CommonEmojis, key = { "all_$it" }) { emoji ->
+        // 全量候选。key 用位置索引：网格是同一个 Lazy 作用域，emoji 本身可能在
+        // 高频区与分类区语义性地重复（曾因 😢 重复触发 duplicate-key 崩溃弹窗），
+        // 索引 key 让数据层未来再引入重复时也不会炸面板。
+        itemsIndexed(CommonEmojis, key = { index, _ -> "all_$index" }) { _, emoji ->
             EmojiCell(emoji, onPick, itemTestTagPrefix)
         }
     }
@@ -297,7 +300,7 @@ internal val CommonEmojis = listOf(
     "🤒","🤕","🤢","🤮","🥵","🥶","😵","🤯",
     "🤠","🥳","🤓","🧐","😕","😟","🙁","😯",
     "😲","😳","🥺","😦","😧","😨","😰","😥",
-    "😢","😭","😱","😖","😣","😞","😓","😩",
+    "😭","😱","😖","😣","😞","😓","😩",
     // ── 手势 ──
     "👎","🤝","👊","✌️","🤞","🤟","🤘","👌",
     "🤙","👋","🖐️","✋",
