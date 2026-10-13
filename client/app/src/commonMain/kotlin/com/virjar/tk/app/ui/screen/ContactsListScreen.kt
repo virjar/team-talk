@@ -30,6 +30,7 @@ import com.virjar.tk.shared.client.FriendPresence
 import com.virjar.tk.shared.client.FriendPresenceStatus
 import com.virjar.tk.protocol.model.Contact
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
+import com.virjar.tk.app.ui.component.PresenceBadge
 import com.virjar.tk.app.ui.component.PinyinInitials
 import com.virjar.tk.app.ui.theme.Tk
 import kotlinx.coroutines.launch
@@ -167,22 +168,6 @@ fun ContactsListScreen(
     }
 }
 
-internal data class ContactPresenceIndicatorPresentation(
-    val testTag: String,
-    val contentDescription: String,
-)
-
-internal fun contactPresenceIndicatorPresentation(
-    friendUid: String,
-    presence: FriendPresence?,
-): ContactPresenceIndicatorPresentation? {
-    if (presence?.status != FriendPresenceStatus.ONLINE) return null
-    return ContactPresenceIndicatorPresentation(
-        testTag = "contact.presence.${friendUid.take(8)}",
-        contentDescription = "在线",
-    )
-}
-
 @Composable
 private fun ContactAvatar(
     displayName: String,
@@ -190,26 +175,17 @@ private fun ContactAvatar(
     friendUid: String,
     presence: FriendPresence?,
 ) {
-    val indicator = contactPresenceIndicatorPresentation(friendUid, presence)
     Box(modifier = Modifier.size(Tk.dimens.listAvatar)) {
         AvatarPlaceholder(
             name = displayName,
             avatar = avatar,
             size = Tk.dimens.listAvatar.value.toInt(),
         )
-        if (indicator != null) {
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(10.dp)
-                    .testTag(indicator.testTag)
-                    .semantics { contentDescription = indicator.contentDescription },
-                shape = CircleShape,
-                color = Tk.colors.online,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.surface),
-                content = {},
-            )
-        }
+        PresenceBadge(
+            friendUid = friendUid,
+            presence = presence,
+            modifier = Modifier.align(Alignment.BottomEnd),
+        )
     }
 }
 

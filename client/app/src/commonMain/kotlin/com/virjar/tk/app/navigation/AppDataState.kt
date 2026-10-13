@@ -67,6 +67,9 @@ open class AppDataState(
     val userSession get() = session.userSession
     val localCache get() = session.localCache
 
+    /** 好友在线状态投影（会话级、易失；服务端仅对好友发放）。 */
+    val friendPresenceByUid get() = session.friendPresenceByUid
+
     /** 1:1 通话编排（协议 minor 0.5）。 */
     val callCenter get() = session.callCenter
     val deploymentIdentity get() = session.deploymentIdentity

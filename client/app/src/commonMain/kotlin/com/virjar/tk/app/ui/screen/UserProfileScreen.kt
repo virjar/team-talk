@@ -13,8 +13,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.shared.Outcome
+import com.virjar.tk.shared.client.FriendPresence
 import com.virjar.tk.protocol.model.UserRole
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
+import com.virjar.tk.app.ui.component.PresenceBadge
 import com.virjar.tk.app.ui.component.ScreenHeader
 import com.virjar.tk.app.ui.platform.primaryClickWithContextLongPress
 import com.virjar.tk.app.ui.platform.rememberClipboardTextWriter
@@ -162,6 +164,8 @@ fun UserProfileScreen(
     remark: String? = null,
     onSaveRemark: (suspend (String?) -> Outcome<Unit>)? = null,
     organization: com.virjar.tk.protocol.model.UserOrganizationSummary? = null,
+    /** 被查看账号的在线状态（仅好友有权威数据）；ONLINE 时头像角标显示绿点。 */
+    presence: FriendPresence? = null,
     onBack: (() -> Unit)? = null,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -170,6 +174,7 @@ fun UserProfileScreen(
             user = user,
             myUid = myUid,
             isFriend = isFriend,
+            presence = presence,
             hasPendingApply = hasPendingApply,
             hasIncomingApply = hasIncomingApply,
             isApplyingFriend = isApplyingFriend,
@@ -197,6 +202,7 @@ fun UserProfileContent(
     user: User?,
     myUid: String,
     isFriend: Boolean,
+    presence: FriendPresence? = null,
     hasPendingApply: Boolean,
     hasIncomingApply: Boolean = false,
     isApplyingFriend: Boolean = false,
@@ -284,11 +290,13 @@ fun UserProfileContent(
                     user, remark,
                     avatarClickable = user.avatar != null,
                     onAvatarClick = { avatarViewerShown = true },
+                    presence = presence,
                 )
                 UserProfilePresentation.CompactDialog -> CompactProfileHero(
                     user, remark,
                     avatarClickable = user.avatar != null,
                     onAvatarClick = { avatarViewerShown = true },
+                    presence = presence,
                 )
             }
 
@@ -486,20 +494,29 @@ private fun FullPageProfileHero(
     remark: String?,
     avatarClickable: Boolean = false,
     onAvatarClick: (() -> Unit)? = null,
+    presence: FriendPresence? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        AvatarPlaceholder(
-            name = user.name,
-            avatar = user.avatar,
-            size = 80,
-            modifier = Modifier.then(
-                if (avatarClickable && onAvatarClick != null) Modifier.clickable(onClick = onAvatarClick)
-                else Modifier
-            ).testTag("profile.avatar.view"),
-        )
+        Box {
+            AvatarPlaceholder(
+                name = user.name,
+                avatar = user.avatar,
+                size = 80,
+                modifier = Modifier.then(
+                    if (avatarClickable && onAvatarClick != null) Modifier.clickable(onClick = onAvatarClick)
+                    else Modifier
+                ).testTag("profile.avatar.view"),
+            )
+            PresenceBadge(
+                friendUid = user.uid,
+                presence = presence,
+                size = 14.dp,
+                modifier = Modifier.align(Alignment.BottomEnd),
+            )
+        }
         Spacer(Modifier.height(16.dp))
         val identity = profileIdentityLines(user, remark).associateBy { it.tag }
         CopyableProfileLine(
@@ -539,20 +556,29 @@ private fun CompactProfileHero(
     remark: String?,
     avatarClickable: Boolean = false,
     onAvatarClick: (() -> Unit)? = null,
+    presence: FriendPresence? = null,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AvatarPlaceholder(
-            name = user.name,
-            avatar = user.avatar,
-            size = 64,
-            modifier = Modifier.then(
-                if (avatarClickable && onAvatarClick != null) Modifier.clickable(onClick = onAvatarClick)
-                else Modifier
-            ).testTag("profile.avatar.view"),
-        )
+        Box {
+            AvatarPlaceholder(
+                name = user.name,
+                avatar = user.avatar,
+                size = 64,
+                modifier = Modifier.then(
+                    if (avatarClickable && onAvatarClick != null) Modifier.clickable(onClick = onAvatarClick)
+                    else Modifier
+                ).testTag("profile.avatar.view"),
+            )
+            PresenceBadge(
+                friendUid = user.uid,
+                presence = presence,
+                size = 12.dp,
+                modifier = Modifier.align(Alignment.BottomEnd),
+            )
+        }
         Spacer(Modifier.width(16.dp))
         val identity = profileIdentityLines(user, remark).associateBy { it.tag }
         Column(modifier = Modifier.weight(1f)) {

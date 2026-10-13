@@ -519,6 +519,10 @@ internal fun AndroidChatScreen(
 
     // 1:1 通话（协议 minor 0.5）：拨打前请求麦克风/摄像头权限，授权后经准入发起
     val chatPeerUid by viewModel.chatPeerUid.collectAsState()
+    // 私聊头部对端在线标签（服务端仅对好友发放；非好友/群聊自然不显示）
+    val peerPresence = officeRefHost?.friendPresenceByUid
+        ?.let { flow -> kotlinx.coroutines.flow.combine(flow, viewModel.chatPeerUid) { map, peer -> peer?.let(map::get) } }
+        ?.collectAsState(null)?.value
     var pendingCallVideo by remember { mutableStateOf<Boolean?>(null) }
     val callPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -546,6 +550,8 @@ internal fun AndroidChatScreen(
                     AndroidChatHeader(
                         title = chatName.ifEmpty { chatId.take(16) },
                         chatType = chatType,
+                        presence = if (chatType == 2) null else peerPresence,
+                        presencePeerUid = chatPeerUid,
                         onBack = actionAdmission.guard(onBack),
                         onGroupDetail = actionAdmission.guard(onGroupDetail),
                         // 系统账号（服务号/文件传输助手，sys_ 前缀）不提供通话入口

@@ -3,6 +3,7 @@ package com.virjar.tk.desktop
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
@@ -103,6 +104,8 @@ internal fun ChatPanelWrapper(
     pendingTasksContent: (@Composable () -> Unit)? = null,
     /** 1:1 通话编排（协议 minor 0.5）；null 时不显示通话入口。 */
     callCenter: com.virjar.tk.shared.call.CallCenter? = null,
+    /** 好友在线状态投影（服务端仅对好友发放）；私聊头部据此显示对端在线标签。 */
+    friendPresenceByUid: kotlinx.coroutines.flow.StateFlow<Map<String, com.virjar.tk.shared.client.FriendPresence>>? = null,
 ) {
     val messagesState = viewModel.messages.collectAsState()
     val messageDetails = com.virjar.tk.app.ui.screen.rememberMessageDetails(viewModel)
@@ -315,8 +318,24 @@ internal fun ChatPanelWrapper(
         // 群名称保持纯标题；群设置走齿轮检查器，「···」对所有会话类型打开会话工具窗口。
         val isGroup = ChatType.fromCode(chatType) == ChatType.GROUP
         val chatPeerUid by viewModel.chatPeerUid.collectAsState()
+        val peerPresence by remember(friendPresenceByUid) {
+            kotlinx.coroutines.flow.combine(friendPresenceByUid ?: kotlinx.coroutines.flow.flowOf(emptyMap()), viewModel.chatPeerUid) { map, peer ->
+                peer?.let(map::get)
+            }
+        }.collectAsState(null)
         ListHeader(
             title = chatName.ifEmpty { chatId.take(16) },
+            titleTrailing = if (!isGroup) {
+                {
+                    chatPeerUid?.let { peer ->
+                        com.virjar.tk.app.ui.component.PresenceLabel(
+                            friendUid = peer,
+                            presence = peerPresence,
+                            modifier = Modifier.padding(start = Tk.spacing.sm),
+                        )
+                    }
+                }
+            } else null,
             actions = {
                 // 系统账号（服务号/文件传输助手，sys_ 前缀）不提供通话入口
                 if (!isGroup && callCenter != null && !isSystemAccountUid(chatPeerUid)) {

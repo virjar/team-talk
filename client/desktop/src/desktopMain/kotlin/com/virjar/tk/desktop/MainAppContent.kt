@@ -654,6 +654,7 @@ private fun RowScope.MainContentPane(
                             mentionCandidates = mentionCandidates,
                             chatForegroundActive = mainWindowReadActive,
                             mainWindowFullscreen = mainWindowFullscreen,
+                            friendPresenceByUid = nav.friendPresenceByUid,
                             messageFocusTarget = nav.messageFocusTarget
                                 ?.takeIf { target -> target.chatId == activeChatId },
                             messageFocusRequestId = nav.messageFocusRequestId,

@@ -194,6 +194,8 @@ private fun RailItem(
 internal fun ListHeader(
     title: String,
     onTitleClick: (() -> Unit)? = null,
+    /** 标题右侧的补充内容（如私聊对端在线标签）；与标题同基线排列。 */
+    titleTrailing: @Composable (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     Column {
@@ -204,14 +206,21 @@ internal fun ListHeader(
                 .padding(horizontal = Tk.spacing.lg),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .weight(1f)
                     .then(if (onTitleClick != null) Modifier.clickable(onClick = onTitleClick) else Modifier),
-            )
+            ) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                titleTrailing?.invoke()
+            }
             actions()
         }
         HorizontalDivider(color = Tk.colors.divider)

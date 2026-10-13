@@ -222,6 +222,7 @@ internal fun IosFeatureScreen(route: IosRoute, ui: IosSessionUi) = key(ui, route
             user = data.account.profileUser?.takeIf { it.uid == route.id }, myUid = data.userSession.uid,
             isFriend = data.account.isFriend, remark = data.account.profileRemark,
             organization = data.account.profileOrganization?.takeIf { it.uid == route.id },
+            presence = data.account.profilePresence,
             onSaveRemark = { remark -> actions.run({ Outcome.Failure(AppError.AuthExpired) }) { data.account.setFriendRemark(route.id, remark) } },
             hasPendingApply = data.account.hasOutgoingFriendApply(route.id),
             hasIncomingApply = data.account.hasIncomingFriendApply(route.id), isApplyingFriend = data.account.isApplyingFriend(route.id),

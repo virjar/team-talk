@@ -7,6 +7,7 @@ import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.shared.client.ConnectionState
+import com.virjar.tk.shared.client.FriendPresence
 import com.virjar.tk.shared.client.PendingContactDecisionType
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
 import com.virjar.tk.protocol.model.Attachment
@@ -164,6 +165,10 @@ class AccountFeature internal constructor(
     var profileOrganization by mutableStateOf<com.virjar.tk.protocol.model.UserOrganizationSummary?>(null)
         private set
 
+    /** 被查看账号的在线状态（仅好友有权威数据；非好友恒 UNKNOWN→不展示）。 */
+    var profilePresence by mutableStateOf<FriendPresence?>(null)
+        private set
+
     private var applyingFriendUids by mutableStateOf(emptySet<String>())
     private var friendApplyStateByUid by mutableStateOf(emptyMap<String, ProfileFriendApplyState>())
     private var friendApplyRecordsGeneration = 0L
@@ -179,6 +184,11 @@ class AccountFeature internal constructor(
                 localData.projection { cache.observeUser(currentUid) }.collect { user ->
                     currentUser = user ?: currentUserFallback()
                 }
+            }
+        }
+        scope.launch {
+            session.friendPresenceByUid.collect { map ->
+                profilePresence = profileTargetUid?.let(map::get)
             }
         }
         // CONTACT_ACCEPTED/DELETED 会先进入联系人缓存。资料页保持打开时也应立即切换关系
@@ -312,6 +322,7 @@ class AccountFeature internal constructor(
     private fun bindProfileProjection(uid: String) {
         profileTargetUid = uid
         profileObserverJob?.cancel()
+        profilePresence = session.friendPresenceByUid.value[uid]
         val cache = session.localCache
         if (profileUser?.uid != uid) profileUser = null
         profileObserverJob = scope.launch {

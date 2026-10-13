@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import com.virjar.tk.protocol.model.ChatType
@@ -37,6 +38,10 @@ import com.virjar.tk.app.ui.theme.Tk
 internal fun AndroidChatHeader(
     title: String,
     chatType: Int,
+    /** 私聊对端在线状态；ONLINE 时标题旁显示绿点+"在线"。 */
+    presence: com.virjar.tk.shared.client.FriendPresence? = null,
+    /** 在线状态归属的对端 uid（tag 用）。 */
+    presencePeerUid: String? = null,
     onBack: () -> Unit,
     onGroupDetail: () -> Unit,
     modifier: Modifier = Modifier,
@@ -91,13 +96,20 @@ internal fun AndroidChatHeader(
                         .testTag("chat.header.title"),
                     contentAlignment = Alignment.CenterStart,
                 ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        com.virjar.tk.app.ui.component.PresenceLabel(
+                            friendUid = presencePeerUid.orEmpty(),
+                            presence = presence,
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
                 }
 
                 if (!isGroup && onVoiceCall != null) {
