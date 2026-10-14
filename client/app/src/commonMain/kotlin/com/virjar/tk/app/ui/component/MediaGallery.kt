@@ -36,6 +36,8 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.testTag
@@ -43,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.virjar.tk.protocol.model.Attachment
 import kotlinx.coroutines.launch
+import kotlin.math.exp
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
@@ -331,7 +334,20 @@ private fun GalleryPageButton(
  * - 双指 pinch 或 scale > 1 后的单指拖动：消费并做缩放/平移（平移按缩放余量钳制）；
  * - 缩回 1x：复位到居中，单指横滑恢复切页。
  * 因此不能用 transformable（它对单指拖动同样消费，会永久吃掉 Pager 的切页手势）。
+ *
+ * 滚轮（Scroll 事件没有 pressed 指针，与上面的触摸循环互不干扰，桌面触控板/外接鼠标均适用）：
+ * - Ctrl+滚轮 = 缩放，以光标为锚点。桌面触控板捏合在 macOS/Windows 上由系统合成
+ *   Ctrl+精确滚轮事件（Compose Desktop 无原生捏合手势，见 JetBrains CMP-1953），
+ *   Android/iOS 外接鼠标的 Ctrl+滚轮走同一路径；
+ * - 放大态下普通滚轮 = 平移（触控板双指滑动，natural scrolling 下内容跟手，与移动端
+ *   放大后拖动对齐）；1x 时普通滚轮不消费，维持画廊现状。
  */
+/** 滚轮缩放灵敏度：一格精确滚轮约缩放 exp(0.2) ≈ 1.22x，触控板捏合按小数增量累乘得到连续手感。 */
+private const val WHEEL_ZOOM_SENSITIVITY = 0.2f
+
+/** 滚轮平移步长：一格滚轮平移的像素数，对齐浏览器滚动的默认视感。 */
+private const val WHEEL_PAN_STEP = 100f
+
 @Composable
 private fun ZoomableImagePage(
     attachment: Attachment,
@@ -359,6 +375,17 @@ private fun ZoomableImagePage(
         )
     }
 
+    /**
+     * 以 [anchor]（视口坐标，滚轮缩放取光标位置）为锚点缩放：锚点处的图片内容在缩放前后
+     * 保持不动，newOffset = offset * zoom + (anchor - 视口中心) * (1 - zoom)；锚点取视口中心
+     * 时退化为双击/触摸缩放的中心缩放语义。钳制与"缩回 1x 复位居中"沿用 [applyTransform]。
+     */
+    fun applyZoomAtAnchor(zoom: Float, anchor: Offset) {
+        val center = Offset(viewport.width / 2f, viewport.height / 2f)
+        val pan = offset * (zoom - 1f) + (anchor - center) * (1f - zoom)
+        applyTransform(zoom, pan)
+    }
+
     Box(
         modifier = modifier.clipToBounds(),
         contentAlignment = Alignment.Center,
@@ -382,6 +409,31 @@ private fun ZoomableImagePage(
                                     event.changes.forEach { if (it.positionChanged()) it.consume() }
                                     applyTransform(zoom, pan)
                                 }
+                            }
+                        }
+                    }
+                }
+                .pointerInput(attachment.path) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            if (event.type != PointerEventType.Scroll) continue
+                            val change = event.changes.firstOrNull() ?: continue
+                            if (event.keyboardModifiers.isCtrlPressed) {
+                                // 触控板捏合 / Ctrl+滚轮：以光标为锚点按比例累乘缩放
+                                val zoom = exp(-change.scrollDelta.y * WHEEL_ZOOM_SENSITIVITY)
+                                applyZoomAtAnchor(zoom, change.position)
+                                change.consume()
+                            } else if (scale > 1.01f) {
+                                // 放大态下的普通滚轮/触控板双指滑动：平移（负号使 natural scrolling 跟手）
+                                applyTransform(
+                                    1f,
+                                    Offset(
+                                        -change.scrollDelta.x * WHEEL_PAN_STEP,
+                                        -change.scrollDelta.y * WHEEL_PAN_STEP,
+                                    ),
+                                )
+                                change.consume()
                             }
                         }
                     }

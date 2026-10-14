@@ -94,7 +94,7 @@ TEAMTALK_DESKTOP_TEST_PORT=18081 scripts/desktop-acceptance.sh kill
 | POST | `/window-fullscreen` | 请求窗口进入、退出或切换全屏 |
 | POST | `/longclick` | 触发长按语义动作 |
 | POST | `/rightclick` | 触发右键交互 |
-| POST | `/scroll` | 在节点或坐标处滚动真实滚轮（`direction=up\|down`，`amount`=格数；可滚动容器自动化必用） |
+| POST | `/scroll` | 在节点或坐标处滚动真实滚轮（`direction=up\|down`，`amount`=格数；可滚动容器自动化必用）；`ctrl=true` 按住 Ctrl 滚动，验收画廊捏合缩放等"Ctrl+滚轮"手势（与系统触控板捏合合成事件同路径） |
 | POST | `/input` | 设置可编辑节点文本 |
 | POST | `/set-progress` | 通过 Compose `SetProgress` 语义设置 Slider/进度值 |
 | POST | `/keypress` | 派发 ESCAPE、ENTER 等按键 |

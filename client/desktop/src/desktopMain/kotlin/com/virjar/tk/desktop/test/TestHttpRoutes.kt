@@ -16,8 +16,10 @@ import java.awt.EventQueue
 import java.awt.KeyboardFocusManager
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
+import java.awt.event.MouseWheelEvent
 import org.jetbrains.skia.EncodedImageFormat
 import org.jetbrains.skia.Image
+import org.jetbrains.skiko.SkiaLayer
 
 /** 把稳定的测试 HTTP 契约映射到窗口与 semantics 操作上。 */
 internal class TestHttpRoutes(
@@ -435,8 +437,11 @@ internal class TestHttpRoutes(
     /**
      * /scroll?testTag=xxx&direction=down&amount=3   在节点中心滚动真实滚轮
      * /scroll?x=N&y=N&direction=up                  在坐标处滚动；缺省目标为窗口中心
+     * /scroll?ctrl=true                             按住 Ctrl 滚动（缩放类手势验收）
      * 始终走 Robot 滚轮：可滚动容器（verticalScroll/LazyColumn）没有可直接调用的
      * 语义动作端点，滚轮链路同时验证真实手势。macOS 需要辅助功能权限（与双击一致）。
+     * `ctrl=true` 在 AWT 层合成"Ctrl 按下 + 滚轮"，与系统把触控板捏合转换成的
+     * Ctrl+精确滚轮事件同路径（Robot 为整数格增量，捏合为小数增量，仅幅度不同）。
      */
     internal fun handleScroll(exchange: HttpExchange) {
         val params = exchange.queryParams()
@@ -452,6 +457,7 @@ internal class TestHttpRoutes(
             return
         }
         val notches = (params["amount"]?.toIntOrNull() ?: 3).coerceIn(1, 20)
+        val ctrl = params["ctrl"]?.equals("true", ignoreCase = true) == true
 
         val requestedX = params["x"]?.toFloatOrNull()
         val requestedY = params["y"]?.toFloatOrNull()
@@ -473,15 +479,64 @@ internal class TestHttpRoutes(
             // 焦点反而会把滚轮从弹窗内容上抢走。
             val (screenX, screenY) = automation.composePointToScreen(window, x, y)
             robot.mouseMove(screenX, screenY)
-            Thread.sleep(80)
-            robot.mouseWheel(if (direction == "down") notches else -notches)
-            robot.waitForIdle()
+            if (ctrl) {
+                // Robot 合成的滚轮 CGEvent 不携带键盘修饰状态（系统只为真实输入设备
+                // 事件填充 modifier flags，按住 Ctrl 的合成按键不会并入），无法复现
+                // "Ctrl+滚轮"。改为进程内构造带 CTRL_DOWN_MASK 的 MouseWheelEvent
+                // 直接派发到窗口的 SkiaLayer——与 Compose SceneMediator 消费系统
+                // 滚轮事件（触控板捏合的合成路径）完全一致。
+                var dispatched = false
+                EventQueue.invokeAndWait {
+                    val layer = findSkiaLayer(window)
+                    if (layer != null) {
+                        val location = layer.locationOnScreen
+                        val rotation = if (direction == "down") notches else -notches
+                        layer.dispatchEvent(
+                            MouseWheelEvent(
+                                layer,
+                                MouseWheelEvent.MOUSE_WHEEL,
+                                System.currentTimeMillis(),
+                                InputEvent.CTRL_DOWN_MASK,
+                                (screenX - location.x).toInt(),
+                                (screenY - location.y).toInt(),
+                                screenX.toInt(),
+                                screenY.toInt(),
+                                0,
+                                false,
+                                MouseWheelEvent.WHEEL_UNIT_SCROLL,
+                                1,
+                                rotation,
+                                rotation.toDouble(),
+                            ),
+                        )
+                        dispatched = true
+                    }
+                }
+                if (!dispatched) {
+                    exchange.send(404, """{"error":"skia layer not found"}""")
+                    return
+                }
+            } else {
+                Thread.sleep(80)
+                robot.mouseWheel(if (direction == "down") notches else -notches)
+                robot.waitForIdle()
+            }
             Thread.sleep(150)
         }
         exchange.send(
             200,
-            """{"scrolled":true,"direction":"$direction","amount":$notches,"at":[$x,$y],"window":"${wid.escape()}"}""",
+            """{"scrolled":true,"direction":"$direction","amount":$notches,"ctrl":$ctrl,"method":"${if (ctrl) "dispatch" else "robot"}","at":[$x,$y],"window":"${wid.escape()}"}""",
         )
+    }
+
+    /** 深度遍历窗口组件树找到承载 Compose 场景的 SkiaLayer。 */
+    private fun findSkiaLayer(component: java.awt.Component): SkiaLayer? {
+        if (component is SkiaLayer) return component
+        if (component !is java.awt.Container) return null
+        component.components.forEach { child ->
+            findSkiaLayer(child)?.let { return it }
+        }
+        return null
     }
 
     internal fun handleInput(exchange: HttpExchange) {
