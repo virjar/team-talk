@@ -4,7 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import com.heytap.msp.push.HeytapPushManager
-import com.heytap.msp.push.callback.ICallBackResultListener
+import com.heytap.msp.push.callback.ICallBackResultService
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /** 只在已授权的 OPPO/一加（ColorOS）设备主进程调用。 */
@@ -27,9 +27,9 @@ internal object OppoPushChannel : OemPushChannel {
         }
         // OPPO 官方注册接口要求 appKey 与 appSecret 都进入客户端。
         HeytapPushManager.register(context, BuildConfig.OPPO_PUSH_APP_KEY, BuildConfig.OPPO_PUSH_APP_SECRET,
-            object : ICallBackResultListener {
-                override fun onRegister(responseCode: Int, registerID: String) {
-                    if (responseCode == 0 && registerID.isNotEmpty()) {
+            object : ICallBackResultService {
+                override fun onRegister(responseCode: Int, registerID: String?, packageName: String?, appID: String?) {
+                    if (responseCode == 0 && !registerID.isNullOrEmpty()) {
                         registrationFailureCode.value = null
                         registrationId.value = registerID
                     } else {
@@ -38,16 +38,16 @@ internal object OppoPushChannel : OemPushChannel {
                     }
                 }
 
-                override fun onUnRegister(responseCode: Int) {
+                override fun onUnRegister(responseCode: Int, packageName: String?, appID: String?) {
                     if (responseCode == 0) registrationId.value = ""
                 }
 
                 override fun onGetPushStatus(responseCode: Int, status: Int) = Unit
                 override fun onGetNotificationStatus(responseCode: Int, status: Int) = Unit
-                override fun onSetPushTime(responseCode: Int, seconds: Int) = Unit
-                override fun onError(errorCode: Int, message: String?) {
+                override fun onSetPushTime(responseCode: Int, result: String?) = Unit
+                override fun onError(errorCode: Int, message: String?, packageName: String?, appID: String?) {
                     registrationFailureCode.value = errorCode.toLong()
-                    Log.w("OppoPush", "Registration failed code=$errorCode")
+                    Log.w("OppoPush", "Registration failed code=$errorCode message=$message")
                 }
             })
     }

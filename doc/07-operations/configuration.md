@@ -351,6 +351,28 @@ APNs 是提醒入口；前台恢复和重新连接继续走持久同步，不能
 与 [Token 鉴权](https://developer.apple.com/documentation/usernotifications/establishing-a-token-based-connection-to-apns)。
 本地签名/HTTP fixture 不替代 Apple 凭据、真机锁屏和通知点击验收。
 
+#### 环境与发行矩阵
+
+`aps-environment` 由构建签名决定，不由服务端配置决定：Xcode Debug 直装真机是
+development（sandbox token），Release、Ad-hoc、TestFlight 与 App Store 一律 production。
+客户端按构建内烘焙的 `TeamTalkPushEnvironment` 上报，服务端按 `apns-sandbox` /
+`apns-production` 分端点投递；两种 token 命名空间独立、不可混用，因此部署端
+`environments` 同时开启两个环境是常态——没有对应签名的构建就不会产生该环境的注册，
+多开不产生流量，TestFlight 上线即自动生效，无需届时改服务端。
+
+公版与私有版以 bundle ID（即 APNs topic）区分：`com.virjar.tk.ios` 与
+`com.virjar.tk.apple.ios` 各自绑定自己的服务器、账号体系与注册表，同一设备可并存互不
+干扰。`.p8` 是团队级钥匙：测试期公私共用一把最省事；私有 `deployment-local` 按"整目录
+交付"交接前应换成独立 key，避免交付物同时持有公版 topic 的发送能力。更换 key 只改
+`keyId` 与 `.p8` 再重新部署，已登记的设备 token 不受影响——token 绑定 App、设备与
+环境，不绑定发送方 key。
+
+验收口径：sandbox token 不稳定（重装、换 profile 都可能轮换）且不适合真实用户，内测
+用户一律 TestFlight（production），sandbox 构建只用于开发者真机验收；每次出 TestFlight
+包先用 `client/ios/scripts/verify-signing.sh` 确认 `aps-environment=production`，并用
+TestFlight 包重跑推送验收清单——sandbox 与 production 的投递行为不完全等价，不能以
+sandbox 结论覆盖。
+
 ### 用辅助函数拆分配置
 
 DSL 是普通 Kotlin，可以在选中目录内新增同包文件，例如 `PrivateEndpoint.kt`，按章节拆分：

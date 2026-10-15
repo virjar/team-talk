@@ -10,6 +10,7 @@ import platform.CoreFoundation.*
 import platform.Network.*
 import platform.Security.*
 import platform.darwin.*
+import platform.posix.memcmp
 import platform.posix.memcpy
 
 /** TCP、DNS 与 TLS 由 Network.framework 提供；协议分帧保留在 PacketFrames。 */
@@ -189,7 +190,7 @@ internal class IosTcpChannel(
 
 internal class IosTcpException(val code: Int, message: String = "TCP transport failed ($code)") : IllegalStateException(message)
 
-private fun pemCertificate(pem: String): ByteArray {
+internal fun pemCertificate(pem: String): ByteArray {
     val certificates = Regex("-----BEGIN CERTIFICATE-----([\\s\\S]*?)-----END CERTIFICATE-----").findAll(pem).toList()
     require(certificates.size == 1) { "Configure exactly one TCP TLS certificate" }
     return platformBase64Decode(certificates.single().groupValues[1].filterNot(Char::isWhitespace)).also { bytes ->
@@ -213,23 +214,47 @@ private fun pemCertificate(pem: String): ByteArray {
     }
 }
 
-private fun verifyPinnedServer(trustObject: sec_trust_t, certificateBytes: ByteArray, host: String): Boolean = memScoped {
+internal fun verifyPinnedServer(trustObject: sec_trust_t, certificateBytes: ByteArray, host: String): Boolean = memScoped {
     val trust = sec_trust_copy_ref(trustObject) ?: return@memScoped false
-    val data = certificateBytes.usePinned { CFDataCreate(kCFAllocatorDefault, it.addressOf(0).reinterpret(), certificateBytes.size.toLong()) }
-    val certificate = SecCertificateCreateWithData(kCFAllocatorDefault, data)
-    val hostString = CFStringCreateWithCString(kCFAllocatorDefault, host, kCFStringEncodingUTF8)
-    val policy = SecPolicyCreateSSL(true, hostString)
-    val values = allocArray<COpaquePointerVar>(1)
-    values[0] = certificate
-    val anchors = CFArrayCreate(kCFAllocatorDefault, values, 1, kCFTypeArrayCallBacks.ptr)
     try {
-        certificate != null && policy != null &&
-            SecTrustSetPolicies(trust, policy) == errSecSuccess &&
-            SecTrustSetAnchorCertificates(trust, anchors) == errSecSuccess &&
-            SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess &&
-            SecTrustEvaluateWithError(trust, null)
+        // The deployment pins one exact self-signed leaf, so pin identity is settled by the
+        // leaf bytes first: Apple's baseline policy rejects pinned leaves whose validity
+        // exceeds 825 days (TcpTlsCertificates issues 3650-day certificates), and no
+        // exemption exists for custom anchors. Pin expiry was already enforced by
+        // pemCertificate at connection setup; the SecTrust evaluation below still guards
+        // every presentation that does not byte-match the pin.
+        if (pinnedLeafMatches(SecTrustGetCertificateAtIndex(trust, 0)?.let { SecCertificateCopyData(it) },
+                certificateBytes)) {
+            return@memScoped true
+        }
+        val data = certificateBytes.usePinned { CFDataCreate(kCFAllocatorDefault, it.addressOf(0).reinterpret(), certificateBytes.size.toLong()) }
+        val certificate = SecCertificateCreateWithData(kCFAllocatorDefault, data)
+        val hostString = CFStringCreateWithCString(kCFAllocatorDefault, host, kCFStringEncodingUTF8)
+        val policy = SecPolicyCreateSSL(true, hostString)
+        val values = allocArray<COpaquePointerVar>(1)
+        values[0] = certificate
+        val anchors = CFArrayCreate(kCFAllocatorDefault, values, 1, kCFTypeArrayCallBacks.ptr)
+        try {
+            certificate != null && policy != null &&
+                SecTrustSetPolicies(trust, policy) == errSecSuccess &&
+                SecTrustSetAnchorCertificates(trust, anchors) == errSecSuccess &&
+                SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess &&
+                SecTrustEvaluateWithError(trust, null)
+        } finally {
+            anchors?.let(::CFRelease); policy?.let(::CFRelease); hostString?.let(::CFRelease)
+            certificate?.let(::CFRelease); data?.let(::CFRelease)
+        }
     } finally {
-        anchors?.let(::CFRelease); policy?.let(::CFRelease); hostString?.let(::CFRelease)
-        certificate?.let(::CFRelease); data?.let(::CFRelease); CFRelease(trust)
+        CFRelease(trust)
+    }
+}
+
+/** Byte-identical leaf settles pin identity for exact-cert deployments; null never matches. */
+internal fun pinnedLeafMatches(presentedData: CFDataRef?, pinned: ByteArray): Boolean {
+    if (presentedData == null) return false
+    if (CFDataGetLength(presentedData).toInt() != pinned.size) return false
+    return pinned.usePinned { pinnedAddress ->
+        val presented = CFDataGetBytePtr(presentedData) ?: return@usePinned false
+        memcmp(presented, pinnedAddress.addressOf(0), pinned.size.toULong()) == 0
     }
 }
