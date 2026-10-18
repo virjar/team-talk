@@ -384,12 +384,13 @@ private fun IosGroupDetailScreen(chatId: String, actions: IosFeatureActions) {
     val ready = groups.detailTargetChatId == chatId
     val chat = groups.detailChat?.takeIf { ready && it.chatId == chatId }
     val members = groups.members.takeIf { ready }.orEmpty()
-    val role = members.firstOrNull { it.uid == data.userSession.uid }?.role ?: -1
+    val role = members.firstOrNull { it.uid == data.userSession.uid }?.role
+        ?: GroupMemberRole.Unknown(-1)
     val avatars by data.chat.chatAvatars.collectAsState(emptyMap())
     var avatarBusy by remember { mutableStateOf(false) }
     fun open(page: IosPage) { ui.navigation.open(IosRoute(page, chatId)) }
-    GroupDetailScreen(chat = chat, members = members, isOwner = role == 2, myUid = data.userSession.uid,
-        groupAvatar = avatars[chatId], onEditGroupAvatar = if (role >= 1) admission.guard {
+    GroupDetailScreen(chat = chat, members = members, isOwner = role == GroupMemberRole.OWNER, myUid = data.userSession.uid,
+        groupAvatar = avatars[chatId], onEditGroupAvatar = if (role.isAtLeast(GroupMemberRole.ADMIN)) admission.guard {
             if (!avatarBusy) ui.native.selectImage(false) { selection -> actions.selected(selection) {
                 avatarBusy = true
                 var prepared: IosPreparedAvatar? = null
@@ -406,7 +407,7 @@ private fun IosGroupDetailScreen(chatId: String, actions: IosFeatureActions) {
         onMemberClick = admission.guard(ui.navigation::profile),
         onInviteMembers = admission.guard { open(IosPage.INVITE_MEMBERS) }, onViewInviteLinks = admission.guard { open(IosPage.INVITE_LINKS) },
         onGroupFiles = admission.guard { open(IosPage.GROUP_FILES) }, onGroupBots = admission.guard { open(IosPage.GROUP_BOTS) },
-        onLeaveGroup = admission.guard { groups.exit(chatId, dissolve = role == 2) { admission.runIfOpen { ui.navigation.home() } } },
+        onLeaveGroup = admission.guard { groups.exit(chatId, dissolve = role == GroupMemberRole.OWNER) { admission.runIfOpen { ui.navigation.home() } } },
         onEditNotice = admission.guard { notice: String -> groups.updateNotice(chatId, notice) },
         onSetAdmin = admission.guard { uid: String -> groups.setMemberRole(chatId, uid, 1) },
         onRemoveAdmin = admission.guard { uid: String -> groups.setMemberRole(chatId, uid, 0) },
