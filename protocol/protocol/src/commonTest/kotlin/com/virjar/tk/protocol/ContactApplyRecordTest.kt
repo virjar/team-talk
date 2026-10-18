@@ -1,7 +1,9 @@
 package com.virjar.tk.protocol
 
+import com.virjar.tk.protocol.model.ContactApplyDirection
 import com.virjar.tk.protocol.model.ContactApplyLookup
 import com.virjar.tk.protocol.model.ContactApplyRecord
+import com.virjar.tk.protocol.model.ContactApplyStatus
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.ProtoCodec
 import kotlin.test.Test
@@ -14,10 +16,10 @@ class ContactApplyRecordTest {
             id = 42,
             fromUid = "alice",
             toUid = "bob",
-            direction = ContactApplyRecord.DIRECTION_INCOMING,
+            direction = ContactApplyDirection.INCOMING,
             token = "recipient-only-token",
             remark = "一起协作",
-            status = ContactApplyRecord.STATUS_PENDING,
+            status = ContactApplyStatus.PENDING,
             createdAt = 100,
             updatedAt = 120,
             peerUser = User(uid = "alice", username = "alice", name = "Alice"),

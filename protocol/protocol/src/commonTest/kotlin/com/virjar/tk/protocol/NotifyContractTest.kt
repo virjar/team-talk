@@ -3,6 +3,7 @@ package com.virjar.tk.protocol
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.Contact
 import com.virjar.tk.protocol.model.ContactApply
+import com.virjar.tk.protocol.model.ContactApplyStatus
 import com.virjar.tk.protocol.model.Conversation
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.model.Message
@@ -79,7 +80,7 @@ class NotifyContractTest {
     internal fun sampleOf(type: NotifyType): IProto = when (type) {
         NotifyType.CONTACT_APPLY -> ContactApply(
             id = 1, fromUid = "u1", toUid = "u2", token = "tk", remark = "hi",
-            status = 0, createdAt = 100L, fromUser = sampleUser,
+            status = ContactApplyStatus.PENDING, createdAt = 100L, fromUser = sampleUser,
         )
         NotifyType.CONTACT_ACCEPTED, NotifyType.CONTACT_DELETED, NotifyType.CONTACT_UPDATED -> Contact(
             uid = "u1", friendUid = "u2", remark = "r", status = 1, user = sampleUser,

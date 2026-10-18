@@ -1,6 +1,7 @@
 package com.virjar.tk.protocol
 
 import com.virjar.tk.protocol.model.InvitePreview
+import com.virjar.tk.protocol.model.InvitePreviewStatus
 import com.virjar.tk.protocol.rpc.gen.ChatRpcContract
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -12,10 +13,10 @@ class InvitePreviewContractTest {
     fun `preview supports unknown invitations and existing members without changing old invitation contracts`() {
         val chatId = "00000000-0000-4000-8000-000000000031"
         val previews = listOf(
-            InvitePreview(InvitePreview.VALID, chatId, "受邀工作群", 12),
-            InvitePreview(InvitePreview.REVOKED, chatId, "已加入的群", 3, alreadyJoined = true),
-            InvitePreview(InvitePreview.EXHAUSTED),
-            InvitePreview(InvitePreview.NOT_FOUND),
+            InvitePreview(InvitePreviewStatus.VALID, chatId, "受邀工作群", 12),
+            InvitePreview(InvitePreviewStatus.REVOKED, chatId, "已加入的群", 3, alreadyJoined = true),
+            InvitePreview(InvitePreviewStatus.EXHAUSTED),
+            InvitePreview(InvitePreviewStatus.NOT_FOUND),
         )
         previews.forEach { preview ->
             assertEquals(preview, ProtoCodec.decode(InvitePreview, ProtoCodec.encode(preview)))

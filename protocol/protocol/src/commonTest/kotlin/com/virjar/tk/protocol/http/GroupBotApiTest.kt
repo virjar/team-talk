@@ -45,7 +45,7 @@ class GroupBotApiTest {
             bot = GroupBotSummary(
                 botId = "bot-1",
                 name = request.name,
-                status = 1,
+                status = GroupBotStatus.ACTIVE,
                 lastUsedAt = null,
                 createdAt = 7,
                 apiPath = "/api/v1/groups/chat-1/bots/bot-1/messages",
