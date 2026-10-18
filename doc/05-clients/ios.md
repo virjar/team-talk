@@ -143,12 +143,38 @@ TestFlight 以官方渠道覆盖同等能力（免 UDID 登记、人数上限高
 分发的默认选择；私有发行由组织使用自己的 Apple 账号走 TestFlight，或经 Apple Business
 Manager 分发自定义 App。
 
+### Xcode Cloud 构建
+
+TestFlight 制品默认经 Xcode Cloud 流水线构建，仓库侧支持已内置：
+
+- `client/ios/ci_scripts/ci_post_clone.sh` 在 Xcode Cloud 克隆后运行：定位或经 Homebrew 安装
+  JDK 21 并写入 `~/.gradle/gradle.properties`（`org.gradle.java.home`，buildSrc 需要 JDK 21 API），
+  向仓库根 `local.properties` 写入 `enableIos=true` 打开 iOS target，并把项目 `gradle.properties`
+  的 Gradle daemon 堆临时提高到 6g——Release 归档的 Kotlin/Native 全程序优化
+  （devirtualization）在默认 3g 堆上会 OOM。全部通过文件落地，不依赖构建动作间的环境继承；
+  客户端构建不涉及任何秘密，APNs 密钥只存在于服务端 env.sh。
+  本地做 Release 归档需要同样提高堆：`./gradlew "-Dorg.gradle.jvmargs=-Xmx6g …"`
+  或临时向项目 `gradle.properties` 追加同一行（勿提交）。
+- App Store Connect 侧的前置：先用公版 bundle ID（`com.virjar.tk.ios`）创建 App 记录；
+  Xcode Cloud 连接 GitHub 仓库需仓库 Admin 安装对应 GitHub App；workflow 选择
+  `client/ios/TeamTalk.xcodeproj` 的 `TeamTalk` scheme（已共享），目标 TestFlight（iOS）。
+- Xcode Cloud 构建为 Release 签名，`aps-environment=production`；服务端 APNs 的
+  `environments` 需包含 `production`。同一短版本重传 TestFlight 必须递增构建号：
+  根 `gradle.properties` 是编号唯一来源（发行批次递增），或在 workflow 环境变量用
+  `ORG_GRADLE_PROJECT_buildNumber` 覆写为 Xcode Cloud 的构建序号。
+- 上传成功后 TestFlight 内部测试（App Store Connect 用户，≤100 人）无需 Beta 审核；
+  外部公开测试需要审核。签名与设备级验收结论仍以真机结果为准，见本页验收清单。
+
 部署站点下载页（`/downloads`）当前固定渲染 Windows/macOS/Linux/Android/无头卡片。iOS 的
 表示原则：不提供 IPA 下载卡片；在取得签名与 TestFlight 材料后，增加 iOS 卡片承载 TestFlight
 公开链接（或私有部署的邀请引导文案）。注册中心接入在实施时一并补齐。
 
 HTTP 使用 URLSession 的系统证书验证与 ATS；公开部署使用 HTTPS。私有 TCP 证书使用部署配置的
-显式证书及目标主机验证，不接受无条件信任。配置明确选用 HTTP 时，生成器只对该服务的精确主机
+显式证书及目标主机验证，不接受无条件信任。固定信任先按"收到的叶子证书与配置证书字节级一致"
+判定：Apple 基线策略会拒绝有效期超过 825 天的服务器证书，自定义锚点也无豁免，而
+`TcpTlsCertificates` 生成 3650 天证书，纯策略评测会让私有部署的 iOS 客户端永远握不上手；
+字节一致即视为 pin 命中，证书是否过期仍在连接建立前校验，不匹配的展示继续走完整
+SecTrust 评测并拒绝。配置明确选用 HTTP 时，生成器只对该服务的精确主机
 生成 ATS 例外，不包含子域或全局放行；iOS 17 起直连 IP 也使用该精确例外。
 局域网连接由系统授权提示管理。
 

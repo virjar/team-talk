@@ -17,6 +17,9 @@
 <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- OPPO/一加系统推送投递权限，由 ColorOS 预置预授权（官方权限名即为此拼写）。 -->
+    <uses-permission android:name="com.coloros.mcs.permission.RECIEVE_MCS_MESSAGE" />
+    <uses-permission android:name="com.heytap.mcs.permission.RECIEVE_MCS_MESSAGE" />
     <!-- 应用内升级：弹出系统安装器需要声明；系统会引导用户授予本应用的安装授权。 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
@@ -107,5 +110,26 @@
                 <action android:name="com.meizu.flyme.push.intent.UNREGISTER.FEEDBACK" />
             </intent-filter>
         </receiver>
+        <!-- OPPO msp SDK 的透传消息服务（类由 SDK 提供，按官方接入文档声明）；
+             系统推送框架持签名权限调起，exported 必须为 true。 -->
+        <service
+            android:name="com.heytap.msp.push.service.CompatibleDataMessageCallbackService"
+            android:enabled="${oppoPushEnabled}"
+            android:exported="true"
+            android:permission="com.coloros.mcs.permission.SEND_MCS_MESSAGE">
+            <intent-filter>
+                <action android:name="com.coloros.mcs.action.RECEIVE_MCS_MESSAGE" />
+            </intent-filter>
+        </service>
+        <service
+            android:name="com.heytap.msp.push.service.DataMessageCallbackService"
+            android:enabled="${oppoPushEnabled}"
+            android:exported="true"
+            android:permission="com.heytap.mcs.permission.SEND_PUSH_MESSAGE">
+            <intent-filter>
+                <action android:name="com.coloros.mcs.action.RECEIVE_MCS_MESSAGE" />
+                <action android:name="com.heytap.msp.push.RECEIVE_MCS_MESSAGE" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

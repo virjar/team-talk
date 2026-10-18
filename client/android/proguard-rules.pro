@@ -11,6 +11,10 @@
 -keep class com.virjar.tk.android.HonorPushService { *; }
 -keep class com.virjar.tk.android.VivoPushReceiver { *; }
 -keep class com.virjar.tk.android.MeizuPushReceiver { *; }
+# OPPO msp SDK（官方接入文档要求；AIDL 跨进程接口与内部反射不可混淆）。未配置 OPPO 时无匹配类，规则空置无害。
+-keep class com.heytap.msp.** { *; }
+-keep class com.heytap.mcssdk.** { *; }
+-keep class com.mcs.aidl.** { *; }
 
 # ── Compose / Kotlin ──
 -keep class androidx.compose.** { *; }
