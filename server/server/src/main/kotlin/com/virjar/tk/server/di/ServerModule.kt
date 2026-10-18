@@ -404,6 +404,7 @@ internal fun createServerModule(
             users = get(),
             managedChats = get(),
             contacts = get(),
+            organizations = get(),
             requiredParticipants = get(),
             lifecycleGate = get(),
             unitOfWork = get(),

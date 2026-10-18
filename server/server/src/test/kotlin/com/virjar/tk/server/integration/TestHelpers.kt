@@ -448,6 +448,7 @@ class TestEnvironment : AutoCloseable {
         users = koin.get(),
         managedChats = koin.get(),
         contacts = koin.get(),
+        organizations = koin.get(),
         requiredParticipants = koin.get(),
         lifecycleGate = koin.get(),
         unitOfWork = unitOfWork,

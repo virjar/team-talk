@@ -10,6 +10,7 @@ import com.virjar.tk.protocol.model.isActiveHuman
 import com.virjar.tk.server.domain.command.reliableCommandFingerprint
 import com.virjar.tk.server.domain.command.ReliableCommandPolicy
 import com.virjar.tk.server.domain.contact.ContactRepository
+import com.virjar.tk.server.domain.organization.OrganizationRepository
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
 import com.virjar.tk.server.domain.user.UserRepository
 import com.virjar.tk.protocol.model.Chat
@@ -38,6 +39,7 @@ class ChatService(
     private val users: UserRepository,
     private val managedChats: ManagedChatPolicy,
     private val contacts: ContactRepository,
+    private val organizations: OrganizationRepository,
     private val requiredParticipants: RequiredChatParticipants,
     private val lifecycleGate: ChatLifecycleGate,
     private val unitOfWork: PgUnitOfWork,
@@ -314,9 +316,9 @@ class ChatService(
 
     private suspend fun addMembersInternal(operatorUid: String, chatId: String, uids: List<String>) {
         requireUserManaged(chatId)
-        // 在解析目标身份之前默认拒绝；下面的交易回调会在已锁定的成员快照下重复
-        // 权威角色检查。
-        access.requireAdmin(operatorUid, chatId)
+        // 在解析目标身份之前先确认操作者是群成员；下面的交易回调会在已锁定的成员
+        // 快照下重复权威角色与邀请范围检查。
+        access.requireGroupMember(operatorUid, chatId)
         val targets = GroupPolicy.canonicalTargetMemberUids(uids)
         targets.forEach(::requireHumanMemberTarget)
         addMembersWithDurableEvents(
@@ -327,7 +329,28 @@ class ChatService(
         ) { facts ->
             require(facts.chat.chatType == ChatType.GROUP.code) { "单聊不能添加成员" }
             val operator = facts.operator ?: throw IllegalArgumentException("操作者不是群成员")
-            require(operator.role.isAtLeast(GroupMemberRole.ADMIN)) { "需要管理员权限" }
+            if (!operator.role.isAtLeast(GroupMemberRole.ADMIN)) {
+                requireMemberInviteScope(facts)
+            }
+        }
+    }
+
+    /**
+     * 普通群成员的邀请范围（办公优先，默认开放）：可以邀请自己的好友与组织成员。
+     *
+     * 当前部署是单组织库，"组织成员"按"双方均有组织归属"判定，与 T001/T008 的
+     * 同组织免好友发起私聊语义一致；未来多组织部署时应在同一判定内升级为同根比较。
+     * 将来若要按群关闭普通成员邀请，也在这里收紧，管理员与群主路径保持不变。
+     */
+    private fun requireMemberInviteScope(facts: GroupMemberAdditionFacts) {
+        val operatorUid = facts.operator!!.uid
+        val friendUids = contacts.listFriendUids(operatorUid)
+        val operatorIsOrganizationMember = organizations
+            .listMemberships(operatorUid, facts.transaction).isNotEmpty()
+        facts.requestedUids.forEach { targetUid ->
+            val allowed = targetUid in friendUids ||
+                (operatorIsOrganizationMember && organizations.listMemberships(targetUid, facts.transaction).isNotEmpty())
+            if (!allowed) throw ChatAccessDeniedException("普通成员只能邀请好友或组织成员")
         }
     }
 

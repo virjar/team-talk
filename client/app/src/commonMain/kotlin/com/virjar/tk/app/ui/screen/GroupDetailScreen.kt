@@ -154,17 +154,19 @@ fun GroupDetailScreen(
                         )
                     }
                 }
-                if (currentUserCanManage) {
-                    item(key = "invitations") {
-                        SettingsSectionLabel("成员管理")
-                        SettingsGroupCard(modifier = Modifier.padding(bottom = Tk.spacing.lg)) {
-                            SettingsEntryRow(
-                                icon = Icons.Filled.PersonAdd,
-                                title = "邀请成员",
-                                onClick = onInviteMembers,
-                                modifier = Modifier.heightIn(min = Tk.dimens.headerHeight),
-                                tag = "group.detail.invite",
-                            )
+                item(key = "invitations") {
+                    // 办公优先，默认开放：邀请成员对所有群成员可见（普通成员可拉好友与
+                    // 组织同事入群，服务端权威校验范围）；邀请链接创建仍是管理员能力。
+                    SettingsSectionLabel(if (currentUserCanManage) "成员管理" else "成员")
+                    SettingsGroupCard(modifier = Modifier.padding(bottom = Tk.spacing.lg)) {
+                        SettingsEntryRow(
+                            icon = Icons.Filled.PersonAdd,
+                            title = "邀请成员",
+                            onClick = onInviteMembers,
+                            modifier = Modifier.heightIn(min = Tk.dimens.headerHeight),
+                            tag = "group.detail.invite",
+                        )
+                        if (currentUserCanManage) {
                             SettingsEntryRow(
                                 icon = Icons.Filled.Link,
                                 title = "邀请链接",

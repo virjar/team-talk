@@ -283,6 +283,8 @@ class MessageServiceLifecycleTest {
                 users = users,
                 managedChats = UnmanagedChatPolicy,
                 contacts = contacts,
+                // 该夹具不触达群邀请范围校验；组织仓库保持无操作 stub。
+                organizations = interfaceStub<com.virjar.tk.server.domain.organization.OrganizationRepository>(),
                 requiredParticipants = interfaceStub<RequiredChatParticipants>(),
                 lifecycleGate = gate,
                 unitOfWork = ImmediatePgUnitOfWork,

@@ -23,6 +23,8 @@ data class GroupMemberAdditionFacts(
     val chat: Chat,
     val operator: Member?,
     val requestedUids: List<String>,
+    /** 加入本次命令的事务句柄：authorize 回调是同步块，借它做同事务的好友/组织关系读取。 */
+    val transaction: PgWriteTransactionContext,
 )
 
 /** 由建立成员会话的同一事务产生的快照。 */

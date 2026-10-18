@@ -76,6 +76,13 @@ class GroupFeature internal constructor(
         private set
     var inviteLinks by mutableStateOf(emptyList<InviteLink>())
         private set
+    /**
+     * 组织同事邀请候选（uid → 显示名）。办公优先，默认开放普通成员邀请：无组织归属、
+     * 目录尚未就绪或加载失败时保持为空，邀请选择器退化为好友-only，不阻塞邀请流程。
+     */
+    var organizationInviteCandidates by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+    private var organizationInviteCandidatesResolved = false
     var detailTargetChatId by mutableStateOf<String?>(null)
         private set
     var mentionUsers by mutableStateOf(emptyList<User>())
@@ -576,6 +583,44 @@ class GroupFeature internal constructor(
     } catch (e: AppError) {
         reportError(e, "邀请成员失败")
         false
+    }
+
+    /**
+     * 解析组织同事邀请候选（幂等，每次会话至多解析一次）。失败静默降级为空：
+     * 邀请是高频轻操作，组织目录短暂不可用不应打断好友邀请路径。
+     */
+    fun loadOrganizationInviteCandidates(): Job {
+        if (organizationInviteCandidatesResolved) return Job().apply { complete() }
+        return scope.launch {
+            val candidates = try {
+                resolveOrganizationInviteCandidates()
+            } catch (_: Exception) {
+                emptyMap()
+            }
+            organizationInviteCandidatesResolved = true
+            organizationInviteCandidates = candidates
+        }
+    }
+
+    private suspend fun resolveOrganizationInviteCandidates(): Map<String, String> {
+        val myUid = session.userSession.uid
+        if (myUid.isBlank()) return emptyMap()
+        // 与服务端邀请范围一致：只有自己有组织归属时组织同事才可邀请（fail-closed）。
+        val summary = session.organizationRepo.getUserOrganization(myUid).getOrNull()
+        if (summary?.paths.isNullOrEmpty()) return emptyMap()
+        val units = session.organizationRepo.listUnits().getOrNull().orEmpty()
+        val rootUnitIds = units.filter { it.parentId == null }.map { it.unitId }
+        if (rootUnitIds.isEmpty()) return emptyMap()
+        val peers = rootUnitIds.flatMap { rootUnitId ->
+            session.organizationRepo.refreshMembers(rootUnitId, recursive = true).getOrNull().orEmpty()
+        }
+        return buildMap {
+            peers.forEach { peer ->
+                if (peer.uid != myUid && !containsKey(peer.uid)) {
+                    put(peer.uid, peer.user?.name?.takeIf(String::isNotEmpty) ?: peer.uid)
+                }
+            }
+        }
     }
 
     suspend fun createInviteLink(chatId: String): String? {

@@ -188,6 +188,7 @@ class ExposedChatMemberRepository internal constructor(
                 chat = before,
                 operator = membersByUid[operatorUid],
                 requestedUids = requestedUids,
+                transaction = transaction,
             ),
         )
         val newMemberUids = requestedUids.filterNot(membersByUid::containsKey)

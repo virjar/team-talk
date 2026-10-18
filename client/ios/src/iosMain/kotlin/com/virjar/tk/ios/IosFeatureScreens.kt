@@ -250,10 +250,13 @@ internal fun IosFeatureScreen(route: IosRoute, ui: IosSessionUi) = key(ui, route
         IosPage.GROUP_FILES -> IosGroupFilesScreen(route.id, actions)
         IosPage.GROUP_BOTS -> IosGroupBotsScreen(route.id, actions)
         IosPage.INVITE_MEMBERS -> {
+            LaunchedEffect(route.id) { data.groups.loadOrganizationInviteCandidates() }
             val contacts by data.contactViewModel.contacts.collectAsState()
             InviteMembersScreen(
                 friendUids = contacts.map { it.friendUid }, friendNames = contacts.associate { it.friendUid to (it.remark ?: it.user?.name ?: it.friendUid) },
                 memberUids = data.groups.members.takeIf { data.groups.detailTargetChatId == route.id }?.mapTo(mutableSetOf()) { it.uid }.orEmpty(),
+                organizationUids = data.groups.organizationInviteCandidates.keys.toList(),
+                organizationNames = data.groups.organizationInviteCandidates,
                 onInvite = { uids -> actions.run({ false }) { data.groups.inviteMembers(route.id, uids) } }, onBack = actions.back,
             )
         }

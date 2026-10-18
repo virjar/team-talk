@@ -939,6 +939,7 @@ private fun NavGraphBuilder.inviteDestination(
     ) { entry ->
         val chatId = entry.arguments?.getString("chatId") ?: return@composable
         LaunchedEffect(chatId) {
+            dataState.groups.loadOrganizationInviteCandidates()
             admittedAction(onClosed = {}) {
                 dataState.loadScreenDataByKey(ScreenDataKey.InviteMembers(chatId))
             }
@@ -953,6 +954,8 @@ private fun NavGraphBuilder.inviteDestination(
                 .takeIf { dataState.groups.detailTargetChatId == chatId }
                 ?.mapTo(mutableSetOf()) { it.uid }
                 ?: emptySet(),
+            organizationUids = dataState.groups.organizationInviteCandidates.keys.toList(),
+            organizationNames = dataState.groups.organizationInviteCandidates,
             onInvite = { uids ->
                 admittedAction(onClosed = { false }) {
                     dataState.groups.inviteMembers(chatId, uids)

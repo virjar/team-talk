@@ -21,8 +21,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
- * 搜索式邀请成员（T005）：以搜索为主要入口，不一次性铺开全部好友；
+ * 搜索式邀请成员（T005）：以搜索为主要入口，不一次性铺开全部候选；
  * 候选排除当前群内已有成员；已选人选在切换搜索词时保留、可逐个移除。
+ *
+ * 候选 = 好友 ∪ 组织同事（办公优先，默认开放普通成员邀请，与移动端对齐）；
+ * 无组织归属或组织目录不可用时自动退化为好友-only。
  */
 @Composable
 fun InviteMembersScreen(
@@ -31,6 +34,10 @@ fun InviteMembersScreen(
     memberUids: Set<String>,
     onInvite: suspend (List<String>) -> Boolean,
     onBack: (() -> Unit)? = null,
+    /** 组织同事候选（uid 列表）；由 GroupFeature 的组织投影提供。 */
+    organizationUids: List<String> = emptyList(),
+    /** 组织同事显示名；缺失时回退显示 uid 前缀。 */
+    organizationNames: Map<String, String> = emptyMap(),
 ) {
     var query by remember { mutableStateOf(TextFieldValue("")) }
     var selection by remember { mutableStateOf(setOf<String>()) }
@@ -38,8 +45,10 @@ fun InviteMembersScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    val eligibleUids = remember(friendUids, memberUids) {
-        friendUids.filterNot { it in memberUids }.toSet()
+    // 好友名/备注优先，组织同事名兜底。
+    val displayNames = remember(friendNames, organizationNames) { organizationNames + friendNames }
+    val eligibleUids = remember(friendUids, organizationUids, memberUids) {
+        (friendUids + organizationUids).filterNot { it in memberUids }.toSet()
     }
     // 成员或好友关系更新时，计数、chip 和提交立即使用同一份有效选择。
     // 同时收回旧选择，避免该用户以后退群时又无意恢复为已选；切换搜索词不清空选择。
@@ -47,14 +56,14 @@ fun InviteMembersScreen(
     LaunchedEffect(eligibleUids) {
         selection = selection.intersect(eligibleUids)
     }
-    val candidates = remember(eligibleUids, friendNames, query.text) {
+    val candidates = remember(eligibleUids, displayNames, query.text) {
         val text = query.text.trim()
         if (text.isEmpty()) {
             emptyList()
         } else {
             eligibleUids.asSequence()
                 .filter { uid ->
-                    val name = friendNames[uid].orEmpty()
+                    val name = displayNames[uid].orEmpty()
                     name.contains(text, ignoreCase = true) || uid.contains(text)
                 }
                 .toList()
@@ -99,7 +108,7 @@ fun InviteMembersScreen(
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("搜索好友名称或 UID") },
+            placeholder = { Text("搜索名称或 UID") },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
             trailingIcon = {
                 if (query.text.isNotEmpty()) {
@@ -128,9 +137,9 @@ fun InviteMembersScreen(
                     InputChip(
                         selected = true,
                         onClick = { selection = selection - uid },
-                        label = { Text(friendNames[uid] ?: uid.take(12)) },
+                        label = { Text(displayNames[uid] ?: uid.take(12)) },
                         trailingIcon = {
-                            Icon(Icons.Filled.Close, contentDescription = "移除 ${friendNames[uid] ?: uid}", Modifier.size(16.dp))
+                            Icon(Icons.Filled.Close, contentDescription = "移除 ${displayNames[uid] ?: uid}", Modifier.size(16.dp))
                         },
                         modifier = Modifier.testTag("invite.selected.${uid.take(8)}"),
                     )
@@ -140,17 +149,17 @@ fun InviteMembersScreen(
 
         when {
             query.text.isBlank() -> InviteHint(
-                "输入关键词搜索好友",
-                "已在本群的好友不会出现在候选中",
+                "输入关键词搜索好友或组织同事",
+                "已在本群的人不会出现在候选中",
                 tag = "invite.hint.idle",
             )
             candidates.isEmpty() -> InviteHint(
-                if (eligibleUids.isEmpty()) "没有可邀请的好友" else "没有匹配的好友",
+                if (eligibleUids.isEmpty()) "没有可邀请的人" else "没有匹配的结果",
                 tag = "invite.hint.empty",
             )
             else -> LazyColumn {
                 items(candidates, key = { it }) { uid ->
-                    val name = friendNames[uid] ?: uid.take(12)
+                    val name = displayNames[uid] ?: uid.take(12)
                     ListItem(
                         headlineContent = { Text(name) },
                         supportingContent = { Text(uid.take(16), style = MaterialTheme.typography.labelSmall) },

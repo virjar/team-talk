@@ -372,20 +372,26 @@ internal fun SubScreenContent(
             )
         }
 
-        is SubScreen.InviteMembers -> InviteMembersScreen(
-            friendUids = contacts.map { it.friendUid },
-            friendNames = contacts.associate { it.friendUid to (it.remark ?: it.user?.name ?: it.friendUid) },
-            memberUids = data.groups.members
-                .takeIf { data.groups.detailTargetChatId == screen.chatId }
-                ?.mapTo(mutableSetOf()) { it.uid }
-                ?: emptySet(),
-            onInvite = { uids ->
-                admittedSuspend(onClosed = { false }) {
-                    data.groups.inviteMembers(screen.chatId, uids)
-                }
-            },
-            onBack = onBack,
-        )
+        is SubScreen.InviteMembers -> {
+            // 组织同事候选进入邀请屏前解析一次；解析期间先渲染好友候选，结果到达后重组补全。
+            LaunchedEffect(Unit) { data.groups.loadOrganizationInviteCandidates() }
+            InviteMembersScreen(
+                friendUids = contacts.map { it.friendUid },
+                friendNames = contacts.associate { it.friendUid to (it.remark ?: it.user?.name ?: it.friendUid) },
+                memberUids = data.groups.members
+                    .takeIf { data.groups.detailTargetChatId == screen.chatId }
+                    ?.mapTo(mutableSetOf()) { it.uid }
+                    ?: emptySet(),
+                organizationUids = data.groups.organizationInviteCandidates.keys.toList(),
+                organizationNames = data.groups.organizationInviteCandidates,
+                onInvite = { uids ->
+                    admittedSuspend(onClosed = { false }) {
+                        data.groups.inviteMembers(screen.chatId, uids)
+                    }
+                },
+                onBack = onBack,
+            )
+        }
 
         is SubScreen.InviteLinks -> InviteLinksScreen(
             links = data.groups.inviteLinks.takeIf { data.groups.inviteLinksTargetChatId == screen.chatId }.orEmpty(),
