@@ -49,9 +49,10 @@ class IosLocalCacheRecoveryIntegrationTest {
 
     @Test
     fun schemaFiveMigratesWithDataIntactAndLocalHistoryFlagsSurviveReopen() = withDataDirectory { root ->
-        // 固定的 5 -> 6 夹具：5.sqm 只新增 conversation_local_flag 表及其两个本地标记。
+        // 固定的 5 -> 7 夹具：5.sqm 新增 conversation_local_flag（本地标记），
+        // 6.sqm 新增 message_reminders（消息稍后提醒），两者都是纯新增对象。
         // 其余旧表保持现有布局。schema 增长时需显式更新此夹具。
-        assertEquals(6L, AppDatabase.Schema.version)
+        assertEquals(7L, AppDatabase.Schema.version)
         val dataset = platformRandomUuid()
         val file = databaseFile(root, dataset)
         val chatId = "migration-chat"
@@ -67,10 +68,15 @@ class IosLocalCacheRecoveryIntegrationTest {
             seed.insertMessage(original)
             seed.setConversationDraft(chatId, draft)
         } finally { seed.close() }
-        sqlite(file, "BEGIN; DROP TABLE conversation_local_flag; PRAGMA user_version=5; COMMIT;")
+        sqlite(
+            file,
+            "BEGIN; DROP TABLE conversation_local_flag; DROP TABLE message_reminders; PRAGMA user_version=5; COMMIT;",
+        )
         assertEquals(5L, sqliteScalar(file, "PRAGMA user_version"))
         assertEquals(0L, sqliteScalar(file,
             "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='conversation_local_flag'"))
+        assertEquals(0L, sqliteScalar(file,
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='message_reminders'"))
 
         val migrated = createIosLocalCache(deployment, dataset, "owner", root)
         try {
@@ -86,7 +92,7 @@ class IosLocalCacheRecoveryIntegrationTest {
             migrated.clearChatHistory(chatId)
             migrated.setConversationMarkedUnread(chatId, true)
         } finally { migrated.close() }
-        assertEquals(6L, sqliteScalar(file, "PRAGMA user_version"))
+        assertEquals(7L, sqliteScalar(file, "PRAGMA user_version"))
 
         val fresh = original.copy(clientMsgId = "after-clear", serverSeq = 4L, timestamp = 40L,
             body = buildRichTextBody("清空后的新消息"))
