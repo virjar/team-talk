@@ -1,10 +1,11 @@
 package com.virjar.tk.protocol.netty
 
 import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.PacketByteSource
 import com.virjar.tk.protocol.PacketFrames
 import com.virjar.tk.protocol.ProtocolCorruptionException
 import com.virjar.tk.protocol.ProtocolEncodingException
-import com.virjar.tk.protocol.payload.AuthResponsePayload
+import com.virjar.tk.protocol.readPacketFrame
 import io.netty.buffer.ByteBuf
 import io.netty.channel.ChannelHandlerContext
 import io.netty.handler.codec.ByteToMessageCodec
@@ -14,7 +15,13 @@ import io.netty.handler.codec.TooLongFrameException
 /** JVM 调用方保留同一源码名称；wire 角色归属共享协议模块。 */
 typealias PacketInboundRole = com.virjar.tk.protocol.PacketInboundRole
 
-/** 共享 `[TYPE(1B)][LENGTH(4B)][PAYLOAD]` 契约的 Netty 流式适配。 */
+/**
+ * 共享 `[TYPE(1B)][LENGTH(4B)][PAYLOAD]` 契约的 Netty 流式适配。
+ *
+ * 帧读取决策（头部校验、payload 解码、AUTH_RESP(CODE_OK) 当帧放宽上限）来自共享协议
+ * 模块的 [readPacketFrame]；ByteBuf 的累积由 Netty cumulation 提供，因此这里保持对
+ * ByteBuf 的直读，不经过 [com.virjar.tk.protocol.PacketFrameReader] 的内部缓冲。
+ */
 class PacketCodec(
     @Volatile var maxPayloadLimit: Int = UNAUTHED_LIMIT,
     private val inboundRole: PacketInboundRole = PacketInboundRole.ANY,
@@ -36,29 +43,13 @@ class PacketCodec(
     }
 
     override fun decode(ctx: ChannelHandlerContext, input: ByteBuf, out: MutableList<Any>) {
-        if (input.readableBytes() < HEADER_SIZE) return
-        input.markReaderIndex()
-        val typeCode = input.readUnsignedByte().toInt()
-        val length = input.readInt()
-        val decoded = try {
-            PacketFrames.validateHeader(typeCode, length, inboundRole, maxPayloadLimit)
-            if (input.readableBytes() < length) {
-                input.resetReaderIndex()
-                return
-            }
-            val payload = ByteArray(length)
-            input.readBytes(payload)
-            PacketFrames.decode(typeCode, payload, inboundRole, maxPayloadLimit)
+        val frame = try {
+            ByteBufFrameSource(input).readPacketFrame(inboundRole, maxPayloadLimit) ?: return
         } catch (failure: ProtocolCorruptionException) {
             throw CorruptedFrameException(failure.message, failure)
         }
-        // AUTH_RESP 与更大的首个同步帧可能出现在同一次 socket 读中。
-        if (inboundRole == PacketInboundRole.CLIENT && decoded is AuthResponsePayload &&
-            decoded.code == AuthResponsePayload.CODE_OK
-        ) {
-            maxPayloadLimit = AUTHED_LIMIT
-        }
-        out.add(decoded)
+        if (frame.widensPayloadLimit) maxPayloadLimit = AUTHED_LIMIT
+        out.add(frame.packet)
     }
 
     override fun encode(ctx: ChannelHandlerContext, message: IProto, output: ByteBuf) {
@@ -67,5 +58,19 @@ class PacketCodec(
         } catch (failure: ProtocolEncodingException) {
             throw TooLongFrameException(failure.message, failure)
         }
+    }
+
+    private class ByteBufFrameSource(private val input: ByteBuf) : PacketByteSource {
+        override fun readableBytes(): Int = input.readableBytes()
+        override fun markPosition() {
+            input.markReaderIndex()
+        }
+
+        override fun reset() {
+            input.resetReaderIndex()
+        }
+        override fun readUnsignedByte(): Int = input.readUnsignedByte().toInt()
+        override fun readIntBigEndian(): Int = input.readInt()
+        override fun readBytes(count: Int): ByteArray = ByteArray(count).also(input::readBytes)
     }
 }

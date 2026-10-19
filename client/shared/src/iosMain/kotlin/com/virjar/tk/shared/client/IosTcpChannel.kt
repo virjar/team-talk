@@ -2,7 +2,6 @@
 package com.virjar.tk.shared.client
 
 import com.virjar.tk.protocol.*
-import com.virjar.tk.protocol.payload.AuthResponsePayload
 import com.virjar.tk.shared.platform.*
 import kotlinx.cinterop.*
 import kotlinx.coroutines.*
@@ -36,7 +35,13 @@ internal class IosTcpChannel(
     private var connectTimeout: Job? = null
     private var lastRead = platformMonotonicNanos()
     private var lastWrite = lastRead
-    var authenticated = false
+
+    // 半包累积、头部校验与 AUTH_RESP(CODE_OK) 当帧放宽上限都在共享读取器里；
+    // owner 的 onAuthenticationAccepted 与它共享同一认证上限状态。
+    private val frameReader = PacketFrameReader(PacketInboundRole.CLIENT)
+    var authenticated: Boolean
+        get() = frameReader.authenticated
+        set(value) { frameReader.authenticated = value }
     val isActive: Boolean get() = ready && !closed
 
     fun start() {
@@ -83,7 +88,7 @@ internal class IosTcpChannel(
                         lastRead = platformMonotonicNanos(); lastWrite = lastRead
                         try {
                             onReady(this)
-                            if (!closed) { readHeader(); startIdleTimer() }
+                            if (!closed) { startReceiving(); startIdleTimer() }
                         } catch (failure: Throwable) { close(failure) }
                     }
                     nw_connection_state_failed, nw_connection_state_waiting ->
@@ -134,57 +139,40 @@ internal class IosTcpChannel(
         }
     }
 
-    private fun readHeader(): Unit = readExactly(PacketFrames.HEADER_SIZE) { header ->
-        val typeCode = header[0].toInt() and 255
-        var length = 0
-        for (index in 1..4) length = (length shl 8) or (header[index].toInt() and 255)
-        val limit = if (authenticated) PacketFrames.AUTHED_LIMIT else PacketFrames.UNAUTHED_LIMIT
-        // 在分配由对端控制的 payload 之前，先校验上限与方向。
-        PacketFrames.validateHeader(typeCode, length, PacketInboundRole.CLIENT, limit)
-        readExactly(length) { payload ->
-            val packet = PacketFrames.decode(typeCode, payload, PacketInboundRole.CLIENT, limit)
-            // 与 Netty PacketCodec 同构：AUTH_RESP(CODE_OK) 解码当帧即放宽上限。
-            // 首个事件同步帧可超过未认证上限并与 AUTH_RESP 同时到达；等待
-            // onAuthenticationAccepted 的 SYNC_READY 语义在此之前无法放行大帧。
-            if (packet is AuthResponsePayload && packet.code == AuthResponsePayload.CODE_OK) authenticated = true
-            onPacket(this, packet)
-            if (isActive) readHeader()
-        }
-    }
-
-    private fun readExactly(size: Int, consume: (ByteArray) -> Unit) {
+    /** 推模式接收循环：到达多少喂多少，分帧由共享 [PacketFrameReader] 完成。 */
+    private fun startReceiving() {
         if (!isActive) return
-        if (size == 0) { consume(ByteArray(0)); return }
-        val buffer = ByteArray(size)
-        var offset = 0
-        fun receive() {
-            if (!isActive) return
-            val maximum = minOf(size - offset, 64 * 1024).toUInt()
-            nw_connection_receive(connection, 1u, maximum) { data, _, complete, error ->
-                executor.execute {
-                    if (!isActive) return@execute
-                    try {
-                        if (error != null) throw IosTcpException(nw_error_get_error_code(error))
-                        val count = data?.let(::dispatch_data_get_size)?.toInt() ?: 0
-                        check(count in 0..(size - offset)) { "TCP read exceeded requested frame" }
-                        if (count > 0) {
-                            lastRead = platformMonotonicNanos()
-                            buffer.usePinned { pinned ->
-                                check(dispatch_data_apply(data) { _, regionOffset, bytes, regionSize ->
-                                    memcpy(pinned.addressOf(offset + regionOffset.toInt()), bytes, regionSize)
-                                    true
-                                })
-                            }
-                            offset += count
+        val window = 64 * 1024
+        nw_connection_receive(connection, 1u, window.toUInt()) { data, _, complete, error ->
+            executor.execute {
+                if (!isActive) return@execute
+                try {
+                    if (error != null) throw IosTcpException(nw_error_get_error_code(error))
+                    val count = data?.let(::dispatch_data_get_size)?.toInt() ?: 0
+                    check(count in 0..window) { "TCP read exceeded the receive window" }
+                    if (count > 0) {
+                        lastRead = platformMonotonicNanos()
+                        val bytes = ByteArray(count)
+                        bytes.usePinned { pinned ->
+                            check(dispatch_data_apply(data) { _, regionOffset, region, regionSize ->
+                                memcpy(pinned.addressOf(regionOffset.toInt()), region, regionSize)
+                                true
+                            })
                         }
-                        if (offset == size) consume(buffer)
-                        else if (complete || count == 0) close(IosTcpException(-1, "TCP stream ended within a frame"))
-                        else receive()
-                    } catch (failure: Throwable) { close(failure) }
-                }
+                        frameReader.feed(
+                            bytes, 0, count,
+                            // 与旧的按需读取一致：投递中连接被关闭后，同批后续帧不再上抛。
+                            keepReading = { isActive },
+                            onPacket = { packet -> onPacket(this, packet) },
+                        )
+                    }
+                    // 与既有语义一致：流在任意等待点结束都按帧内截断关闭；正常关闭路径
+                    // 由读空闲与服务器 DISCONNECT 负责，EOF 只会出现在等待下一帧时。
+                    if (complete || count == 0) close(IosTcpException(-1, "TCP stream ended within a frame"))
+                    else startReceiving()
+                } catch (failure: Throwable) { close(failure) }
             }
         }
-        receive()
     }
 }
 
