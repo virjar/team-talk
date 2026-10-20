@@ -50,9 +50,10 @@ TeamTalk 选择的是“可理解、可部署、可演进”的单体架构，�
 
 能力的实现状态与已知缺口见[功能状态](doc/10-reference/feature-status.md)。
 
-iOS 源码与 Xcode 工程已接入，尚待 Apple 设备完整验收，不随正式发行分发制品；
+iOS 已列为受支持平台并进入真机内测：私有内测版本经 TestFlight 分发（Xcode Cloud 构建）；
+1:1 音视频通话暂不支持，公版正式发行暂不附带 iOS 制品。
 默认构建不启用 iOS。在具备完整 Apple 工具链的 Mac 上通过本地开关启用，
-配置、构建、签名、APNs 和验证入口见 [iOS](doc/05-clients/ios.md)。
+配置、构建、签名、APNs 和分发入口见 [iOS](doc/05-clients/ios.md)。
 
 ## 五分钟了解仓库
 

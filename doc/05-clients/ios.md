@@ -2,8 +2,9 @@
 
 iOS 使用 `client/ios` 平台壳，复用 `app` 的业务页面、ViewModel 和编辑器，以及 `shared` 的
 ClientSession、SQLite、同步与可靠发送。Swift 仅提供启动入口、系统生命周期和 APNs 回调。
-最低系统为 iOS 16，包含 iPhone/iPad。iOS 已通过 Apple Silicon 模拟器全链路验收，列为
-开发者预览受支持平台；真机签名、APNs 与设备级验收尚未完成，不随正式发行分发制品。
+最低系统为 iOS 16，包含 iPhone/iPad。iOS 已列为受支持平台并进入真机内测：私有内测版本
+经 TestFlight 分发（Xcode Cloud 构建），内测运行暂无未决问题；1:1 音视频通话的 iOS
+媒体引擎与群聊会议（SFU）暂不支持。公版正式发行暂不附带 iOS 制品。
 
 ## 源码与平台边界
 
@@ -36,7 +37,7 @@ iOS 只适配 Network.framework、文件/摘要、UIKit 选择和媒体能力。
 用户通过系统分享实际导出到外部的副本由用户控制，不属于本地账号清理的范围。
 
 会话菜单支持本机「标为未读」；聊天头部菜单进入「会话设置」，复用共享的发起群聊与本机清空聊天记录。
-清空水位、未读标记与消息投影由同一 SDK 管理，旧历史消息不会在补拉后重新出现；这些入口仍需设备交互验收。
+清空水位、未读标记与消息投影由同一 SDK 管理，旧历史消息不会在补拉后重新出现。
 
 ## 开发与构建
 
@@ -262,14 +263,15 @@ SDK 155、共享 UI 168、iOS 壳 5 项 Native 测试全部通过；默认 ad-ho
 必须使用 `kCFBooleanFalse`/`kCFBooleanTrue`（Kotlin Boolean 经 CFBridgingRetain 不是 CFBoolean，
 securityd 以 -50 拒绝整个查询，应用停在「本地数据准备失败」）；`NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT`
 的 Kotlin 绑定在运行时按“void 返回 block 转 Kotlin Any”抛 NSGenericException，首次发送即闪退，
-改为每条连接用 `nw_content_context_create` 自建消息上下文；iOS 通道现与 Netty `PacketCodec`
-同构地在解码出 `AUTH_RESP(CODE_OK)` 当帧放宽帧上限，否则首个超过未认证上限（4 KiB）的事件
-同步帧被 `validateHeader` 拒绝，连接循环 `ProtocolCorruptionException` 断开而停在离线。
+改为每条连接用 `nw_content_context_create` 自建消息上下文；iOS 通道与 Netty `PacketCodec`
+共享同一份帧读取决策（`PacketFrameReading`），解码出 `AUTH_RESP(CODE_OK)` 当帧放宽帧上限，
+否则首个超过未认证上限（4 KiB）的事件同步帧被 `validateHeader` 拒绝，连接循环
+`ProtocolCorruptionException` 断开而停在离线。
 `build-framework.sh` 亦于链接前删除旧的应用链接产物，因为 Xcode 增量构建不跟踪经
 OTHER_LDFLAGS 链接的静态框架，否则改动 Kotlin 后会静默运行旧代码。
 注意 `CODE_SIGNING_ALLOWED=NO` 的模拟器整包只用于编译校验：无签名二进制没有 entitlement，
 Keychain 以 -34018 失败、无法进入登录页；真实验收使用默认 ad-hoc 签名构建。
 默认关闭、本地启用、命令行覆盖和 CI 环境变量启用均已验证；关闭时 Android/Desktop 编译、
-JVM 回归、架构和协议基线检查通过。会话交互、离线与媒体行为，以及签名与 APNs 真机验收
-尚未完成；iOS 列为开发者预览受支持平台，不标为已发布或已通过设备验收，内测安装渠道见
+JVM 回归、架构和协议基线检查通过。iOS 已进入真机内测（TestFlight 分发，Xcode Cloud 构建），
+会话交互、离线与媒体行为随内测版本持续验证；内测安装渠道见
 [分发与安装渠道](#分发与安装渠道)。
