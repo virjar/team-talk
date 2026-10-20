@@ -52,7 +52,7 @@ TeamTalk 选择的是“可理解、可部署、可演进”的单体架构，�
 
 iOS 已列为受支持平台并进入真机内测：私有内测版本经 TestFlight 分发（Xcode Cloud 构建）；
 1:1 音视频通话暂不支持，公版正式发行暂不附带 iOS 制品。
-默认构建不启用 iOS。在具备完整 Apple 工具链的 Mac 上通过本地开关启用，
+iOS 在 Mac 上默认参与构建（交叉编译不需要 Xcode），非 Mac 平台默认关闭；
 配置、构建、签名、APNs 和分发入口见 [iOS](doc/05-clients/ios.md)。
 
 ## 五分钟了解仓库

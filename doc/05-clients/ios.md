@@ -45,19 +45,17 @@ Xcode 配置生成由 buildSrc 的 `GenerateIosXcodeConfiguration` 任务负责�
 `:client:ios:generateXcodeConfiguration` 生成既有 xcconfig、Info.plist 和图标路径。
 架构检查扫描所有模块的 main 源集，关闭 iOS 构建也不会跳过 iOS 源码边界。
 
-`enableIos` 默认是 `false`：Gradle 不包含 `:client:ios`，协议、SDK、测试夹具、共享 UI 和编辑器也不注册
-iOS Native target。Android/Desktop、SDK 和服务端的常用构建与测试照常使用，不要求 Apple 工具链。
-准备开发 iOS 的 Mac 在仓库根目录的 `local.properties` 中加入以下配置，保留原有其他配置，再重新同步 Gradle：
-
-```properties
-enableIos=true
-```
-
-此文件已被 Git 忽略。删除该项或设为 `false` 可关闭；命令行 `-PenableIos=true` / `-PenableIos=false`
-优先于本地文件，可临时覆盖。以下 iOS 命令均假定已启用。本地使用 Xcode 时也应保留这个开关，因为
-Xcode 的构建阶段会另行调用 Gradle。CI 仅在 macOS 的 `ios` job 设置
-`ORG_GRADLE_PROJECT_enableIos=true`，同时传给直接调用和 Xcode 内嵌的 Gradle；该 job 还通过
-`GRADLE_OPTS=-Dorg.gradle.workers.max=2` 统一限制两处调用的 worker 并发。
+`enableIos` 在 Mac 上默认启用：iOS Native target 的注册与交叉编译只需要 Kotlin/Native
+编译器（首次执行 iOS 任务时自动下载），不需要 Xcode，实测 Intel Mac 也是分钟级；非 Mac 平台
+默认关闭，Gradle 不包含 `:client:ios`，协议、SDK、测试夹具、共享 UI 和编辑器也不注册 iOS
+Native target，Android/Desktop、SDK 和服务端的常用构建与测试不引入 iOS 开销。
+Mac 上无需任何配置即可开发 iOS；如需临时关闭，在仓库根目录的 `local.properties`（Git 忽略）
+加入 `enableIos=false`，或用命令行 `-PenableIos=true` / `-PenableIos=false` 临时覆盖——
+显式属性优先于本地文件，本地文件优先于平台默认。以下 iOS 命令均假定已启用。本地使用 Xcode 时
+不需要额外开关，Xcode 的构建阶段会另行调用 Gradle。CI 仅在 macOS 的 `ios` job 设置
+`ORG_GRADLE_PROJECT_enableIos=true`（与平台默认一致，保持显式），同时传给直接调用和
+Xcode 内嵌的 Gradle；该 job 还通过 `GRADLE_OPTS=-Dorg.gradle.workers.max=2` 统一限制
+两处调用的 worker 并发。
 
 需要 JDK 21、完整 Xcode 及对应 iOS 平台组件，以及仓库指定的 Gradle Wrapper。
 Kotlin/Native 编译器首次执行时自动下载。Kotlin 2.3.21 的
