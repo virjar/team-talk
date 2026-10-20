@@ -24,9 +24,6 @@ else
     echo "ci_post_clone: no JDK 21 located, relying on preinstalled/default JVM"
 fi
 
-# iOS target 默认关闭；Xcode Cloud 没有 local.properties，用文件方式打开。
-echo "enableIos=true" >> "$REPO_ROOT/local.properties"
-
 # Release 归档的 Kotlin/Native 全程序优化（DevirtualizationAnalysis）超过默认 3g daemon 堆。
 # 追加到项目 gradle.properties 末尾：同文件后出现的键覆盖前行，优先级确定。
 echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" >> "$REPO_ROOT/gradle.properties"

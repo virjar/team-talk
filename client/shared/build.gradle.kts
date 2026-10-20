@@ -56,11 +56,9 @@ kotlin {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
     }
-    if (gradle.extra["enableIos"] as Boolean) {
-        iosArm64()
-        iosSimulatorArm64()
-        iosX64()
-    }
+    iosArm64()
+    iosSimulatorArm64()
+    iosX64()
     applyHierarchyTemplate {
         sourceSetTrees(
             org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetTree.main,
@@ -95,10 +93,8 @@ kotlin {
                 implementation(libs.netty.handler)
             }
         }
-        if (gradle.extra["enableIos"] as Boolean) {
-            val iosMain by getting {
-                dependencies { implementation(libs.sqldelight.native.driver) }
-            }
+        val iosMain by getting {
+            dependencies { implementation(libs.sqldelight.native.driver) }
         }
         val jvmMain by getting {
             dependencies {

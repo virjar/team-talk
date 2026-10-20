@@ -15,9 +15,9 @@ Gradle 与 Node.js 分发站点，以及 npm 包仓库。
 
 ## 2. 仓库配置
 
-iOS 构建在 Mac 上默认启用（交叉编译只需要 Kotlin/Native 编译器），非 Mac 平台默认关闭，
-Android/Desktop、SDK 和服务端的常用任务在两类平台上都保持可用；临时覆盖与资源建议
-见 [iOS 开发与构建](../05-clients/ios.md#开发与构建)。
+iOS Native target 恒注册（注册只在配置阶段，Native 编译器与 iOS 依赖仅在执行 iOS 任务时按需下载），
+Android/Desktop、SDK 和服务端的常用任务在所有平台保持可用；iOS 编译与模拟器测试在 Mac 上进行，
+工具链与资源建议见 [iOS 开发与构建](../05-clients/ios.md#开发与构建)。
 
 `buildSrc/deployment/Deployment.kt` 是提交到仓库的非敏感 Kotlin 配置，主仓库保持连接公版 `im.virjar.com`。
 配置入口是普通 Kotlin 函数 `deploymentConfiguration(rootDir: File): DeploymentConfig`，用

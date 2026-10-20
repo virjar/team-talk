@@ -46,9 +46,8 @@ TeamTalk 是多客户端、长连接、异步同步的业务系统。测试优�
 
 ## CI 的实际覆盖
 
-iOS 只在 macOS 的 `ios` job 参与构建，该 job 显式设置 `ORG_GRADLE_PROJECT_enableIos=true`（与
-Mac 平台默认一致）；Linux/Windows job 保持平台默认关闭，仅保留 Android/Desktop、SDK 和服务端的
-编译与测试。`ios` job 使用 Apple Silicon、Xcode 26.0，
+iOS 的 Native 测试与模拟器应用只在 macOS 的 `ios` job 构建运行；Linux/Windows job 仍只执行
+Android/Desktop、SDK 和服务端的编译与测试。`ios` job 使用 Apple Silicon、Xcode 26.0，
 运行协议、SDK 和共享 UI 的 Native 测试，
 再构建无分发签名的模拟器应用（同时检查 Swift 入口与 Kotlin framework）。
 本地开关与资源建议见 [iOS 开发与构建](../05-clients/ios.md#开发与构建)，

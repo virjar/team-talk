@@ -112,8 +112,6 @@ jobs:
     timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.0.app/Contents/Developer
-      # Also inherited by the Gradle invocation inside the Xcode build phase.
-      ORG_GRADLE_PROJECT_enableIos: 'true'
       GRADLE_OPTS: -Dorg.gradle.workers.max=2
     steps:
       - uses: actions/checkout@v7.0.1

@@ -95,12 +95,10 @@ tasks.register("verifyProtocolBaseline") {
  * 客户端连接、缓存、Repository、平台实现和服务端基础设施都不得进入本模块。
  */
 kotlin {
-    if (gradle.extra["enableIos"] as Boolean) {
-        iosArm64()
-        iosSimulatorArm64()
-        // protocol/SDK 仍可在 Intel 模拟器上测试；Compose UI 目标仅 arm64。
-        iosX64()
-    }
+    iosArm64()
+    iosSimulatorArm64()
+    // protocol/SDK 仍可在 Intel 模拟器上测试；Compose UI 目标仅 arm64。
+    iosX64()
     // T011：Gradle 运行 JDK 21；JVM 产物显式钉 21，Android 字节码保持 17（设备兼容基线）。
     jvm() {
         compilerOptions {

@@ -27,10 +27,8 @@ buildConfig {
  */
 kotlin {
     applyDefaultHierarchyTemplate()
-    if (gradle.extra["enableIos"] as Boolean) {
-        iosArm64()
-        iosSimulatorArm64()
-    }
+    iosArm64()
+    iosSimulatorArm64()
     // T011：Gradle 运行 JDK 21；JVM 产物显式钉 21，Android 字节码保持 17（设备兼容基线）。
     jvm("desktop") {
         compilerOptions {

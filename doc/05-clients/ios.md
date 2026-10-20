@@ -45,17 +45,12 @@ Xcode 配置生成由 buildSrc 的 `GenerateIosXcodeConfiguration` 任务负责�
 `:client:ios:generateXcodeConfiguration` 生成既有 xcconfig、Info.plist 和图标路径。
 架构检查扫描所有模块的 main 源集，关闭 iOS 构建也不会跳过 iOS 源码边界。
 
-`enableIos` 在 Mac 上默认启用：iOS Native target 的注册与交叉编译只需要 Kotlin/Native
-编译器（首次执行 iOS 任务时自动下载），不需要 Xcode，实测 Intel Mac 也是分钟级；非 Mac 平台
-默认关闭，Gradle 不包含 `:client:ios`，协议、SDK、测试夹具、共享 UI 和编辑器也不注册 iOS
-Native target，Android/Desktop、SDK 和服务端的常用构建与测试不引入 iOS 开销。
-Mac 上无需任何配置即可开发 iOS；如需临时关闭，在仓库根目录的 `local.properties`（Git 忽略）
-加入 `enableIos=false`，或用命令行 `-PenableIos=true` / `-PenableIos=false` 临时覆盖——
-显式属性优先于本地文件，本地文件优先于平台默认。以下 iOS 命令均假定已启用。本地使用 Xcode 时
-不需要额外开关，Xcode 的构建阶段会另行调用 Gradle。CI 仅在 macOS 的 `ios` job 设置
-`ORG_GRADLE_PROJECT_enableIos=true`（与平台默认一致，保持显式），同时传给直接调用和
-Xcode 内嵌的 Gradle；该 job 还通过 `GRADLE_OPTS=-Dorg.gradle.workers.max=2` 统一限制
-两处调用的 worker 并发。
+iOS Native target 在所有平台恒注册（无构建开关）：注册只发生在 Gradle 配置阶段，
+Kotlin/Native 编译器与 iOS 依赖仅在真正执行 iOS 任务时按需下载，Android/Desktop、SDK
+和服务端的常用构建与测试不触发任何 iOS 开销。iOS 编译与模拟器测试只在 Mac 上有意义
+（模拟器仅 macOS 提供）；最终安装包必须经 Xcode（TestFlight 分发默认走 Xcode Cloud），
+非 Mac 环境出不了 iOS 安装包。CI 的 `ios` job 通过 `GRADLE_OPTS=-Dorg.gradle.workers.max=2`
+统一限制 Gradle 与 Xcode 内嵌调用的 worker 并发。
 
 需要 JDK 21、完整 Xcode 及对应 iOS 平台组件，以及仓库指定的 Gradle Wrapper。
 Kotlin/Native 编译器首次执行时自动下载。Kotlin 2.3.21 的
@@ -64,7 +59,7 @@ Kotlin/Native 编译器首次执行时自动下载。Kotlin 2.3.21 的
 Compose 1.11 不再提供 iOS x86_64 UI 依赖；模拟器应用使用 Apple Silicon。
 SDK/协议单独保留 `iosX64`，方便具备相应 Xcode 的 Intel 主机运行无 UI 测试；这不等于支持 Intel 模拟器 UI。
 
-建议在内存和磁盘余量充足的 Mac 上启用。Native 编译、链接、缓存生成以及模拟器可能使用多个进程，
+Native 编译、链接、缓存生成以及模拟器对内存和磁盘要求较高，
 总内存不能只看 Gradle 的 `-Xmx`。首次验证可给 Gradle 命令加 `--max-workers=2` 限制并行，
 并分开执行测试与整包构建，再按实际资源调整；这不是固定的硬件容量门槛。
 
@@ -148,7 +143,7 @@ TestFlight 制品默认经 Xcode Cloud 流水线构建，仓库侧支持已内�
 
 - `client/ios/ci_scripts/ci_post_clone.sh` 在 Xcode Cloud 克隆后运行：定位或经 Homebrew 安装
   JDK 21 并写入 `~/.gradle/gradle.properties`（`org.gradle.java.home`，buildSrc 需要 JDK 21 API），
-  向仓库根 `local.properties` 写入 `enableIos=true` 打开 iOS target，并把项目 `gradle.properties`
+  并把项目 `gradle.properties`
   的 Gradle daemon 堆临时提高到 6g——Release 归档的 Kotlin/Native 全程序优化
   （devirtualization）在默认 3g 堆上会 OOM。全部通过文件落地，不依赖构建动作间的环境继承；
   客户端构建不涉及任何秘密，APNs 密钥只存在于服务端 env.sh。
