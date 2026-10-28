@@ -7,6 +7,7 @@ import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.shared.platform.*
 import kotlinx.coroutines.*
 import platform.Foundation.*
+import platform.QuickLook.*
 import platform.UIKit.*
 import platform.UniformTypeIdentifiers.*
 import platform.darwin.NSObject
@@ -18,7 +19,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
     private var cameraResultHandler: ((EmbeddedAssetLocalSelection) -> Unit)? = null
     private var cameraPresented = false
     private var exportLease: IosMediaLease? = null
-    private var preview: UIDocumentInteractionController? = null
+    private var previewDataSource: NSObject? = null
     private var previewDelegate: NSObject? = null
     private var previewLease: IosMediaLease? = null
     private var preparingExport: Job? = null
@@ -26,7 +27,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
     private val temporary = resources.stagingDirectory
 
     private fun canPresent(): Boolean = !closed && !cameraPresented && resources.canDeliverUiResult() &&
-        presented == null && preview == null && preparingExport == null
+        presented == null && previewDataSource == null && preparingExport == null
 
     /**
      * 应用内相机：点按拍照/长按录像，物理方向判定与震动在 Swift 控制器内完成。
@@ -264,23 +265,39 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
         }
     }
 
+    /**
+     * iOS 26+ 的 QuickLook 预览内容由独立扩展进程渲染，UIDocumentInteractionController
+     * 的 DidEndPreview 回调不再可靠送达，残留状态会永久堵死后续打开（第二次点击静默失效）。
+     * 改为直接呈现 QLPreviewController：呈现与关闭回调（previewControllerDidDismiss）
+     * 由本进程 UIKit 保证。
+     */
     private fun presentPreview(lease: IosMediaLease) {
-        val controller = UIDocumentInteractionController.interactionControllerWithURL(NSURL.fileURLWithPath(lease.file.path))
-        val delegate = object : NSObject(), UIDocumentInteractionControllerDelegateProtocol {
-            override fun documentInteractionControllerViewControllerForPreview(controller: UIDocumentInteractionController): UIViewController = iosPresenter()
-            override fun documentInteractionControllerDidEndPreview(controller: UIDocumentInteractionController) {
-                if (preview === controller) {
-                    previewLease = null; preview = null; previewDelegate = null
-                    lease.close()
+        // previewItemTitle 有默认实现（取 URL 文件名）；暂存文件已以显示名命名，标题随之正确。
+        val item = object : NSObject(), QLPreviewItemProtocol {
+            override fun previewItemURL(): NSURL? = NSURL.fileURLWithPath(lease.file.path)
+        }
+        val controller = QLPreviewController()
+        val dataSource = object : NSObject(), QLPreviewControllerDataSourceProtocol {
+            override fun numberOfPreviewItemsInPreviewController(controller: QLPreviewController): Long = 1
+            override fun previewController(controller: QLPreviewController, previewItemAtIndex: Long): QLPreviewItemProtocol = item
+        }
+        val delegate = object : NSObject(), QLPreviewControllerDelegateProtocol {
+            override fun previewControllerDidDismiss(controller: QLPreviewController) {
+                if (presented === controller) {
+                    presented = null
+                    previewDataSource = null
+                    previewDelegate = null
+                    previewLease?.close()
+                    previewLease = null
                 }
             }
         }
-        preview = controller; previewDelegate = delegate; previewLease = lease
+        controller.dataSource = dataSource
         controller.delegate = delegate
-        if (!controller.presentPreviewAnimated(true)) {
-            preview = null; previewDelegate = null; previewLease = null
-            presentShare(lease)
-        }
+        previewDataSource = dataSource
+        previewDelegate = delegate
+        previewLease = lease
+        show(controller)
     }
 
     /** Completion covers successful exports and cancellation; retirement also dismisses and releases it. */
@@ -307,12 +324,13 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
     override fun close() {
         closed = true
         preparingExport?.cancel(); preparingExport = null
-        preview?.dismissPreviewAnimated(false)
-        preview = null; previewDelegate = null; previewLease?.close(); previewLease = null
+        previewDataSource = null
         (presented as? UIActivityViewController)?.completionWithItemsHandler = null
         presented?.dismissViewControllerAnimated(false, completion = null)
         presented = null
         pickerDelegate = null
+        previewDelegate = null
+        previewLease?.close(); previewLease = null
         exportLease?.close(); exportLease = null
     }
 }
