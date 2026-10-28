@@ -202,7 +202,10 @@ object ReleaseBundle {
         // 既有 format 1/2 密封 bundle 早于 Headless 引入；重试时原样保留那三份制品。
         val headlessArtifact = manifest["headlessArtifact"]?.jsonPrimitive?.content
         if (format == "3") {
-            require(assets(directory).size == 4) { "Incomplete release bundle" }
+            // 四件固定资产（Android APK、服务端 ZIP、桌面站点 ZIP、Headless）；
+            // R8 mapping 随制品密封（c248e4fb）时为五件，旧密封目录按原字节重试保持四件。
+            val expectedAssets = if (File(directory, "assets/mapping.txt").isFile) 5 else 4
+            require(assets(directory).size == expectedAssets) { "Incomplete release bundle" }
             requireNotNull(headlessArtifact) { "Format 3 bundles always seal the Headless artifact" }
             require(headlessArtifact == "assets/${HeadlessDistribution.archiveName(identity.buildIdentity)}") {
                 "Unexpected Headless release artifact path"

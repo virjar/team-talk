@@ -78,6 +78,13 @@ class ReleasePipelineIntegrationTest {
             assertEquals(bundle, ReleaseBundle.assemble(bundle, identity, shells, payloads, apkDir,
                 serverZip, "# Notes\n", "# Commits\n", headlessZip))
 
+            // R8 mapping 随制品密封（c248e4fb）：带 mapping 的密封为五件资产并可独立校验。
+            val mapping = File(root, "mapping.txt").apply { writeText("com.virjar.tk -> a:\n") }
+            val mappingBundle = ReleaseBundle.assemble(File(root, "sealed-mapping"), identity, shells, payloads,
+                apkDir, serverZip, "# Notes\n", "# Commits\n", headlessZip, mapping)
+            ReleaseBundle.verify(mappingBundle, identity, "# Notes\n")
+            assertEquals(5, ReleaseBundle.assets(mappingBundle).size)
+
             val uploads = mutableListOf<JsonObject>()
             server.createContext("/api/v1/client/releases") { exchange ->
                 try {
