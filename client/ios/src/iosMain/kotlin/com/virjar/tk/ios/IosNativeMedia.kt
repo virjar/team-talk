@@ -235,29 +235,32 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
 
     /** UIKit gets a named, account-owned copy; the authenticated cache keeps its hashed filename. */
     private suspend fun presentFile(lease: IosMediaLease, name: String, previewFile: Boolean) {
-        if (!canPresent()) { lease.close(); return }
-        val operation = currentCoroutineContext().job
-        preparingExport = operation
-        val directory = temporary.resolve("export-${platformRandomUuid()}")
-        val staged = IosMediaLease(directory.resolve(iosExportFileName(name))) { directory.deleteRecursively() }
-        var transferred = false
-        try {
-            withContext(Dispatchers.IO) {
-                resources.ensureOpen()
-                // Do not recreate a retired account's staging parents. Both directory and file are private.
-                check(directory.mkdir()) { "无法准备附件分享" }
-                lease.file.copyTo(staged.file)
+        // 调用方在下载工作线程进入；UIKit 呈现与本类主线程独占状态必须收敛到 Main。
+        withContext(Dispatchers.Main) {
+            if (!canPresent()) { lease.close(); return@withContext }
+            val operation = currentCoroutineContext().job
+            preparingExport = operation
+            val directory = temporary.resolve("export-${platformRandomUuid()}")
+            val staged = IosMediaLease(directory.resolve(iosExportFileName(name))) { directory.deleteRecursively() }
+            var transferred = false
+            try {
+                withContext(Dispatchers.IO) {
+                    resources.ensureOpen()
+                    // Do not recreate a retired account's staging parents. Both directory and file are private.
+                    check(directory.mkdir()) { "无法准备附件分享" }
+                    lease.file.copyTo(staged.file)
+                    currentCoroutineContext().ensureActive()
+                }
                 currentCoroutineContext().ensureActive()
+                if (closed || !resources.canDeliverUiResult()) return@withContext
+                if (previewFile) presentPreview(staged) else presentShare(staged)
+                transferred = true
+            } finally {
+                lease.close()
+                // Includes a completed IO copy discarded by prompt cancellation before returning to Main.
+                if (!transferred) staged.close()
+                if (preparingExport === operation) preparingExport = null
             }
-            currentCoroutineContext().ensureActive()
-            if (closed || !resources.canDeliverUiResult()) return
-            if (previewFile) presentPreview(staged) else presentShare(staged)
-            transferred = true
-        } finally {
-            lease.close()
-            // Includes a completed IO copy discarded by prompt cancellation before returning to Main.
-            if (!transferred) staged.close()
-            if (preparingExport === operation) preparingExport = null
         }
     }
 
