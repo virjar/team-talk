@@ -1,6 +1,6 @@
 # TeamTalk wire schema v1
 major=0
-minor=7
+minor=6
 enum	com.virjar.tk.protocol.MessageType/1	0	-	active	RICH_TEXT
 enum	com.virjar.tk.protocol.MessageType/10	0	-	active	MERGE_FORWARD
 enum	com.virjar.tk.protocol.MessageType/11	0	-	active	REVOKE
