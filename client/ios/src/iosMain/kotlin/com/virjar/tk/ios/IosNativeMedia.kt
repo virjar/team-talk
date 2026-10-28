@@ -238,7 +238,20 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
     private suspend fun presentFile(lease: IosMediaLease, name: String, previewFile: Boolean) {
         // 调用方在下载工作线程进入；UIKit 呈现与本类主线程独占状态必须收敛到 Main。
         withContext(Dispatchers.Main) {
-            if (!canPresent()) { lease.close(); return@withContext }
+            retireStalePresentation()
+            if (!canPresent()) {
+                NSLog(
+                    "IosNativeMedia: present declined: " +
+                        listOf(
+                            "closed" to closed,
+                            "camera" to cameraPresented,
+                            "presented" to (presented != null),
+                            "preview" to (previewDataSource != null),
+                            "preparing" to (preparingExport != null),
+                        ).filter { it.second }.joinToString { it.first },
+                )
+                lease.close(); return@withContext
+            }
             val operation = currentCoroutineContext().job
             preparingExport = operation
             val directory = temporary.resolve("export-${platformRandomUuid()}")
@@ -267,29 +280,25 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
 
     /**
      * iOS 26+ 的 QuickLook 预览内容由独立扩展进程渲染，UIDocumentInteractionController
-     * 的 DidEndPreview 回调不再可靠送达，残留状态会永久堵死后续打开（第二次点击静默失效）。
-     * 改为直接呈现 QLPreviewController：呈现与关闭回调（previewControllerDidDismiss）
-     * 由本进程 UIKit 保证。
+     * 的 DidEndPreview 与 QLPreviewController 的 previewControllerDidDismiss 均实测不再
+     * 可靠送达，残留状态会永久堵死后续打开（第二次点击静默失效）。关闭检测因此不依赖
+     * QuickLook 委托：由 VC 自身生命周期（viewDidDisappear + isBeingDismissed）与
+     * "无 window 即陈旧"自愈兜底。
      */
     private fun presentPreview(lease: IosMediaLease) {
         // previewItemTitle 有默认实现（取 URL 文件名）；暂存文件已以显示名命名，标题随之正确。
         val item = object : NSObject(), QLPreviewItemProtocol {
             override fun previewItemURL(): NSURL? = NSURL.fileURLWithPath(lease.file.path)
         }
-        val controller = QLPreviewController()
+        val controller = StagedFilePreviewController()
         val dataSource = object : NSObject(), QLPreviewControllerDataSourceProtocol {
             override fun numberOfPreviewItemsInPreviewController(controller: QLPreviewController): Long = 1
             override fun previewController(controller: QLPreviewController, previewItemAtIndex: Long): QLPreviewItemProtocol = item
         }
         val delegate = object : NSObject(), QLPreviewControllerDelegateProtocol {
             override fun previewControllerDidDismiss(controller: QLPreviewController) {
-                if (presented === controller) {
-                    presented = null
-                    previewDataSource = null
-                    previewDelegate = null
-                    previewLease?.close()
-                    previewLease = null
-                }
+                NSLog("IosNativeMedia: preview delegate didDismiss")
+                retirePresentation(controller)
             }
         }
         controller.dataSource = dataSource
@@ -298,6 +307,35 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
         previewDelegate = delegate
         previewLease = lease
         show(controller)
+    }
+
+    /** 关闭检测的第一道兜底：本进程 VC 生命周期，UIKit 保证调用，与 QuickLook 委托无关。 */
+    private inner class StagedFilePreviewController : QLPreviewController(nibName = null, bundle = null) {
+        override fun viewDidDisappear(animated: Boolean) {
+            super.viewDidDisappear(animated)
+            if (presented === this && isBeingDismissed()) {
+                NSLog("IosNativeMedia: preview vc viewDidDisappear retire")
+                retirePresentation(this)
+            }
+        }
+    }
+
+    /** 幂等退役当前呈现：仅当 controller 仍是活跃呈现时清理预览状态与租约。 */
+    private fun retirePresentation(controller: UIViewController) {
+        if (presented !== controller) return
+        presented = null
+        previewDataSource = null
+        previewDelegate = null
+        previewLease?.close()
+        previewLease = null
+    }
+
+    /** 第二道兜底：即便所有关闭回调都未送达，脱离 window 的呈现视为陈旧，下一次动作自愈。 */
+    private fun retireStalePresentation() {
+        val controller = presented ?: return
+        if (controller.isViewLoaded() && controller.view.window != null) return
+        NSLog("IosNativeMedia: retire stale presentation without window")
+        retirePresentation(controller)
     }
 
     /** Completion covers successful exports and cancellation; retirement also dismisses and releases it. */
