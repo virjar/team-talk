@@ -383,7 +383,7 @@ internal fun lastMessagePreview(text: String, type: Int?): String {
 private val legacyClipboardImagePreview = Regex("teamtalk-clipboard-[0-9]{6,20}\\.png")
 
 /**
- * 会话列表时间格式：今天 HH:mm；昨天「昨天」；7 天内「周X」；跨年 yyyy/MM/dd；其余 MM/dd。
+ * 会话列表时间格式：今天 HH:mm；昨天「昨天」；前天「前天」；7 天内「周X」；跨年 yyyy/MM/dd；其余 MM/dd。
  */
 internal fun formatListTime(timestamp: Long): String {
     val nowMillis = platformCurrentTimeMillis()
@@ -391,6 +391,7 @@ internal fun formatListTime(timestamp: Long): String {
     val messageTime = localUiDateTime(timestamp)
     if (now.date == messageTime.date) return messageTime.hourMinute()
     if (now.date.minus(1, DateTimeUnit.DAY) == messageTime.date) return "昨天"
+    if (now.date.minus(2, DateTimeUnit.DAY) == messageTime.date) return "前天"
     if (now.year == messageTime.year) {
         if ((nowMillis - timestamp) / (24 * 3600 * 1000L) < 7) {
             return listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")[messageTime.dayOfWeek.isoDayNumber - 1]
