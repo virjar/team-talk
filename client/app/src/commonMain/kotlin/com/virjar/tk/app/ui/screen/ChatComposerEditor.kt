@@ -146,6 +146,9 @@ internal fun ComposerEditor(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                 onUserTextChange = onVisualTextChange,
                 imagePlaceholder = '图',
+                // [TT] 右键粘贴等编辑器内部路径：剪贴板是本地 file:// 引用时导入图片/文件，
+                // 不把 URL 文本插进输入框（微信 Windows 复制图片场景）。
+                onClipboardFileUrlPaste = media.onLocalFileUrlPaste,
             )
             // @ 补全（内测 T037）：richeditor Trigger 弹层——光标处锚定、↑↓/Enter/Esc
             // 键盘导航、原子 Token 插入（退格整体删除、序列化回 mention:// 语法）。

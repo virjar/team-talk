@@ -13,11 +13,13 @@ import kotlinx.coroutines.withContext
 
 internal actual fun createRichTextClipboardManager(
     richTextState: RichTextState,
-    clipboard: Clipboard
+    clipboard: Clipboard,
+    onClipboardFileUrlPaste: ((String) -> Boolean)?,
 ): RichTextClipboardManager =
     DesktopRichTextClipboardManager(
         richTextState = richTextState,
-        clipboard = clipboard
+        clipboard = clipboard,
+        onClipboardFileUrlPaste = onClipboardFileUrlPaste,
     )
 
 /**
@@ -35,9 +37,11 @@ internal actual fun createRichTextClipboardManager(
 internal class DesktopRichTextClipboardManager(
     private val richTextState: RichTextState,
     private val clipboard: Clipboard,
+    private val onClipboardFileUrlPaste: ((String) -> Boolean)? = null,
 ) : RichTextClipboardManager, Clipboard by clipboard {
 
     override suspend fun getClipEntry(): ClipEntry? {
+        var consumedFileUrl = false
         try {
             val transferable = awtClipboard?.getContents(null)
             if (transferable != null && transferable.isDataFlavorSupported(DataFlavor.fragmentHtmlFlavor)) {
@@ -52,13 +56,30 @@ internal class DesktopRichTextClipboardManager(
                     withContext(Dispatchers.IO) {
                         transferable.getTransferData(DataFlavor.stringFlavor)
                     } as? String
-                synthesizedLinkHtmlIfBareUrl(text)?.let { richTextState.pendingClipboardHtml = it }
+                // [TT] 文本恰好是本地已存在文件的 file:// 引用时交给宿主导入（微信复制图片
+                // 只放文件引用 + URL 格式，AWT 把 URL 当纯文本；宿主消费后本次粘贴为空）。
+                val trimmed = text?.trim()
+                if (trimmed != null && isLocalFileUrl(trimmed) &&
+                    onClipboardFileUrlPaste?.invoke(trimmed) == true
+                ) {
+                    consumedFileUrl = true
+                } else {
+                    synthesizedLinkHtmlIfBareUrl(text)?.let { richTextState.pendingClipboardHtml = it }
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
 
+        if (consumedFileUrl) return null
         return clipboard.getClipEntry()
+    }
+
+    private fun isLocalFileUrl(text: String): Boolean = try {
+        val uri = java.net.URI(text)
+        uri.scheme.equals("file", ignoreCase = true) && java.io.File(uri).isFile
+    } catch (_: Exception) {
+        false
     }
 
     override suspend fun setClipEntry(clipEntry: ClipEntry?) {

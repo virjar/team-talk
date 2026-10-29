@@ -68,6 +68,13 @@ internal fun rememberAdmittedChatMedia(
                 consumed
             }
         },
+        onLocalFileUrlPaste = media.onLocalFileUrlPaste?.let { paste ->
+            { url ->
+                var consumed = false
+                actionAdmission.runIfOpen { consumed = paste(url) }
+                consumed
+            }
+        },
         fileDownloads = AdmittedFileDownloadController(media.fileDownloads, actionAdmission),
     )
 }

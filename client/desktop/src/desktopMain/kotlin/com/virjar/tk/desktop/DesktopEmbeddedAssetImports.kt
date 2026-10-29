@@ -127,6 +127,35 @@ internal fun importDesktopClipboardAsset(gateway: EmbeddedAssetImportGateway): B
     true
 }.getOrDefault(false)
 
+/**
+ * 编辑器右键粘贴等路径拿到的本地 `file://` 引用：与 Ctrl+V 的文件导入共用同一链路。
+ * 微信 Windows 复制图片时剪贴板只有一个缓存文件引用（FileDrop + URL 格式，无 HTML/文本），
+ * 编辑器文本粘贴会把 URL 当纯文本落进输入框；宿主在钩子里调用本函数转成图片/文件导入。
+ * 只有指向真实存在的本地文件时才消费，其余（网页链接等）返回 false 交还文本粘贴。
+ */
+internal fun importDesktopFileUrlAsset(url: String, gateway: EmbeddedAssetImportGateway): Boolean = runCatching {
+    val file = localFileFromUrl(url) ?: return@runCatching false
+    val presentation = if (attachmentContentType(file.name).startsWith("image/", ignoreCase = true)) {
+        EmbeddedAssetPresentation.IMAGE
+    } else {
+        EmbeddedAssetPresentation.FILE
+    }
+    gateway.import(
+        desktopEmbeddedAssetSelection(
+            file = file,
+            presentation = presentation,
+            source = EmbeddedAssetImportSource.DESKTOP_CLIPBOARD,
+        ),
+    )
+    true
+}.getOrDefault(false)
+
+/** 解析 file:// URL 到已存在的本地文件；解析失败或文件不存在返回 null。 */
+private fun localFileFromUrl(url: String): File? = runCatching {
+    val file = File(java.net.URI(url))
+    file.takeIf { it.isFile }
+}.getOrNull()
+
 /** Swing 的 picker/drop/clipboard 负责适配各来源；共享的导入生命周期归 app 所有。 */
 internal class DesktopEmbeddedAssetImportGateway(
     resources: DesktopSessionResources,

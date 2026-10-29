@@ -242,6 +242,7 @@ internal fun ChatPanelWrapper(
         fileDownloads = fileDownloads,
         embeddedAssetImports = embeddedAssetImports,
         onPasteEmbeddedAsset = { importDesktopClipboardAsset(embeddedAssetImports) },
+        onLocalFileUrlPaste = { url -> importDesktopFileUrlAsset(url, embeddedAssetImports) },
         onPickMedia = {
             DesktopFilePicker.chooseMedia()?.let { file ->
                 if (attachmentContentType(file.name).startsWith("video/", ignoreCase = true)) {

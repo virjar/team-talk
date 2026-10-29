@@ -23,6 +23,12 @@ data class ChatMediaConfig(
     val embeddedAssetImports: EmbeddedAssetImportGateway? = null,
     /** 仅当剪贴板包含二进制/文件资源且已消费粘贴时返回 true。 */
     val onPasteEmbeddedAsset: (() -> Boolean)? = null,
+    /**
+     * 编辑器剪贴板文本恰好是本地已存在文件的 `file://` 引用时的导入钩子（桌面右键粘贴路径，
+     * Ctrl+V 已在更早的按键层拦截）；宿主消费后返回 true，编辑器不再插入 URL 文本。
+     * null = 不处理，保持文本粘贴。
+     */
+    val onLocalFileUrlPaste: ((url: String) -> Boolean)? = null,
     /** 相册：图片与视频混选，按选中内容的实际类型自动分流。null=不显示相册项。 */
     val onPickMedia: (() -> Unit)? = null,
     /** 应用内相机拍摄（点按拍照/长按录像，内测 T022/T06x）；不支持的平台为 null。 */

@@ -12,7 +12,8 @@ import platform.Foundation.dataUsingEncoding
 
 internal actual fun createRichTextClipboardManager(
     richTextState: RichTextState,
-    clipboard: Clipboard
+    clipboard: Clipboard,
+    onClipboardFileUrlPaste: ((String) -> Boolean)?,
 ): RichTextClipboardManager =
     IosRichTextClipboardManager(
         richTextState = richTextState,

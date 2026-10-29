@@ -120,6 +120,10 @@ public fun BasicRichTextEditor(
     // [TT] BasicTextField cannot render inline composables. Hosts with image cards can replace
     // the raw replacement glyph with a readable, single-character image marker.
     imagePlaceholder: Char? = null,
+    // [TT] Clipboard text that is a file:// URL of an existing local file (WeChat/QQ copy-image
+    // puts a file reference instead of a bitmap) is offered to the host; when the host consumes
+    // it (imports the image/file) the editor inserts nothing instead of the URL text.
+    onClipboardFileUrlPaste: ((String) -> Boolean)? = null,
     onTextLayout: (TextLayoutResult) -> Unit = {},
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     cursorBrush: Brush = SolidColor(Color.Black),
@@ -142,6 +146,7 @@ public fun BasicRichTextEditor(
         onUserTextChange = onUserTextChange,
         onLinkClick = onLinkClick,
         imagePlaceholder = imagePlaceholder,
+        onClipboardFileUrlPaste = onClipboardFileUrlPaste,
         onTextLayout = onTextLayout,
         interactionSource = interactionSource,
         cursorBrush = cursorBrush,
@@ -229,6 +234,8 @@ public fun BasicRichTextEditor(
     onLinkClick: ((String) -> Unit)? = null,
     // [TT] Keep each image's single-character caret/selection contract intact.
     imagePlaceholder: Char? = null,
+    // [TT] See the delegating overload: host hook for consuming local file:// URL clipboard text.
+    onClipboardFileUrlPaste: ((String) -> Boolean)? = null,
     onTextLayout: (TextLayoutResult) -> Unit = {},
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     cursorBrush: Brush = SolidColor(Color.Black),
@@ -240,10 +247,11 @@ public fun BasicRichTextEditor(
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
     val clipboard = LocalClipboard.current
-    val richClipboardManager = remember(state, clipboard) {
+    val richClipboardManager = remember(state, clipboard, onClipboardFileUrlPaste) {
         createRichTextClipboardManager(
             richTextState = state,
-            clipboard = clipboard
+            clipboard = clipboard,
+            onClipboardFileUrlPaste = onClipboardFileUrlPaste
         )
     }
 

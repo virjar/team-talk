@@ -45,6 +45,7 @@
 | 2026-09-06 | parser/html/RichTextStateHtmlParser.kt | 直接实现 HTML handler 回调，去除 Ksoup Builder 的多层委托链；补齐图片 alt 保存和图片两侧空格边界 | 修复 Android release 返回聊天时 Saver 恢复空指针，并保留恢复草稿中的图片名称与相邻文字 |
 | 2026-09-10 | ui/BasicRichTextEditor.kt | + 可选 `onLinkClick` 回调：经字段 interactionSource 观察按压位置（与光标指示偏移同通道），命中 Token/链接 span 后回调；+ Token/链接悬停光标处理（Token 呈箭头、链接呈手型、正文呈文本光标） | 文档编辑器中 @ 提及是查看实体：点击打开用户资料卡、悬停可点击暗示；上游编辑器无任何链接/Token 点击与悬停处理，仅只读视图有且走 Main pass 会被文本框选中逻辑消费 |
 | 2026-09-21 | iosMain/clipboard/IosRichTextClipboardManager.kt | 无 HTML 时复用 `synthesizedLinkHtmlIfBareUrl`，并刷新待粘贴 HTML | 保持 Android/Desktop 的纯文本裸网址自动成链，避免旧剪贴板 HTML 残留 |
+| 2026-10-30 | ui/BasicRichTextEditor.kt、clipboard/RichTextClipboardManager.kt（expect）、desktopMain/clipboard/DesktopRichTextClipboardManager.kt、androidMain/iosMain 同名 actual | + 可选 `onClipboardFileUrlPaste` 钩子：剪贴板文本恰好是本地已存在文件的 `file://` 引用时回调宿主，宿主消费后本次粘贴返回空 entry | 微信 Windows 复制图片只放文件引用 + URL 格式（无位图/HTML 文本），右键粘贴经 stringFlavor 落成长 URL 文本；宿主据此导入图片而非插入 URL（内测反馈 2026-10） |
 
 ## 上游同步策略
 

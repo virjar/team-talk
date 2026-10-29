@@ -7,7 +7,8 @@ import com.mohamedrejeb.richeditor.model.RichTextState
 
 internal actual fun createRichTextClipboardManager(
     richTextState: RichTextState,
-    clipboard: Clipboard
+    clipboard: Clipboard,
+    onClipboardFileUrlPaste: ((String) -> Boolean)?,
 ): RichTextClipboardManager =
     AndroidRichTextClipboardManager(
         richTextState = richTextState,
