@@ -579,6 +579,7 @@ internal fun AndroidChatScreen(
                 voicePlayback = voicePlayback,
                 mentionCandidates = mentionCandidates,
                 chatForegroundActive = chatRouteResumed && !messageDetails.isOpen,
+                readReceiptsActive = chatRouteResumed,
                 messageFocusTarget = messageFocusTarget,
                 pendingTasksContent = pendingTasksContent,
                 telemetry = telemetry,

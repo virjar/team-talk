@@ -125,8 +125,10 @@ fun ChatPanel(
     mentionCandidates: List<com.virjar.tk.protocol.model.User>? = null,
     /** 文本气泡可鼠标拖选复制（桌面 true；Android 走长按菜单「复制」，避免选择拦截长按菜单） */
     selectableText: Boolean = false,
-    /** 只有真正可见/前台化的聊天才能消费未读消息或发布输入状态。 */
+    /** 只有真正可见/前台化的聊天才能发布输入状态。 */
     chatForegroundActive: Boolean,
+    /** 允许推进已读水位（查看全文/预览图片等活跃阅读态不因输入区让位而中止已读回执）。 */
+    readReceiptsActive: Boolean = chatForegroundActive,
     /** 可选的搜索结果身份；平台导航传递它，共享 UI 消费它。 */
     messageFocusTarget: MessageFocusTarget? = null,
     /** 区分重复导航到同一条消息的情况，而不改变其身份。 */
@@ -221,7 +223,18 @@ fun ChatPanel(
     val jumpAnchorEligible = messageFocusTarget == null && !restoredMidHistory
     val unreadAnchorServerSeq = if (jumpAnchorEligible) {
         val newestLoadedSeq = messages.firstOrNull()?.serverSeq ?: 0L
-        entryReadSeq?.takeIf { it > 0L && it < newestLoadedSeq }?.plus(1L)
+        entryReadSeq?.takeIf { it > 0L && it < newestLoadedSeq }?.let { readSeq ->
+            val firstUnreadInWindow = messages.lastOrNull { it.serverSeq > readSeq }?.serverSeq
+            val oldestLoadedSeq = messages.lastOrNull { it.serverSeq > 0L }?.serverSeq
+            // 优先定位窗口内大于已读水位的最旧真实消息；仅当未读起点尚未进入窗口时才用 readSeq + 1L 揭载，
+            // 避免 readSeq + 1L 恰好为已删除序列空洞时白翻 30 页历史。
+            when {
+                firstUnreadInWindow != null &&
+                    ((oldestLoadedSeq != null && oldestLoadedSeq <= readSeq + 1L) || (!hasMore && !loadingOlder)) ->
+                    firstUnreadInWindow
+                else -> readSeq + 1L
+            }
+        }
     } else {
         null
     }
@@ -271,7 +284,7 @@ fun ChatPanel(
         viewModel = viewModel,
         chatId = chatId,
         messages = messages,
-        readReceiptsEnabled = chatForegroundActive,
+        readReceiptsEnabled = readReceiptsActive,
         messageListState = messageListState,
         hasMore = hasMore,
         loading = loading,
@@ -922,6 +935,16 @@ fun ChatPanel(
                             } else if (composerContextStore.revision(chatId) == revision) {
                                 // SQLite 提交期间输入的内容属于下一份草稿。
                                 persistComposerContext()
+                            }
+                            if (messageListState.firstVisibleItemIndex > 0 ||
+                                messageListState.firstVisibleItemScrollOffset > 0
+                            ) {
+                                returnedToLatest = true
+                                viewModel.returnToLatest {
+                                    uiResultHandoff.deliver(Unit, actionAdmission) {
+                                        uiResultScope.launch { messageListState.scrollToItem(0) }
+                                    }
+                                }
                             }
                         }
                     }

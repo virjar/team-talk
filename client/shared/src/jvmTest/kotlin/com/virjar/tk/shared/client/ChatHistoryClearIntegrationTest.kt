@@ -144,6 +144,12 @@ class ChatHistoryClearIntegrationTest {
         cache.setConversationMarkedUnread(chatId, true)
         cache.setConversationMarkedUnread(chatId, false)
         assertEquals(0, cache.getConversations().single { it.chatId == chatId }.unreadCount)
+
+        // 同账号其他设备推进服务端 readSeq 至最新消息之后时，本机「标为未读」自动收敛清除。
+        cache.setConversationMarkedUnread(chatId, true)
+        assertEquals(1, cache.getConversations().single { it.chatId == chatId }.unreadCount)
+        cache.upsertConversation(conversation(chatId, lastSeq = 6).copy(readSeq = 6))
+        assertEquals(0, cache.getConversations().single { it.chatId == chatId }.unreadCount)
     }
 
     private fun open(database: java.io.File, createSchema: Boolean = false): LocalCacheImpl {

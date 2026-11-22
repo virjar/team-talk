@@ -183,7 +183,16 @@ internal fun ChatPanelWrapper(
     var galleryItems by remember(chatId) { mutableStateOf<List<GalleryItem>>(emptyList()) }
     var galleryIndex by remember(chatId) { mutableIntStateOf(0) }
 
-    val mediaActions = remember(chatId, fileDownloads, telemetry, onOpenOfficeRef, onOpenTaskRef, mainWindowFullscreen) {
+    val mediaActions = remember(
+        chatId,
+        viewModel,
+        presentationGate,
+        fileDownloads,
+        telemetry,
+        onOpenOfficeRef,
+        onOpenTaskRef,
+        mainWindowFullscreen,
+    ) {
         object : PlatformMediaActions {
             override fun openTaskRef(message: Message, body: com.virjar.tk.protocol.body.TaskRefBody) {
                 onOpenTaskRef?.invoke(message, body, viewModel::onError)
@@ -209,6 +218,11 @@ internal fun ChatPanelWrapper(
                     MediaOperation.OPEN,
                     ClientActionOutcome.STARTED,
                 )
+                // 点击聊天内图片/视频打开预览时立即推进已读，避免独立画廊窗口抢焦点或随后切走漏标已读。
+                val latestSeq = messagesState.value.maxOfOrNull(Message::serverSeq) ?: 0L
+                if (latestSeq > 0L) {
+                    presentationGate.runIfOpen { viewModel.markRead(latestSeq) }
+                }
                 galleryIndex = index.coerceIn(items.indices)
                 galleryItems = items
                 if (mainWindowFullscreen) {
@@ -414,6 +428,7 @@ internal fun ChatPanelWrapper(
             mentionCandidates = mentionCandidates,
             selectableText = true,
             chatForegroundActive = chatForegroundActive && !messageDetails.isOpen,
+            readReceiptsActive = chatForegroundActive,
             messageFocusTarget = messageFocusTarget,
             messageFocusRequestId = messageFocusRequestId,
             telemetry = telemetry,

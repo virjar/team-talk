@@ -167,7 +167,9 @@ internal fun IosChatScreen(route: IosRoute, ui: IosSessionUi) {
                 cachedDraft = conversation?.draft?.let { it } ?: conversation?.let { "" },
                 onDraftChange = { data.chat.saveDraft(chatId, it) }, draftLifecycleBridge = data.chat.draftLifecycle,
                 actionAdmission = data.uiActionAdmission, composerContextStore = data.chat.composerContexts,
-                media = media, voicePlayback = ui.voice, mentionCandidates = candidates, chatForegroundActive = foreground && !messageDetails.isOpen,
+                media = media, voicePlayback = ui.voice, mentionCandidates = candidates,
+                chatForegroundActive = foreground && !messageDetails.isOpen,
+                readReceiptsActive = foreground,
                 messageFocusTarget = route.sequence.takeIf { it > 0 }?.let { MessageFocusTarget(chatId, it) }, telemetry = data.telemetry,
                 pendingTasksContent = {
                     data.tasks.attention.group?.takeIf { data.tasks.attention.groupId == chatId }?.let { summary ->

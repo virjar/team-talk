@@ -814,4 +814,16 @@ class EventProcessorTest {
         assertEquals(1L, local.getConversations().single().readSeq)
         assertEquals(1, local.getConversations().single().unreadCount)
     }
+
+    @Test
+    fun `clearMention immediately removes chatId from mentionedChatIds`() = runBlocking {
+        ep.handleNotifyPayload(
+            NotifyType.MENTION_SYNC,
+            ProtoCodec.encode(com.virjar.tk.protocol.MentionSyncPayload(chatId = "c-mention", mentioned = true)),
+        )
+        assertEquals(setOf("c-mention"), ep.mentionedChatIds.value)
+
+        ep.clearMention("c-mention")
+        assertTrue(ep.mentionedChatIds.value.isEmpty())
+    }
 }

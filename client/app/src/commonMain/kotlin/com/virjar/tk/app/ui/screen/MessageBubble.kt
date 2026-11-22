@@ -130,12 +130,12 @@ internal fun MessageBubble(
             Surface(
                 color = if (isMe) Tk.colors.bubbleOutgoing else Tk.colors.bubbleIncoming,
                 contentColor = if (isMe) Tk.colors.bubbleOutgoingContent else MaterialTheme.colorScheme.onSurface,
-                // 飞书扁平气泡：无阴影无 tonalElevation
+                // 飞书扁平气泡：无阴影无 tonalElevation；仅首条消息靠头像顶角收至 4dp 表示方向
                 shape = RoundedCornerShape(
                     topStart = if (!isMe && !isContinuation) 4.dp else 8.dp,
                     topEnd = if (isMe && !isContinuation) 4.dp else 8.dp,
-                    bottomStart = if (isMe) 8.dp else if (isContinuation) 8.dp else 4.dp,
-                    bottomEnd = if (isMe) if (isContinuation) 8.dp else 4.dp else 8.dp,
+                    bottomStart = 8.dp,
+                    bottomEnd = 8.dp,
                 ),
                 // 长按弹菜单平台分流（F29）：Android 长按；桌面无长按（拖选文字不被误判），
                 // 菜单只走右键 secondaryClick

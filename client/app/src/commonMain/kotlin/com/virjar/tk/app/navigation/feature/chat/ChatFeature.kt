@@ -196,8 +196,15 @@ class ChatFeature(
 
     /** 在每一台设备上持久化显式的会话列表"标记已读"动作。 */
     fun markConversationRead(chatId: String, readSeq: Long) {
-        if (readSeq <= 0L) return
         destroyGate.runIfOpen {
+            session.eventProcessor.clearMention(chatId)
+            if (readSeq <= 0L) {
+                // 空会话曾被手动「标为未读」时，点击标记已读应清除本机未读标记。
+                scope.launch {
+                    localData.run { session.localCache.setConversationMarkedUnread(chatId, false) }
+                }
+                return@runIfOpen
+            }
             localMutations.markRead(chatId, readSeq) { failure ->
                 reportLocalMutationFailure(failure, "标记已读失败")
             }
@@ -212,6 +219,7 @@ class ChatFeature(
         if (!destroyGate.acceptsWork) return "会话已关闭"
         return try {
             localData.run { session.localCache.clearChatHistory(chatId) }
+            session.eventProcessor.clearMention(chatId)
             null
         } catch (failure: CancellationException) {
             throw failure

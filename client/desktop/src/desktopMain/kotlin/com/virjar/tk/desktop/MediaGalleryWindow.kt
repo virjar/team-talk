@@ -75,6 +75,7 @@ internal fun MediaGalleryWindow(
             Unit
         }
         DisposableEffect(window, placementOwner) {
+            window.name = MEDIA_GALLERY_WINDOW_NAME
             placementOwner.install()
             TestServiceBridge.registerWindowWithId(MEDIA_GALLERY_WINDOW_ID, window)
             val fullScreenContentSync = installMacFullScreenContentSync(window) {
@@ -144,3 +145,4 @@ internal fun MediaGalleryWindow(
     }
 }
 private const val MEDIA_GALLERY_WINDOW_ID = "media-gallery"
+internal const val MEDIA_GALLERY_WINDOW_NAME = "teamtalk-media-gallery"
