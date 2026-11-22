@@ -214,11 +214,16 @@ public fun <T> TriggerSuggestions(
                     true
                 }
                 Key.Enter, Key.NumPadEnter -> {
-                    val currentIndex = highlightedState.value.coerceIn(0, items.lastIndex)
-                    items.getOrNull(currentIndex)?.let { value ->
-                        commitSelection(state, triggerId, value, onSelect)
+                    // [TT] Yield Enter while IME composition is active so the candidate word commits first.
+                    if (state.composition != null) {
+                        false
+                    } else {
+                        val currentIndex = highlightedState.value.coerceIn(0, items.lastIndex)
+                        items.getOrNull(currentIndex)?.let { value ->
+                            commitSelection(state, triggerId, value, onSelect)
+                        }
+                        true
                     }
-                    true
                 }
                 Key.Escape -> {
                     state.cancelActiveTrigger()

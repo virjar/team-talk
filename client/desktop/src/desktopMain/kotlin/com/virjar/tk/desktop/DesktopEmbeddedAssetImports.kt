@@ -16,6 +16,9 @@ import java.awt.datatransfer.DataFlavor
 import java.awt.image.BufferedImage
 import java.io.Closeable
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
 import javax.imageio.ImageIO
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -37,6 +40,33 @@ internal fun desktopEmbeddedAssetSelection(
         source = source,
         deleteAfterImport = deleteAfterImport,
     )
+}
+
+/** 在当前系统用户私密子目录下生成 0600 权限的剪贴板临时 PNG，避免直接落盘到全局 `/tmp`。 */
+private fun createPrivateDesktopPasteTempFile(): File {
+    val safeUser = System.getProperty("user.name").orEmpty()
+        .replace(Regex("[^A-Za-z0-9._-]"), "_")
+        .ifBlank { "user" }
+    val baseDir = Path.of(System.getProperty("java.io.tmpdir"), "teamtalk-paste-$safeUser")
+    val createdDir = runCatching {
+        val dirAttrs = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"))
+        Files.createDirectories(baseDir, dirAttrs)
+    }.getOrElse {
+        Files.createDirectories(baseDir)
+    }
+    runCatching {
+        Files.setPosixFilePermissions(createdDir, PosixFilePermissions.fromString("rwx------"))
+    }
+    val file = runCatching {
+        val fileAttrs = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))
+        Files.createTempFile(createdDir, "clipboard-", ".png", fileAttrs)
+    }.getOrElse {
+        Files.createTempFile(createdDir, "clipboard-", ".png")
+    }
+    runCatching {
+        Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"))
+    }
+    return file.toFile()
 }
 
 /** 释放 adapter 持有的剪贴板副本，绝不删除选择器/拖放的原始文件。 */
@@ -98,6 +128,11 @@ internal fun importDesktopClipboardAsset(gateway: EmbeddedAssetImportGateway): B
         return@runCatching files.isNotEmpty()
     }
     if (!contents.isDataFlavorSupported(DataFlavor.imageFlavor)) return@runCatching false
+    // Excel / Numbers / 富文本表格复制时同时写入文本与预览位图 flavor；有非空白纯文本时交给编辑器粘贴文本，不劫持为图片。
+    if (contents.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+        val text = contents.getTransferData(DataFlavor.stringFlavor) as? String
+        if (!text.isNullOrBlank()) return@runCatching false
+    }
     val image = contents.getTransferData(DataFlavor.imageFlavor) as? java.awt.Image
         ?: return@runCatching false
     val width = image.getWidth(null)
@@ -110,7 +145,7 @@ internal fun importDesktopClipboardAsset(gateway: EmbeddedAssetImportGateway): B
     } finally {
         graphics.dispose()
     }
-    val temporary = File.createTempFile("teamtalk-clipboard-", ".png")
+    val temporary = createPrivateDesktopPasteTempFile()
     if (!ImageIO.write(buffered, "png", temporary)) {
         temporary.delete()
         return@runCatching false

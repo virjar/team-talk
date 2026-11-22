@@ -256,6 +256,10 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         position = WindowPosition(Alignment.Center),
     )
 
+    LaunchedEffect(session == null) {
+        if (session == null) syncDesktopTaskbarBadge(0)
+    }
+
     if (authenticationSurface == DesktopAuthenticationSurface.AUTHENTICATED && session != null) {
         // Session 回调可能来自 Netty/Default/AWT 线程。它们只能通过这个会话级租约，
         // 经由应用 UI 门禁到达可变 Compose 状态。
@@ -416,6 +420,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                     }
                     val suffix = if (unreadTotal > 0) " ($unreadTotal 条未读)" else ""
                     AppTray.setTooltip("${ClientIdentity.DISPLAY_NAME} - $status$suffix")
+                    syncDesktopTaskbarBadge(unreadTotal)
                 }
                 var wasWindowFocused by remember(session) { mutableStateOf(true) }
                 LaunchedEffect(windowFocused) {
@@ -571,6 +576,21 @@ private data class DesktopReadyWindowPresentation(
     val connectionState: ConnectionState,
     val windowReadActive: Boolean,
 )
+
+/** 同步桌面应用图标未读角标（macOS Dock / 支持角标的桌面环境），>99 封顶为 99+。 */
+private fun syncDesktopTaskbarBadge(unreadTotal: Int) {
+    runCatching {
+        if (!java.awt.Taskbar.isTaskbarSupported()) return
+        val taskbar = java.awt.Taskbar.getTaskbar()
+        if (!taskbar.isSupported(java.awt.Taskbar.Feature.ICON_BADGE_TEXT)) return
+        val badgeText = when {
+            unreadTotal <= 0 -> ""
+            unreadTotal > 99 -> "99+"
+            else -> unreadTotal.toString()
+        }
+        taskbar.setIconBadge(badgeText)
+    }
+}
 
 @Composable
 private fun DesktopSessionResourcesLoadingSurface() {

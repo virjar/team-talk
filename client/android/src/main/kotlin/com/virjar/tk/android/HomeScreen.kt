@@ -167,8 +167,16 @@ internal fun HomeScreen(
                         },
                         icon = {
                             val icon = if (selected) tab.filled else tab.outlined
-                            if (tab.label == "通讯录" && pendingApplyCount > 0) {
-                                BadgedBox(badge = { Badge { Text("$pendingApplyCount") } }) {
+                            val unreadChatCount = remember(conversations) {
+                                conversations.filter { !it.isMuted && it.unreadCount > 0 }.sumOf { it.unreadCount }
+                            }
+                            val badgeCount = when (tab.label) {
+                                "会话" -> unreadChatCount
+                                "通讯录" -> pendingApplyCount
+                                else -> 0
+                            }
+                            if (badgeCount > 0) {
+                                BadgedBox(badge = { Badge { Text(if (badgeCount > 99) "99+" else "$badgeCount") } }) {
                                     Icon(icon, contentDescription = tab.label)
                                 }
                             } else {

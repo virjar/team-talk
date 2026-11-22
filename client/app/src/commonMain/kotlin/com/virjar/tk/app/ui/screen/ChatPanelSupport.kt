@@ -52,6 +52,10 @@ internal fun rememberAdmittedChatMedia(
 ): ChatMediaConfig = remember(media, actionAdmission) {
     media.copy(
         onPickMedia = media.onPickMedia?.let { actionAdmission.guard(it) },
+        onCapture = media.onCapture?.let { actionAdmission.guard(it) },
+        onPickDocument = media.onPickDocument?.let { actionAdmission.guard(it) },
+        onPickGroupFile = media.onPickGroupFile?.let { actionAdmission.guard(it) },
+        onPickTask = media.onPickTask?.let { actionAdmission.guard(it) },
         onVoiceRecord = media.onVoiceRecord?.let { actionAdmission.guard(it) },
         onVoiceModeEntered = media.onVoiceModeEntered?.let { actionAdmission.guard(it) },
         onVoiceRecordCancel = media.onVoiceRecordCancel?.let { actionAdmission.guard(it) },
@@ -334,7 +338,8 @@ internal fun rememberMessageContentContext(
     admittedVoicePlayback: VoicePlaybackController,
     admittedMedia: ChatMediaConfig,
     onOpenFullMessage: ((Message) -> Unit)? = null,
-): MessageContentContext = remember(resolveSender, admittedVoicePlayback, admittedMedia, onOpenFullMessage) {
+    onReplyQuoteClick: ((Long) -> Unit)? = null,
+): MessageContentContext = remember(resolveSender, admittedVoicePlayback, admittedMedia, onOpenFullMessage, onReplyQuoteClick) {
     MessageContentContext(
         resolveSender = resolveSender,
         voicePlayback = admittedVoicePlayback,
@@ -344,5 +349,6 @@ internal fun rememberMessageContentContext(
         onEmbeddedMediaClick = admittedMedia.onEmbeddedMediaClick,
         imageContent = admittedMedia.imageContent,
         onOpenFullMessage = onOpenFullMessage,
+        onReplyQuoteClick = onReplyQuoteClick,
     )
 }

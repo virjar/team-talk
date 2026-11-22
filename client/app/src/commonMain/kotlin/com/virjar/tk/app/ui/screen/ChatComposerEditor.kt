@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,6 +73,52 @@ import com.virjar.tk.app.ui.component.rich.replaceComposerRange
 import com.virjar.tk.app.ui.component.rich.wrapComposerSelection
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.app.ui.theme.Tk
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
+
+/**
+ * 输入法组合态防误触保护：组合期间以及组合结束后的短暂窗口（50ms，覆盖 macOS Cocoa
+ * 输入法先提交文本再派发 KeyDown(Enter) 的竞态）内，禁止把回车键当作发送消息处理。
+ */
+internal class ImeCompositionGuard(
+    private val timeSource: TimeSource = TimeSource.Monotonic,
+    private val postCommitGrace: Duration = 50.milliseconds,
+) {
+    private var wasComposing: Boolean = false
+    private var lastEndedAt: TimeMark? = null
+
+    fun sync(isComposingNow: Boolean) {
+        if (wasComposing && !isComposingNow) {
+            lastEndedAt = timeSource.markNow()
+        }
+        wasComposing = isComposingNow
+    }
+
+    fun shouldDeferEnterToIme(isComposingNow: Boolean): Boolean {
+        sync(isComposingNow)
+        if (isComposingNow) return true
+        val endedAt = lastEndedAt ?: return false
+        return endedAt.elapsedNow() < postCommitGrace
+    }
+}
+
+/**
+ * 判定可视富文本输入框的物理回车是否应触发送出动作：
+ * 仅当启用了回车发送、无修饰键、未处于输入法组合态/提交防抖窗，且当前无可见 `@` 候选列表时发送。
+ */
+internal fun shouldSendVisualComposerOnEnter(
+    enterKeySends: Boolean,
+    hasCommandModifier: Boolean,
+    isShiftPressed: Boolean,
+    deferEnterToIme: Boolean,
+    hasActiveMentionPopup: Boolean,
+): Boolean = enterKeySends &&
+    !hasCommandModifier &&
+    !isShiftPressed &&
+    !deferEnterToIme &&
+    !hasActiveMentionPopup
 
 @Composable
 internal fun ComposerEditor(
@@ -97,6 +144,9 @@ internal fun ComposerEditor(
 ) {
     when (composerMode) {
         ChatComposerMode.VISUAL -> Box {
+            val imeGuard = remember(richState) { ImeCompositionGuard() }
+            val composingNow = richState.composition != null
+            SideEffect { imeGuard.sync(composingNow) }
             BasicRichTextEditor(
                 state = richState,
                 modifier = Modifier
@@ -110,18 +160,31 @@ internal fun ComposerEditor(
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         val command = event.isMetaPressed || event.isCtrlPressed
+                        val isEnterKey = event.key == Key.Enter || event.key == Key.NumPadEnter
+                        val deferEnterToIme = imeGuard.shouldDeferEnterToIme(richState.composition != null)
+                        val activeQuery = richState.activeTriggerQuery
+                        val hasActiveMentionPopup = mentionCandidates != null &&
+                            activeQuery != null &&
+                            activeQuery.triggerId == CHAT_MENTION_TRIGGER_ID &&
+                            filterMentionCandidates(mentionCandidates, activeQuery.query, myUid).isNotEmpty()
                         when {
                             event.key == Key.V && command && media.onPasteEmbeddedAsset?.invoke() == true -> true
-                            // 桌面按常见 IM 交互：无修饰键 Enter 发送（内测反馈，2026-09）。
-                            // 命令键+Enter 插入换行（与物理 Enter 的换行路径一致，行尾空段落
-                            // 在继续输入后可见）；Shift+Enter 不消费，走编辑器默认换行。
-                            // @ 候选弹层激活时让位给候选选中；移动端软键盘 Enter 保持换行。
-                            event.key == Key.Enter && command -> {
+                            // 输入法正在选词或刚上屏时把 Enter 交给系统输入法，避免误发半截拼音或英文。
+                            isEnterKey && deferEnterToIme -> false
+                            // 桌面按常见 IM 交互：无修饰键 Enter / NumPadEnter 发送（内测反馈，2026-09）。
+                            // 命令键+Enter 插入换行；Shift+Enter 不消费，走编辑器默认换行；
+                            // 仅当 @ 候选列表实际非空展示时让位给候选选中（无匹配词或保存的消息直接发送）。
+                            isEnterKey && command -> {
                                 richState.addTextAfterSelection("\n")
                                 true
                             }
-                            event.key == Key.Enter && !command && !event.isShiftPressed &&
-                                enterKeySendsChatMessage && richState.activeTriggerQuery == null -> {
+                            isEnterKey && shouldSendVisualComposerOnEnter(
+                                enterKeySends = enterKeySendsChatMessage,
+                                hasCommandModifier = command,
+                                isShiftPressed = event.isShiftPressed,
+                                deferEnterToIme = deferEnterToIme,
+                                hasActiveMentionPopup = hasActiveMentionPopup,
+                            ) -> {
                                 sendAction()
                                 true
                             }
@@ -206,9 +269,10 @@ internal fun ComposerEditor(
                         .onPreviewKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                             val command = event.isMetaPressed || event.isCtrlPressed
+                            val isEnterKey = event.key == Key.Enter || event.key == Key.NumPadEnter
                             when {
                                 event.key == Key.V && command && media.onPasteEmbeddedAsset?.invoke() == true -> true
-                                event.key == Key.Enter && command -> {
+                                isEnterKey && command && sourceInput.composition == null -> {
                                     sendAction()
                                     true
                                 }

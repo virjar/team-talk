@@ -404,6 +404,7 @@ internal fun ChatPanelWrapper(
             resolveSender = resolveSender,
             onForward = onForward,
             onMergeForward = onMergeForward,
+            remindLaterSupported = true,
             onOpenFullMessage = { focusManager.clearFocus(); messageDetails.open(it) },
             onSaveMessage = onSaveMessage,
             cachedDraft = cachedDraft,

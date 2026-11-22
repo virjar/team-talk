@@ -38,6 +38,7 @@ internal fun SlimNavRail(
     selectedTab: Int,
     onSelectTab: (Int) -> Unit,
     onOpenSettings: () -> Unit,
+    unreadChatCount: Int = 0,
     pendingApplyCount: Int,
     currentUserName: String?,
     currentUserAvatar: Attachment?,
@@ -71,6 +72,7 @@ internal fun SlimNavRail(
             RailItem(
                 filledIcon = TkNavIcons.ChatsFilled,
                 outlinedIcon = TkNavIcons.ChatsOutlined,
+                badgeCount = unreadChatCount,
                 label = MainTab.CONVERSATIONS.label,
                 selected = selectedTab == MainTab.CONVERSATIONS.ordinal,
                 onClick = { onSelectTab(MainTab.CONVERSATIONS.ordinal) },

@@ -16,7 +16,9 @@ import com.virjar.tk.shared.platform.platformRandomUuid
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -136,6 +138,8 @@ fun ChatPanel(
     pendingTasksContent: (@Composable () -> Unit)? = null,
     /** 合并转发（MSG-01/F6）：携带快照条目与锚点消息（仅供子屏标题语义），宿主打开目标选择。 */
     onMergeForward: ((entries: List<com.virjar.tk.protocol.body.MergeForwardEntry>, anchor: Message) -> Unit)? = null,
+    /** 本地“稍后提醒”是否由当前平台宿主实现；未接入提醒呈报的端隐藏入口，避免假成功提示。 */
+    remindLaterSupported: Boolean = false,
 ): Unit = key(chatId, viewModel) {
     // Desktop 切会话时复用面板位置。整个组合归当前聊天所有，否则 collectAsState
     // 会短暂保留上一聊天的值，已读 effect 就可能把 A 的消息序号写进 B。
@@ -167,12 +171,27 @@ fun ChatPanel(
             scoped
         }
     }
+    var localFocusTarget by remember(chatId, messageFocusTarget, messageFocusRequestId) {
+        mutableStateOf<MessageFocusTarget?>(null)
+    }
+    var localFocusNonce by remember(chatId, messageFocusTarget, messageFocusRequestId) {
+        mutableLongStateOf(0L)
+    }
+    val effectiveFocusTarget = localFocusTarget ?: messageFocusTarget
+    val effectiveFocusRequestId = if (localFocusTarget != null) localFocusNonce else messageFocusRequestId
+    var returnedToLatest by rememberSaveable(effectiveFocusTarget, effectiveFocusRequestId) { mutableStateOf(false) }
+
     // 会话级正文展示上下文：整个会话内不变，作为单一参数下传消息列表与气泡。
     val messageContent = rememberMessageContentContext(
         resolveSender = resolveSender,
         admittedVoicePlayback = admittedVoicePlayback,
         admittedMedia = mentionSafeMedia,
         onOpenFullMessage = actionAdmission.guard(onOpenFullMessage),
+        onReplyQuoteClick = actionAdmission.guard { targetSeq: Long ->
+            returnedToLatest = false
+            localFocusTarget = MessageFocusTarget(chatId, targetSeq)
+            localFocusNonce += 1L
+        },
     )
     val messages by viewModel.messages.collectAsState()
     // 线程面板状态（MSG-01/F1）：saveable 的根 seq；根消息对象按当前窗口解析，
@@ -246,11 +265,10 @@ fun ChatPanel(
 
     val visibleTypingUid = chatTypingPresentationUid(chatId, viewModel, chatForegroundActive)
 
-    var returnedToLatest by rememberSaveable(messageFocusTarget, messageFocusRequestId) { mutableStateOf(false) }
     val highlightedServerSeq = rememberMessageFocus(
         viewModel = viewModel,
-        target = messageFocusTarget?.takeIf { target -> target.chatId == chatId && !returnedToLatest },
-        requestId = messageFocusRequestId,
+        target = effectiveFocusTarget?.takeIf { target -> target.chatId == chatId && !returnedToLatest },
+        requestId = effectiveFocusRequestId,
         state = messageFocusState,
         messages = messages,
         messageListState = messageListState,
@@ -261,8 +279,8 @@ fun ChatPanel(
         chatId = chatId,
         messages = messages,
         messageListState = messageListState,
-        suppressInitialAnchor = messageFocusTarget != null || restoredMidHistory,
-        suppressLatestFollow = messageFocusTarget != null && !returnedToLatest &&
+        suppressInitialAnchor = effectiveFocusTarget != null || restoredMidHistory,
+        suppressLatestFollow = effectiveFocusTarget != null && !returnedToLatest &&
             (messageFocusState == MessageFocusState.Idle ||
                 messageFocusState.isLoadingOrAwaitingPosition()),
     )
@@ -923,6 +941,7 @@ fun ChatPanel(
                                 // SQLite 提交期间输入的内容属于下一份草稿。
                                 persistComposerContext()
                             }
+                            localFocusTarget = null
                         }
                     }
                 }
@@ -998,7 +1017,7 @@ fun ChatPanel(
                 reactions = viewModel.reactions.collectAsState().value,
                 threadReplyCounts = threadReplyCounts,
                 onOpenThread = { message: Message -> threadRootSeq = message.serverSeq },
-                onRemindLater = actionAdmission.guard { message: Message, remindAt: Long ->
+                onRemindLater = if (!remindLaterSupported) null else actionAdmission.guard { message: Message, remindAt: Long ->
                     viewModel.remindLater(message, remindAt)
                     uiResultScope.launch {
                         snackbarHostState.showSnackbar("将在 " + formatChatTime(remindAt) + " 提醒你")
@@ -1018,7 +1037,7 @@ fun ChatPanel(
                         }
                     }
                 } else null,
-                onStartSelection = if (voiceMode || editingSessionActive) null else actionAdmission.guard { message: Message ->
+                onStartSelection = if (voiceMode || editingSessionActive || onMergeForward == null) null else actionAdmission.guard { message: Message ->
                     selectionMode = true
                     selectedMessages[message.clientMsgId] = message
                 },
@@ -1062,6 +1081,7 @@ fun ChatPanel(
                 onLoadOlder = actionAdmission.guard(viewModel::loadOlder),
                 onJumpToLatest = actionAdmission.guard { onLocalWindowReady: () -> Unit ->
                     returnedToLatest = true
+                    localFocusTarget = null
                     viewModel.returnToLatest {
                         uiResultHandoff.deliver(Unit, actionAdmission) {
                             // 这次 UI 交接等待期间可能又到达了更新的搜索意图。
@@ -1227,17 +1247,19 @@ fun ChatPanel(
                                 color = Tk.colors.secondaryText,
                             )
                             Spacer(Modifier.height(Tk.spacing.xs))
-                            readStatesList.forEach { state ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = Tk.spacing.xs),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                ) {
-                                    Text(state.displayName, style = MaterialTheme.typography.bodyMedium)
-                                    Text(
-                                        "已读",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Tk.colors.secondaryText,
-                                    )
+                            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
+                                items(readStatesList, key = { it.uid }) { state ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = Tk.spacing.xs),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                    ) {
+                                        Text(state.displayName, style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            "已读",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Tk.colors.secondaryText,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1249,6 +1271,7 @@ fun ChatPanel(
                 modifier = Modifier.testTag("chat.readstates.dialog.box"),
             )
             LaunchedEffect(seq) {
+                readStatesList = emptyList()
                 readStatesList = viewModel.loadChatReadStates(seq)
             }
         }

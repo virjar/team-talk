@@ -179,6 +179,7 @@ internal fun MessageBubble(
                                 onUrlClick = content.onUrlClick,
                                 resolveSender = content.resolveSender,
                                 onOpenFullMessage = content.onOpenFullMessage,
+                                onReplyQuoteClick = content.onReplyQuoteClick,
                             )
                         }
                     }
@@ -203,8 +204,17 @@ internal fun MessageBubble(
                     onMore = reactions.onOpenPicker,
                 )
             }
-            // 送达/已读状态：私聊我方消息逐条渲染单勾双钩（办公场景的状态证据）
-            if (showReadIndicator) {
+            // 送达/已读状态：私聊我方消息逐条渲染单勾双钩（办公场景的状态证据）；未分配 seq 且发送中的显示发送中提示
+            if (isMe && msg.serverSeq == 0L && msg.sendStatus == Message.SEND_STATUS_SENDING) {
+                Text(
+                    text = "发送中…",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Tk.colors.metaText,
+                    modifier = Modifier
+                        .padding(top = 1.dp, end = Tk.spacing.xs)
+                        .testTag("chat.message.sending.${msg.clientMsgId.take(12)}"),
+                )
+            } else if (showReadIndicator) {
                 val delivered = msg.serverSeq > 0
                 val isRead = delivered && peerReadSeq > 0 && msg.serverSeq <= peerReadSeq
                 if (delivered) {

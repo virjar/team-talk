@@ -15,26 +15,29 @@ import androidx.compose.ui.unit.dp
 import com.virjar.tk.app.ui.theme.Tk
 
 /**
- * 未读计数徽标：pill 形（高 16dp），unreadBadge 底白字，99+ 封顶。
+ * 未读计数徽标：pill 形（高 16dp），常规为 unreadBadge 底白字，免打扰会话为柔和灰底，99+ 封顶。
  * 单数字为圆形，两位数自动拉伸为胶囊。
  */
 @Composable
 fun UnreadBadge(
     count: Int,
     modifier: Modifier = Modifier,
+    muted: Boolean = false,
 ) {
     if (count <= 0) return
+    val backgroundColor = if (muted) MaterialTheme.colorScheme.surfaceVariant else Tk.colors.unreadBadge
+    val contentColor = if (muted) Tk.colors.secondaryText else Color.White
     Box(
         modifier = modifier
             .defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
-            .background(Tk.colors.unreadBadge, CircleShape)
+            .background(backgroundColor, CircleShape)
             .padding(horizontal = if (count > 9) 5.dp else 0.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = if (count > 99) "99+" else "$count",
             style = MaterialTheme.typography.labelMedium,
-            color = Color.White,
+            color = contentColor,
         )
     }
 }
