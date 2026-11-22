@@ -125,8 +125,10 @@ fun ChatPanel(
     mentionCandidates: List<com.virjar.tk.protocol.model.User>? = null,
     /** 文本气泡可鼠标拖选复制（桌面 true；Android 走长按菜单「复制」，避免选择拦截长按菜单） */
     selectableText: Boolean = false,
-    /** 只有真正可见/前台化的聊天才能消费未读消息或发布输入状态。 */
+    /** 只有真正可见/前台化的聊天才能发布输入状态。 */
     chatForegroundActive: Boolean,
+    /** 允许推进已读水位（查看全文/预览图片等活跃阅读态不因输入区让位而中止已读回执）。 */
+    readReceiptsActive: Boolean = chatForegroundActive,
     /** 可选的搜索结果身份；平台导航传递它，共享 UI 消费它。 */
     messageFocusTarget: MessageFocusTarget? = null,
     /** 区分重复导航到同一条消息的情况，而不改变其身份。 */
@@ -282,7 +284,7 @@ fun ChatPanel(
         viewModel = viewModel,
         chatId = chatId,
         messages = messages,
-        readReceiptsEnabled = chatForegroundActive,
+        readReceiptsEnabled = readReceiptsActive,
         messageListState = messageListState,
         hasMore = hasMore,
         loading = loading,

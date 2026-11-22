@@ -82,6 +82,11 @@ class EventProcessor(
     private val _mentionedChatIds = MutableStateFlow<Set<String>>(emptySet())
     val mentionedChatIds: StateFlow<Set<String>> = _mentionedChatIds.asStateFlow()
 
+    /** 本地阅读或清空记录时立即消除对应会话的「@我」角标提示，不必等待服务端二次下推。 */
+    fun clearMention(chatId: String) {
+        _mentionedChatIds.update { it - chatId }
+    }
+
     private val _groupFileChanges = MutableSharedFlow<com.virjar.tk.protocol.GroupFileChangedPayload>(extraBufferCapacity = 64)
 
     /** 群文件行级变更事件（GROUP_FILE_CHANGED）；订阅者据此触发投影流收敛。 */

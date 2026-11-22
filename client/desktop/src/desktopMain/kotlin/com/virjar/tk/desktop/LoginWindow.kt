@@ -263,6 +263,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         // 新打开的主窗口在 AWT 发布第一个精确焦点边沿之前，被保守地视为活跃；
         // 这可以防止缓存的未读状态变成启动时的提醒。
         var windowFocused by remember(session) { mutableStateOf(true) }
+        var appAnyWindowFocused by remember(session) { mutableStateOf(true) }
         var trayAvailable by remember(session) { mutableStateOf(false) }
         val presentationGate = remember(session) { DesktopSessionPresentationGate() }
         val sessionUiActions = remember(
@@ -418,12 +419,13 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                     AppTray.setTooltip("${ClientIdentity.DISPLAY_NAME} - $status$suffix")
                 }
                 val windowReadActive = isDesktopWindowActive(windowVisible, windowFocused)
-                DesktopTaskNotifications(desktopNav, presentationGate, windowReadActive, connectionState)
-                DesktopMessageNotifications(desktopNav.messageReminderCache, windowReadActive, connectionState)
-                LaunchedEffect(conversations, windowReadActive) {
+                val notificationWindowActive = isDesktopWindowActive(windowVisible, appAnyWindowFocused)
+                DesktopTaskNotifications(desktopNav, presentationGate, notificationWindowActive, connectionState)
+                DesktopMessageNotifications(desktopNav.messageReminderCache, notificationWindowActive, connectionState)
+                LaunchedEffect(conversations, notificationWindowActive) {
                     DesktopNotificationManager.onConversationsChanged(
                         conversations = conversations,
-                        isWindowFocused = windowReadActive,
+                        isWindowFocused = notificationWindowActive,
                     )
                 }
                 readyPresentation = DesktopReadyWindowPresentation(
@@ -448,12 +450,31 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                 state = mainWindowState,
             ) {
                 TestServiceBridge.registerWindowIfEnabled(window)
+                val focusManager = remember { java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager() }
+                val publishFocus: () -> Unit = remember(window, sessionUiActions, focusManager) {
+                    {
+                        // 首次组合期间 ComposeWindow 尚未显示，window.isFocused 为 false；
+                        // 等待真正显示后再同步焦点，避免覆盖初始乐观值后遇启动器漏事件而卡死。
+                        if (window.isShowing) {
+                            val activeWindow = focusManager.activeWindow
+                            val chatFocused = isDesktopMainChatContextFocused(window, activeWindow)
+                            val anyFocused = isDesktopAppAnyWindowActive(activeWindow)
+                            sessionUiActions.dispatchUi {
+                                windowFocused = chatFocused
+                                appAnyWindowFocused = anyFocused
+                            }
+                        }
+                    }
+                }
                 val showMainWindow: () -> Unit = {
                     sessionUiActions.dispatchUi {
                         windowVisible = true
                         mainWindowState.isMinimized = false
                         // Compose 异步显示隐藏窗口；componentShown 会在真正显示后再次完成激活。
-                        if (window.isVisible) window.bringToForeground()
+                        if (window.isVisible) {
+                            window.bringToForeground()
+                            javax.swing.SwingUtilities.invokeLater { publishFocus() }
+                        }
                     }
                 }
                 DisposableEffect(window, sessionUiActions) {
@@ -461,6 +482,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                         sessionUiActions.dispatchUi {
                             if (windowVisible && !mainWindowState.isMinimized && window.isVisible) {
                                 window.bringToForeground()
+                                javax.swing.SwingUtilities.invokeLater { publishFocus() }
                             }
                         }
                     }
@@ -500,19 +522,22 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                     val fullScreenContentSync = installMacFullScreenContentSync(window)
                     onDispose { fullScreenContentSync.close() }
                 }
-                DisposableEffect(window, sessionUiActions) {
-                    fun publishFocus() {
-                        val focused = window.isFocused
-                        sessionUiActions.dispatchUi { windowFocused = focused }
-                    }
+                DisposableEffect(window, sessionUiActions, focusManager, publishFocus) {
                     val focusListener = object : java.awt.event.WindowFocusListener {
                         override fun windowGainedFocus(event: java.awt.event.WindowEvent?) = publishFocus()
 
                         override fun windowLostFocus(event: java.awt.event.WindowEvent?) = publishFocus()
                     }
+                    val activeWindowListener = java.beans.PropertyChangeListener { publishFocus() }
                     window.addWindowFocusListener(focusListener)
+                    focusManager.addPropertyChangeListener("activeWindow", activeWindowListener)
+                    focusManager.addPropertyChangeListener("focusedWindow", activeWindowListener)
                     publishFocus()
-                    onDispose { window.removeWindowFocusListener(focusListener) }
+                    onDispose {
+                        window.removeWindowFocusListener(focusListener)
+                        focusManager.removePropertyChangeListener("activeWindow", activeWindowListener)
+                        focusManager.removePropertyChangeListener("focusedWindow", activeWindowListener)
+                    }
                 }
 
                 setTeamTalkIcon()

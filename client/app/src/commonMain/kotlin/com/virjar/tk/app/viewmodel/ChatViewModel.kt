@@ -1022,6 +1022,7 @@ class ChatViewModel(
             )
         }
         if (!admitted) actionTelemetry.failMarkRead(readSeq)
+        else eventProcessor.clearMention(chatId)
     }
 
     fun refreshReactionsForWindow() = reactionOwner.refreshForWindow(_messages.value)

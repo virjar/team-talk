@@ -138,6 +138,37 @@ internal fun activeWindowBelongsTo(ownerWindow: Window, activeWindow: Window?): 
     return false
 }
 
+/** 应用内任意受控窗口处于焦点状态时返回 true，用于抑制系统消息横幅与提醒通知。 */
+internal fun isDesktopAppAnyWindowActive(activeWindow: Window?): Boolean =
+    activeWindow != null && activeWindow.isFocused
+
+/**
+ * 判定主聊天面板的已读回执上下文是否处于活跃状态。
+ *
+ * 主窗口自身聚焦、归属主窗口的模态 Dialog（个人资料/个人设置/查看全文），
+ * 以及查看当前聊天图片的独立画廊窗口聚焦时，都视为用户正在活跃阅读当前会话。
+ */
+internal fun isDesktopMainChatContextFocused(
+    mainWindow: Window,
+    activeWindow: Window?,
+): Boolean = evaluateDesktopMainChatContextFocused(
+    isMainOrOwnedWindow = activeWindow === mainWindow ||
+        (activeWindow != null && activeWindowBelongsTo(mainWindow, activeWindow)),
+    activeWindowFocused = activeWindow?.isFocused == true,
+    activeWindowName = activeWindow?.name,
+)
+
+/** 纯策略辅助函数：脱离 AWT 窗口实例判定主聊天已读上下文是否活跃，兼容无头测试环境。 */
+internal fun evaluateDesktopMainChatContextFocused(
+    isMainOrOwnedWindow: Boolean,
+    activeWindowFocused: Boolean,
+    activeWindowName: String?,
+): Boolean {
+    if (!activeWindowFocused) return false
+    if (isMainOrOwnedWindow) return true
+    return activeWindowName == MEDIA_GALLERY_WINDOW_NAME
+}
+
 internal fun desktopWindowDisposalExitReason(
     sessionPresentationOpen: Boolean,
 ): ClientPageExitReason = if (sessionPresentationOpen) {

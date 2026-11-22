@@ -106,6 +106,15 @@ internal fun ChatReadEffects(
             actionAdmission.runIfOpen { viewModel.markRead(target) }
         }
     }
+    // 桌面双屏或未点击激活直接滚轮浏览时，主动滚动列表视同正在阅读当前会话。
+    LaunchedEffect(viewModel, chatId, messageListState, latestVisibleServerSeq) {
+        if (latestVisibleServerSeq <= 0L) return@LaunchedEffect
+        snapshotFlow { messageListState.isScrollInProgress }
+            .filter { it }
+            .collect {
+                actionAdmission.runIfOpen { viewModel.markRead(latestVisibleServerSeq) }
+            }
+    }
     LaunchedEffect(messageListState, messages.size, hasMore, loading, suppressHistoryPaging) {
         snapshotFlow { messageListState.layoutInfo.visibleItemsInfo.maxOfOrNull { it.index } ?: -1 }
             .map { lastVisible ->

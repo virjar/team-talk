@@ -96,12 +96,18 @@ internal class LocalConversationProjectionStore(
 
     fun upsertConversation(conversation: Conversation) = cacheUseGate.use {
         synchronized(stateLock) {
+            val previousLocal = conversationsById[conversation.chatId]
             val plan = prepareConversationMerge(
-                local = conversationsById[conversation.chatId],
+                local = previousLocal,
                 remote = conversation,
                 draftOverride = localDraftOverrides[conversation.chatId],
                 pendingRead = pendingReadsByChatId[conversation.chatId],
             )
+            // 其他设备已将服务端已读水位推进到最新消息之后时，清除本机「标为未读」标记。
+            val clearRemoteReadManualUnread = previousLocal != null &&
+                conversation.readSeq > previousLocal.readSeq &&
+                conversation.readSeq >= plan.conversation.lastSeq &&
+                manualUnreadByChatId[conversation.chatId] == true
             // 首次加载的临时对端必须先于其更旧的 conversation 身份持久化。
             // 如果 user 持久化失败，conversation 行与常驻列表都不会推进。
             materializeTransientPeerUsersLocked(plan.conversation.personalPeerUids())
@@ -109,9 +115,20 @@ internal class LocalConversationProjectionStore(
                 if (plan.clearDraftOverride) {
                     queries.deleteConversationDraftOutbox(conversation.chatId)
                 }
+                if (clearRemoteReadManualUnread) {
+                    val cleared = clearedBeforeSeqByChatId[conversation.chatId] ?: 0L
+                    if (cleared <= 0L) {
+                        queries.deleteConversationLocalFlag(conversation.chatId)
+                    } else {
+                        queries.upsertConversationLocalFlag(conversation.chatId, 0L, cleared)
+                    }
+                }
                 persistReadPlanLocked(conversation.chatId, plan.pendingRead)
                 // 同时持久化合并后的草稿；重启绝不能短暂复活一个更旧的事件。
                 persistConversation(plan.conversation)
+            }
+            if (clearRemoteReadManualUnread) {
+                manualUnreadByChatId.remove(conversation.chatId)
             }
             if (plan.clearDraftOverride) {
                 replaceDraftOverrideLocked(conversation.chatId, null)
