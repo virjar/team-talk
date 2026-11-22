@@ -56,17 +56,15 @@ internal class IosSessionUi(
         if (closed) return@onIosMain
         closed = true
         NSNotificationCenter.defaultCenter.removeObserver(audioInterruption)
-        // Platform borrowers retire before the ClientSession can close its cache and HTTP identity.
+        // 先退役平台侧资源借用方，再允许 ClientSession 关闭本地缓存与 HTTP 身份。
         val failures = mutableListOf<Throwable>()
         fun release(action: () -> Unit) { try { action() } catch (failure: Throwable) { failures += failure } }
         release { recorder.close() }; release { voice.close() }; release { native.close() }
         release { imports.close() }; release { files.close() }; release { media.close() }
         release { data.destroy(clearComposerContexts = true, clearDocumentDrafts = reason == SessionEndReason.USER_LOGOUT) }
-        // Capture first, then close this session's store even when preserving drafts. A restore
-        // already reading on Default must finish admitting its rewrite before account cleanup.
+        // 先捕获未保存草稿，再退役本会话草稿存储；若后台已有恢复读取正在 Default 线程进行，须等待其准入完成后再做账号清理。
         release { data.documentDrafts.retire(data.documentDraftOwnerKey) }
-        // The process writer owns these immutable snapshots, not the retiring SDK/cache. Explicit
-        // logout deletion above is durable; preserving a draft must not wait for fsync on Main.
+        // 不可变快照由进程级写入器独立持有，不随 SDK/缓存销毁；上方显式登出的删除是同步落盘的，保留草稿则无需在主线程等待 fsync。
         release { IosApplicationRuntime.observeDraftFlush("IosSessionDraft") }
         failures.firstOrNull()?.let { primary -> failures.drop(1).forEach(primary::addSuppressed); throw primary }
     }

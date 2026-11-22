@@ -10,7 +10,7 @@ internal fun releaseIosEmbeddedAssetSelection(selection: EmbeddedAssetLocalSelec
     if (selection.deleteAfterImport) PlatformFile(selection.localReference).delete()
 }
 
-/** UIKit selection remains platform-owned; import ordering and retry belong to app. */
+/** UIKit 选择交互保持在平台层，导入排序与重试由公共 app 层统一编排。 */
 internal class IosEmbeddedAssetImportGateway(
     private val resources: IosMediaResources,
     transfer: IosFileTransfer,

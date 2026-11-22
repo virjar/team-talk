@@ -19,7 +19,7 @@ internal class IosMediaLease(val file: PlatformFile, private val release: () -> 
     override fun close() { if (released.compareAndSet(false, true)) release() }
 }
 
-/** One authenticated HTTP owner and bounded local cache per login session. */
+/** 单个登录会话持有独立的已认证 HTTP 客户端与有界本地媒体缓存。 */
 internal class IosMediaResources(private val dataState: AppDataState) : AutoCloseable {
     private val closed = PlatformAtomicBoolean(false)
     private val job = SupervisorJob()
@@ -35,7 +35,7 @@ internal class IosMediaResources(private val dataState: AppDataState) : AutoClos
     private var initialized = false
     private val displayedResources = mutableSetOf<() -> Unit>()
 
-    /** Compose effects can outlive the frame that retires a session; stop native readers first. */
+    /** Compose 副作用可能在会话退役的帧之后才销毁，需先通知原生读取器停止。 */
     fun retainDisplay(onRetirement: () -> Unit): AutoCloseable {
         val retained = synchronized(leaseLock) {
             if (closed.get()) false else { displayedResources += onRetirement; true }
@@ -103,7 +103,7 @@ internal class IosMediaResources(private val dataState: AppDataState) : AutoClos
                 }
             }
         } catch (failure: Throwable) {
-            // withContext may discard its result when cancellation wins the dispatch back to Main.
+            // 若协程在切回主线程途中被取消，`withContext` 可能直接丢弃返回值，需在此兜底关闭租约。
             acquired?.close()
             throw failure
         }
@@ -178,7 +178,7 @@ internal class IosFileTransfer(private val resources: IosMediaResources) {
     ).getOrThrow()
 }
 
-/** Runs before session construction, when no picker or recorder can own a staging file. */
+/** 在会话构造前清理遗留的暂存导入目录，此时没有任何选择器或录音器持有暂存文件。 */
 internal fun clearIosAbandonedStaging() {
     val media = platformDataDir().resolve("media")
     media.listFiles().orEmpty().filter { it.isDirectory }.forEach { deployment ->

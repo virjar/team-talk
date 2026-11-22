@@ -38,8 +38,7 @@ import platform.UIKit.*
 @Composable
 internal fun IosAttachmentImage(attachment: Attachment, resources: IosMediaResources, modifier: Modifier) {
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
-        // Decode to the visible viewport, with at most 16 MiB of RGBA pixels per image.
-        // The authenticated original remains untouched for sharing and export.
+        // 按可见视口尺寸降采样解码，单张图片 RGBA 像素上限约 16 MiB；已认证原图仍完整保留用于分享与导出。
         val maximumPixels = maxOf(constraints.maxWidth, constraints.maxHeight).coerceIn(1, 2048)
         var imageBitmap by remember(attachment, resources, maximumPixels) { mutableStateOf<ImageBitmap?>(null) }
         var image by remember(attachment, resources, maximumPixels) { mutableStateOf<UIImage?>(null) }
@@ -115,7 +114,7 @@ private fun uiImageToImageBitmap(image: UIImage): ImageBitmap {
     }
 }
 
-/** ImageIO downsamples during decoding and applies EXIF rotation before UIKit receives the bitmap. */
+/** 在解码阶段使用 ImageIO 自动降采样并应用 EXIF 旋转，避免把未经校正的大图直接送入 UIKit。 */
 private fun loadIosDisplayImage(file: PlatformFile, maximumPixels: Int): UIImage {
     val sourceUrl = CFBridgingRetain(NSURL.fileURLWithPath(file.getPath()))
     val source = try { CGImageSourceCreateWithURL(sourceUrl?.reinterpret(), null) } finally { CFRelease(sourceUrl) }

@@ -12,7 +12,7 @@ import platform.UIKit.*
 import platform.UniformTypeIdentifiers.*
 import platform.darwin.NSObject
 
-/** UIKit owns pickers and export sheets; their results remain bound to the creating session. */
+/** UIKit 拥有文件选择器和导出面板；返回产物仍绑定到发起选择的会话生命周期。 */
 internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCloseable {
     private var pickerDelegate: NSObject? = null
     private var presented: UIViewController? = null
@@ -180,7 +180,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
 
     private fun deliver(url: NSURL, presentation: EmbeddedAssetPresentation, selected: (EmbeddedAssetLocalSelection) -> Unit) {
         val accessed = url.startAccessingSecurityScopedResource()
-        // Start immediately so cancellation before the first dispatch still releases the security scope.
+        // 使用 UNDISPATCHED 立即启动协程，保证在首次调度前被取消也能释放 security scope。
         resources.scope.launch(start = CoroutineStart.UNDISPATCHED) {
             var pending: PlatformFile? = null
             try {
@@ -234,7 +234,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
 
     suspend fun share(lease: IosMediaLease, name: String) = presentFile(lease, name, previewFile = false)
 
-    /** UIKit gets a named, account-owned copy; the authenticated cache keeps its hashed filename. */
+    /** UIKit 接收带原始可读文件名的账号私有副本；已认证缓存本身仍保留哈希文件名。 */
     private suspend fun presentFile(lease: IosMediaLease, name: String, previewFile: Boolean) {
         // 调用方在下载工作线程进入；UIKit 呈现与本类主线程独占状态必须收敛到 Main。
         withContext(Dispatchers.Main) {
@@ -260,7 +260,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
             try {
                 withContext(Dispatchers.IO) {
                     resources.ensureOpen()
-                    // Do not recreate a retired account's staging parents. Both directory and file are private.
+                    // 不得重建已退役账号的暂存父目录；导出的目录与文件均属当前账号私有。
                     check(directory.mkdir()) { "无法准备附件分享" }
                     lease.file.copyTo(staged.file)
                     currentCoroutineContext().ensureActive()
@@ -271,7 +271,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
                 transferred = true
             } finally {
                 lease.close()
-                // Includes a completed IO copy discarded by prompt cancellation before returning to Main.
+                // 若在切回主线程途中因取消丢弃了已完成的 IO 拷贝，同样在此统一释放暂存文件。
                 if (!transferred) staged.close()
                 if (preparingExport === operation) preparingExport = null
             }
@@ -338,7 +338,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
         retirePresentation(controller)
     }
 
-    /** Completion covers successful exports and cancellation; retirement also dismisses and releases it. */
+    /** 分享面板完成回调覆盖成功导出与用户取消两种路径；面板退役时亦会关闭并释放对应租约。 */
     private fun presentShare(lease: IosMediaLease) {
         val sheet = UIActivityViewController(activityItems = listOf(NSURL.fileURLWithPath(lease.file.path)), applicationActivities = null)
         exportLease = lease
@@ -348,7 +348,7 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
             if (exportLease === lease) exportLease = null
             if (presented === sheet) presented = null
         }
-        // iPad requires an explicit anchor for an activity sheet.
+        // iPad 弹出 UIActivityViewController 必须显式指定 popover 锚点。
         val presenter = iosPresenter()
         sheet.popoverPresentationController?.sourceView = presenter.view
         sheet.popoverPresentationController?.sourceRect = presenter.view.bounds
@@ -373,14 +373,14 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
     }
 }
 
-/** Preserve Unicode names and the extension, excluding path components and platform-invalid characters. */
+/** 保留 Unicode 文件名与扩展名，同时剔除路径分隔符及平台非法字符。 */
 private fun iosExportFileName(name: String): String {
     val clean = name.map { if (it < ' ' || it == '\u007f' || it in "<>:\"/\\|?*") '_' else it }
         .joinToString("").trim().trimEnd('.').ifBlank { "附件" }
     val extension = clean.substringAfterLast('.', "").takeIf { it.isNotEmpty() && it.encodeToByteArray().size <= 16 }
         ?.let { ".$it" }.orEmpty()
     var stem = clean.removeSuffix(extension)
-    // APFS limits a component to 255 UTF-8 bytes; leave margin and never split a surrogate pair.
+    // APFS 单级文件名上限为 255 UTF-8 字节；留出安全余量，且截断时避免拆分 UTF-16 代理对。
     while ((stem + extension).encodeToByteArray().size > 240) {
         val paired = stem.length >= 2 && stem[stem.lastIndex].isLowSurrogate() && stem[stem.lastIndex - 1].isHighSurrogate()
         stem = stem.dropLast(if (paired) 2 else 1)

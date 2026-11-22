@@ -205,12 +205,10 @@ internal fun pemCertificate(pem: String): ByteArray {
 internal fun verifyPinnedServer(trustObject: sec_trust_t, certificateBytes: ByteArray, host: String): Boolean = memScoped {
     val trust = sec_trust_copy_ref(trustObject) ?: return@memScoped false
     try {
-        // The deployment pins one exact self-signed leaf, so pin identity is settled by the
-        // leaf bytes first: Apple's baseline policy rejects pinned leaves whose validity
-        // exceeds 825 days (TcpTlsCertificates issues 3650-day certificates), and no
-        // exemption exists for custom anchors. Pin expiry was already enforced by
-        // pemCertificate at connection setup; the SecTrust evaluation below still guards
-        // every presentation that does not byte-match the pin.
+        // 部署固定锁定单张自签名叶子证书，因此优先按叶子字节比对确认 Pin 身份：
+        // Apple 基准安全策略会拒绝有效期超过 825 天的自签叶子证书（TcpTlsCertificates 签发 3650 天证书），
+        // 且对自定义锚点没有豁免。证书有效期已在建连前由 pemCertificate 校对，
+        // 下方 SecTrust 校验则继续拦截任何与固定 Pin 字节不匹配的证书出示。
         if (pinnedLeafMatches(SecTrustGetCertificateAtIndex(trust, 0)?.let { SecCertificateCopyData(it) },
                 certificateBytes)) {
             return@memScoped true
@@ -237,7 +235,7 @@ internal fun verifyPinnedServer(trustObject: sec_trust_t, certificateBytes: Byte
     }
 }
 
-/** Byte-identical leaf settles pin identity for exact-cert deployments; null never matches. */
+/** 逐字节完全一致即可在精确锁证部署下确认 Pin 身份；空数据恒定不匹配。 */
 internal fun pinnedLeafMatches(presentedData: CFDataRef?, pinned: ByteArray): Boolean {
     if (presentedData == null) return false
     if (CFDataGetLength(presentedData).toInt() != pinned.size) return false
