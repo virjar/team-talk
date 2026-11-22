@@ -117,7 +117,7 @@ internal fun ChatThreadPanel(
                     MessageBubble(
                         msg = msg,
                         isMe = msg.senderUid == myUid,
-                        isContinuation = older != null && older.senderUid == msg.senderUid,
+                        isContinuation = isContinuousMessagePair(olderMsg = older, currentMsg = msg),
                         showSenderName = !isPersonal && msg.senderUid != myUid,
                         showReadIndicator = false,
                         content = content,

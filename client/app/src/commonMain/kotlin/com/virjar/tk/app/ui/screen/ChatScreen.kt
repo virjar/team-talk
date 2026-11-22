@@ -221,7 +221,18 @@ fun ChatPanel(
     val jumpAnchorEligible = messageFocusTarget == null && !restoredMidHistory
     val unreadAnchorServerSeq = if (jumpAnchorEligible) {
         val newestLoadedSeq = messages.firstOrNull()?.serverSeq ?: 0L
-        entryReadSeq?.takeIf { it > 0L && it < newestLoadedSeq }?.plus(1L)
+        entryReadSeq?.takeIf { it > 0L && it < newestLoadedSeq }?.let { readSeq ->
+            val firstUnreadInWindow = messages.lastOrNull { it.serverSeq > readSeq }?.serverSeq
+            val oldestLoadedSeq = messages.lastOrNull { it.serverSeq > 0L }?.serverSeq
+            // 优先定位窗口内大于已读水位的最旧真实消息；仅当未读起点尚未进入窗口时才用 readSeq + 1L 揭载，
+            // 避免 readSeq + 1L 恰好为已删除序列空洞时白翻 30 页历史。
+            when {
+                firstUnreadInWindow != null &&
+                    ((oldestLoadedSeq != null && oldestLoadedSeq <= readSeq + 1L) || (!hasMore && !loadingOlder)) ->
+                    firstUnreadInWindow
+                else -> readSeq + 1L
+            }
+        }
     } else {
         null
     }
@@ -922,6 +933,16 @@ fun ChatPanel(
                             } else if (composerContextStore.revision(chatId) == revision) {
                                 // SQLite 提交期间输入的内容属于下一份草稿。
                                 persistComposerContext()
+                            }
+                            if (messageListState.firstVisibleItemIndex > 0 ||
+                                messageListState.firstVisibleItemScrollOffset > 0
+                            ) {
+                                returnedToLatest = true
+                                viewModel.returnToLatest {
+                                    uiResultHandoff.deliver(Unit, actionAdmission) {
+                                        uiResultScope.launch { messageListState.scrollToItem(0) }
+                                    }
+                                }
                             }
                         }
                     }

@@ -7,8 +7,10 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.number
 import kotlinx.datetime.toLocalDateTime
 
-internal fun localUiDateTime(epochMillis: Long = platformCurrentTimeMillis()): LocalDateTime =
-    Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(TimeZone.currentSystemDefault())
+internal fun localUiDateTime(
+    epochMillis: Long = platformCurrentTimeMillis(),
+    timeZone: TimeZone = TimeZone.currentSystemDefault(),
+): LocalDateTime = Instant.fromEpochMilliseconds(epochMillis).toLocalDateTime(timeZone)
 
 internal fun LocalDateTime.hourMinute(): String = "${hour.twoDigits()}:${minute.twoDigits()}"
 internal fun LocalDateTime.monthDay(separator: Char = '-'): String = "${month.number.twoDigits()}$separator${day.twoDigits()}"

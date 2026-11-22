@@ -181,6 +181,7 @@ internal fun ChatMessageList(
         val showMentionJumpPill = !consumedMentionJump && mentionJumpIndex != null &&
             mentionJumpIndex > viewportOldestIndex && !loading
         val listScope = rememberCoroutineScope()
+        val groupings = remember(messages) { computeChatMessageGroupings(messages) }
         Box(modifier) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = Tk.spacing.md),
@@ -226,53 +227,33 @@ internal fun ChatMessageList(
                     Modifier
                 }
 
-                // 连续消息判断（reverseLayout: index+1 是时间更早的消息）。
-                // 撤回行替换了原气泡且不带头像槽，前一条被撤回时必须重新展示头像，
-                // 否则该发送者的头像组随撤回整段消失。
-                val prevMsg = messages.getOrNull(index + 1)
-                val isContinuation = prevMsg != null
-                    && prevMsg.senderUid == msg.senderUid
-                    && (msg.timestamp - prevMsg.timestamp) < CONTINUATION_THRESHOLD_MS
-                    && (msg.flags and Message.FLAG_REVOKED) == 0
-                    && (prevMsg.flags and Message.FLAG_REVOKED) == 0
-
-                // 时间分隔判断（reverseLayout: index-1 是时间更晚的消息）
-                val nextMsg = messages.getOrNull(index - 1)
-                val showTimeSeparator = nextMsg == null
-                    || (nextMsg.timestamp - msg.timestamp) > TIME_SEPARATOR_THRESHOLD_MS
+                val grouping = groupings[index]
+                val isContinuation = grouping.isContinuation
+                val showTimeSeparator = grouping.showTimeSeparator
 
                 // 私聊我方消息逐条渲染送达/已读状态（单勾双钩），不再只挂最后一条
                 val showReadIndicator = isPersonal && isMe
 
-                // 撤回消息走系统提示（居中裸文字），不走气泡
-                if (msg.flags and Message.FLAG_REVOKED != 0) {
-                    androidx.compose.foundation.layout.Row(
-                        modifier = focusModifier.then(selectModifier).fillMaxWidth().padding(vertical = Tk.spacing.xs),
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        Text(
-                            "${if (isMe) "你" else resolveDisplayName(msg.senderUid, content.resolveSender)} 撤回了一条消息",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Tk.colors.metaText,
-                        )
+                Column {
+                    // 时间分隔放在撤回与普通气泡共同的外层顶部，避免时间段首条被撤回时整块时间提示消失。
+                    if (showTimeSeparator) {
+                        ChatTimeSeparator(msg.timestamp)
                     }
-                } else {
-                    var reactionPickerVisible by remember(msg.clientMsgId) { mutableStateOf(false) }
-                    Column {
-                        // 时间分隔：裸文字（飞书范式，无胶囊底）
-                        if (showTimeSeparator) {
-                            androidx.compose.foundation.layout.Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = Tk.spacing.sm),
-                                horizontalArrangement = Arrangement.Center,
-                            ) {
-                                Text(
-                                    formatChatTime(msg.timestamp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Tk.colors.metaText,
-                                )
-                            }
-                        }
 
+                    // 撤回消息走系统提示（居中裸文字），不走气泡
+                    if (msg.flags and Message.FLAG_REVOKED != 0) {
+                        androidx.compose.foundation.layout.Row(
+                            modifier = focusModifier.then(selectModifier).fillMaxWidth().padding(vertical = Tk.spacing.xs),
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            Text(
+                                "${if (isMe) "你" else resolveDisplayName(msg.senderUid, content.resolveSender)} 撤回了一条消息",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Tk.colors.metaText,
+                            )
+                        }
+                    } else {
+                        var reactionPickerVisible by remember(msg.clientMsgId) { mutableStateOf(false) }
                         MessageBubble(
                             msg = msg,
                             isMe = isMe,
@@ -640,8 +621,17 @@ internal fun canEditAndResendFailedMessage(
     message.body.isMarkdownTextBody() &&
     failureCode?.allowsFreshClientMsgIdReplacement == true
 
-/** 连续消息阈值：同一人 5 分钟内的消息视为连续，隐藏头像和昵称 */
-private const val CONTINUATION_THRESHOLD_MS = 5 * 60 * 1000L
-
-/** 时间分隔阈值：消息间隔超过 5 分钟显示时间标签 */
-private const val TIME_SEPARATOR_THRESHOLD_MS = 5 * 60 * 1000L
+/** 消息流时间分隔提示：居中裸文字，无胶囊底。 */
+@Composable
+private fun ChatTimeSeparator(timestamp: Long) {
+    androidx.compose.foundation.layout.Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = Tk.spacing.sm),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            formatChatTime(timestamp),
+            style = MaterialTheme.typography.labelSmall,
+            color = Tk.colors.metaText,
+        )
+    }
+}
