@@ -6,6 +6,24 @@ set -eu
 
 REPO_ROOT="${CI_PRIMARY_REPOSITORY_PATH:?Xcode Cloud repository path missing}"
 
+# 可选的私有部署与本地签名材料注入：由 Xcode Cloud 受保护环境变量按 base64 提供，
+# 不改动受 Git 跟踪的公版配置，避免私有部署参数进入公共仓库。
+materialize_base64_file() {
+    encoded_value="$1"
+    target_path="$2"
+    file_mode="$3"
+    if [ -n "$encoded_value" ] && [ ! -e "$target_path" ]; then
+        mkdir -p "$(dirname "$target_path")"
+        printf '%s' "$encoded_value" | base64 -d > "$target_path"
+        chmod "$file_mode" "$target_path"
+        echo "ci_post_clone: materialized $(basename "$target_path")"
+    fi
+}
+
+materialize_base64_file "${TEAMTALK_DEPLOYMENT_LOCAL_KT_BASE64:-}" "$REPO_ROOT/buildSrc/deployment-local/Deployment.kt" 600
+materialize_base64_file "${TEAMTALK_TCP_TLS_CERT_PEM_BASE64:-}" "$REPO_ROOT/buildSrc/deployment-local/tcp-tls/certificate.pem" 644
+materialize_base64_file "${TEAMTALK_IOS_SIGNING_XCCONFIG_BASE64:-}" "$REPO_ROOT/client/ios/Config/Signing.local.xcconfig" 600
+
 # buildSrc 使用 JDK 21 API（如 HttpRequest.BodyPublishers.concat），低版本 JVM 编译失败。
 JDK21="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
 if [ -z "$JDK21" ] && command -v brew >/dev/null 2>&1; then

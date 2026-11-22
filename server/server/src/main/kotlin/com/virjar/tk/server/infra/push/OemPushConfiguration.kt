@@ -130,6 +130,14 @@ internal class OemPushNotification(
     val chatId: String,
     val jobKey: String,
     val registeredAt: Long = 0,
+    /** 本次选中投递的消息序号（供 APNs 多未读会话逐条消费）。 */
+    val deliveredSeq: Long = 0L,
+    /** APNs 通知标题（默认在 SENDER_ONLY 下为对方名称或群名称）。 */
+    val alertTitle: String? = null,
+    /** APNs 通知正文（默认在 SENDER_ONLY 下为发送者与消息类型，不含正文）。 */
+    val alertBody: String? = null,
+    /** APNs 应用图标角标数字；null 表示不修改角标。 */
+    val badgeCount: Int? = null,
 )
 
 internal data class OemPushDeliveryResult(

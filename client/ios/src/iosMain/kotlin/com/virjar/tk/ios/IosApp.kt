@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import platform.UIKit.*
+import platform.UserNotifications.UNNotification
+import platform.UserNotifications.UNUserNotificationCenter
 
 fun MainViewController(): UIViewController = ComposeUIViewController {
     // Compose 的 isSystemInDarkTheme 在纯 UIKit 宿主中不可靠：系统深色事实源
@@ -136,8 +138,43 @@ object IosApplicationRuntime {
         val current = sessionUi?.takeIf { it.session === session } ?: return@onIosMain
         sessionUi = null
         notification.value = null
+        if (reason == SessionEndReason.USER_LOGOUT || reason == SessionEndReason.AUTH_REVOKED) {
+            clearAllIosDeliveredNotifications()
+        }
         current.close(reason)
     }
+}
+
+/** 同步系统应用图标未读角标（iOS 16+ 使用 UNUserNotificationCenter.setBadgeCount）。 */
+internal fun syncIosApplicationBadgeCount(unreadTotal: Int) {
+    val target = unreadTotal.coerceAtLeast(0).toLong()
+    UNUserNotificationCenter.currentNotificationCenter().setBadgeCount(target) { _ -> }
+}
+
+/** 从系统通知中心移除指定会话已送达的横幅通知。 */
+internal fun removeIosDeliveredNotificationsForChats(chatIds: Set<String>) {
+    if (chatIds.isEmpty()) return
+    val center = UNUserNotificationCenter.currentNotificationCenter()
+    center.getDeliveredNotificationsWithCompletionHandler { delivered ->
+        val identifiers = delivered.orEmpty().mapNotNull { entry ->
+            val notification = entry as? UNNotification ?: return@mapNotNull null
+            val content = notification.request.content
+            val targetChatId = content.threadIdentifier.ifBlank {
+                content.userInfo["chatId"] as? String ?: ""
+            }
+            if (targetChatId in chatIds) notification.request.identifier else null
+        }
+        if (identifiers.isNotEmpty()) {
+            center.removeDeliveredNotificationsWithIdentifiers(identifiers)
+        }
+    }
+}
+
+/** 清空系统通知中心所有已送达通知并将应用图标角标归零。 */
+internal fun clearAllIosDeliveredNotifications() {
+    val center = UNUserNotificationCenter.currentNotificationCenter()
+    center.removeAllDeliveredNotifications()
+    center.setBadgeCount(0L) { _ -> }
 }
 
 @Composable
@@ -190,8 +227,11 @@ private fun IosAppRoot() {
     val session = auth.session
     val composeScope = rememberCoroutineScope()
     when {
-        auth.accountBanState != null -> AccountBanSurface(checkNotNull(auth.accountBanState), auth.dismissAccountBan,
-            { showIosError("本地清理尚未完成，请从应用切换器关闭并重新打开应用") }, exitActionLabel = "查看重新打开方式")
+        auth.accountBanState != null -> {
+            LaunchedEffect(Unit) { clearAllIosDeliveredNotifications() }
+            AccountBanSurface(checkNotNull(auth.accountBanState), auth.dismissAccountBan,
+                { showIosError("本地清理尚未完成，请从应用切换器关闭并重新打开应用") }, exitActionLabel = "查看重新打开方式")
+        }
         auth.requiresProtocolUpgrade -> Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("当前版本不支持服务器协议，请安装组织提供的新版本")

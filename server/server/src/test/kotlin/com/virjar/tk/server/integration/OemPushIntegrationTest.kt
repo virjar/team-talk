@@ -393,6 +393,68 @@ class OemPushIntegrationTest {
         assertTrue(rows().isEmpty())
     }
 
+    @Test fun `APNs resolves remark group name mention and preserves concurrent pending chats`() = runTest {
+        val recipient = user(deviceFlag = 3)
+        val sender = ctx.registerUser()
+        val peer = ctx.registerUser()
+        val friendChat = ctx.chatService.createPersonalChat(sender, recipient.principal.uid)
+        val groupChat = ctx.chatService.createGroup(id(), "核心研发群", null, peer, listOf(recipient.principal.uid))
+        transaction(ctx.database) {
+            Friends.insert {
+                it[uid] = recipient.principal.uid
+                it[friendUid] = sender
+                it[remark] = "张工备注"
+                it[status] = com.virjar.tk.protocol.model.Contact.STATUS_NORMAL
+                it[version] = 1L
+                it[createdAt] = now
+            }
+        }
+        val delivered = mutableListOf<OemPushNotification>()
+        val service = apnsService { notification ->
+            delivered += notification
+            OemPushDeliveryResult(true)
+        }
+        assertTrue(
+            service.registerApns(
+                recipient.principal.uid,
+                recipient.principal.deviceId,
+                recipient.principal.deviceCredentialEpoch,
+                "cd".repeat(32),
+                PACKAGE,
+                "production",
+                FP,
+            ),
+        )
+        send(sender, friendChat.chatId)
+        ctx.messageService.sendMessage(
+            peer,
+            Message(
+                groupChat.chatId,
+                id(),
+                senderUid = peer,
+                messageType = MessageType.IMAGE.code,
+                timestamp = System.currentTimeMillis() + 100L,
+                body = com.virjar.tk.protocol.body.ImageBody(
+                    com.virjar.tk.protocol.model.Attachment("img/p.png", "p.png", "image/png", 128L),
+                ),
+            ),
+        )
+        dispatch(service, recipient.principal.uid)
+        assertEquals(1, service.drainDue())
+        assertEquals(1, service.drainDue())
+        assertEquals(0, service.drainDue())
+        assertEquals(2, delivered.size)
+        val byChat = delivered.associateBy { it.chatId }
+        val friendNotif = byChat.getValue(friendChat.chatId)
+        val groupNotif = byChat.getValue(groupChat.chatId)
+        assertEquals("张工备注", friendNotif.alertTitle)
+        assertEquals("发来一条消息", friendNotif.alertBody)
+        assertEquals(2, friendNotif.badgeCount)
+        assertEquals("核心研发群", groupNotif.alertTitle)
+        assertTrue(groupNotif.alertBody.orEmpty().endsWith("发来一张[图片]"))
+        assertNotEquals(friendNotif.jobKey, groupNotif.jobKey)
+    }
+
     private fun apnsService(sendApns: suspend (OemPushNotification) -> OemPushDeliveryResult = { OemPushDeliveryResult(true) }) =
         OemPushNotifications(ctx.database, OemPushConfiguration(apns = apnsFixtureConfiguration(PACKAGE)),
             "fixture-dataset", ctx.messageStore, { now }, sendApns = sendApns,

@@ -49,11 +49,14 @@ internal suspend fun OemPushSender.sendApnsPush(
     val cache = apnsProviderToken()
     val nowSeconds = clock() / 1_000
     val token = cache.get(nowSeconds)
+    val alertTitle = notification.alertTitle ?: configuration.title
+    val alertBody = notification.alertBody ?: OEM_PUSH_CONTENT
     val payload = buildJsonObject {
         putJsonObject("aps") {
-            putJsonObject("alert") { put("title", configuration.title); put("body", OEM_PUSH_CONTENT) }
+            putJsonObject("alert") { put("title", alertTitle); put("body", alertBody) }
             put("sound", "default")
             put("thread-id", notification.chatId)
+            notification.badgeCount?.takeIf { it >= 0 }?.let { put("badge", it) }
         }
         put("deploymentFingerprint", notification.deploymentFingerprint)
         put("datasetId", notification.datasetId)
