@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -31,11 +32,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -143,14 +151,39 @@ private fun MediaGalleryContent(
         initialPage = initialIndex.coerceIn(0, items.size - 1),
     ) { items.size }
     val scope = rememberCoroutineScope()
-    // 当前页图片的手动旋转（0/90/180/270，仅图片；切页复位）。
-    var imageRotation by remember { mutableIntStateOf(0) }
-    LaunchedEffect(pagerState.currentPage) { imageRotation = 0 }
+    val galleryFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { galleryFocusRequester.requestFocus() } }
+    // 按页独立记录手动旋转角度（0/90/180/270），避免切页后丢失或错乱到相邻页。
+    val pageRotations = remember(items) { mutableStateMapOf<Int, Int>() }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.95f))
+            .focusRequester(galleryFocusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.DirectionLeft -> {
+                        if (pagerState.currentPage > 0) {
+                            scope.launch { pagerState.scrollToPage(pagerState.currentPage - 1) }
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Key.DirectionRight -> {
+                        if (pagerState.currentPage < items.lastIndex) {
+                            scope.launch { pagerState.scrollToPage(pagerState.currentPage + 1) }
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    else -> false
+                }
+            }
             .testTag("media.gallery.root"),
     ) {
         // ── 主体：水平滑动页 ──
@@ -187,7 +220,7 @@ private fun MediaGalleryContent(
                         else -> ZoomableImagePage(
                             attachment = item.attachment,
                             imageRenderer = imageRenderer,
-                            rotationDegrees = imageRotation,
+                            rotationDegrees = pageRotations[page] ?: 0,
                             onSingleTap = onDismiss,
                             modifier = Modifier
                                 .fillMaxSize()
@@ -251,7 +284,10 @@ private fun MediaGalleryContent(
                 // 图片页提供手动旋转；视频自带方向元数据，不提供查看期旋转。
                 if (items[pagerState.currentPage].type == GalleryMediaType.IMAGE) {
                     IconButton(
-                        onClick = { imageRotation = (imageRotation + 90) % 360 },
+                        onClick = {
+                            val current = pageRotations[pagerState.currentPage] ?: 0
+                            pageRotations[pagerState.currentPage] = (current + 90) % 360
+                        },
                         modifier = Modifier.testTag("media.gallery.rotate"),
                     ) {
                         Icon(
@@ -440,12 +476,15 @@ private fun ZoomableImagePage(
                 }
                 .pointerInput(attachment.path) {
                     detectTapGestures(
-                        onTap = { onSingleTap() },
-                        onDoubleTap = {
+                        onTap = {
+                            // 放大查看细节时不响应单击关闭，避免误触退出画廊。
+                            if (scale <= 1.05f) onSingleTap()
+                        },
+                        onDoubleTap = { tapOffset ->
                             if (scale > 1.01f) {
                                 scale = 1f; offset = Offset.Zero
                             } else {
-                                scale = 2.5f
+                                applyZoomAtAnchor(2.5f, tapOffset)
                             }
                         },
                     )

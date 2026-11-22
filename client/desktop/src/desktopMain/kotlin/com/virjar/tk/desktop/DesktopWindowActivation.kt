@@ -4,14 +4,17 @@ import java.awt.Desktop
 import java.awt.Frame
 import java.awt.Window
 import java.awt.desktop.AppReopenedListener
+import java.awt.desktop.SystemSleepEvent
+import java.awt.desktop.SystemSleepListener
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.io.Closeable
 
-/** 主窗口绑定 macOS Dock 的 reopen 事件；监听器随窗口销毁，不能跨登录会话保留。 */
+/** 主窗口绑定 macOS Dock reopen 与系统唤醒事件；监听器随窗口销毁，不能跨登录会话保留。 */
 internal fun installDesktopWindowActivation(
     window: Window,
     onReopen: () -> Unit,
+    onWake: () -> Unit = {},
     onShown: () -> Unit,
 ): Closeable {
     // Compose 延迟发布 visible。等 AWT 确认真正显示后再请求焦点，避免激活仍隐藏的窗口。
@@ -25,7 +28,16 @@ internal fun installDesktopWindowActivation(
     val reopenListener = AppReopenedListener { onReopen() }
     reopenDesktop?.addAppEventListener(reopenListener)
 
+    val sleepDesktop = desktop?.takeIf { it.isSupported(Desktop.Action.APP_EVENT_SYSTEM_SLEEP) }
+    val sleepListener = object : SystemSleepListener {
+        override fun systemAboutToSleep(e: SystemSleepEvent) = Unit
+
+        override fun systemAwoke(e: SystemSleepEvent) = onWake()
+    }
+    sleepDesktop?.addAppEventListener(sleepListener)
+
     return Closeable {
+        sleepDesktop?.removeAppEventListener(sleepListener)
         reopenDesktop?.removeAppEventListener(reopenListener)
         window.removeComponentListener(shownListener)
     }

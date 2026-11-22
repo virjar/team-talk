@@ -30,6 +30,18 @@ object PinyinInitials {
         return '#'
     }
 
+    /** 取名称各字拼音首字母串（字母转小写、数字保留、汉字取常用读音首字母、符号跳过），用于搜索匹配。 */
+    fun initialsOf(name: String): String = buildString {
+        name.forEach { ch ->
+            when {
+                ch in 'a'..'z' -> append(ch)
+                ch in 'A'..'Z' -> append(ch.lowercaseChar())
+                ch in '0'..'9' -> append(ch)
+                else -> initialOfChar(ch)?.takeIf { it in 'A'..'Z' }?.let { append(it.lowercaseChar()) }
+            }
+        }
+    }
+
     fun initialOfChar(ch: Char): Char? {
         if (ch in 'a'..'z') return ch.uppercaseChar()
         if (ch in 'A'..'Z') return ch

@@ -62,6 +62,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         appDataStateHolder.setNotificationForeground(true)
+        appDataStateHolder.onAppForegrounded()
         clearAndroidMessageNotifications(this)
         clearAndroidTaskNotifications(this)
         (application as TeamTalkApp).oemPush.notificationSettingsChanged()

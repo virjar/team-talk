@@ -120,7 +120,8 @@ internal class FakeOutgoingCacheSupport(
 
     fun peek(): OutgoingMessage? = cacheUseGate.use { outgoingStore.peek() }
 
-    fun claim(now: Long): OutgoingMessage? = cacheUseGate.use { outgoingStore.claim(now) }
+    fun claim(now: Long, ignoreBackoff: Boolean = false): OutgoingMessage? =
+        cacheUseGate.use { outgoingStore.claim(now, ignoreBackoff) }
 
     fun retry(
         localOrdinal: Long,

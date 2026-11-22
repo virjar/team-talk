@@ -419,6 +419,41 @@ class SendQueueTest {
         queue.close()
     }
 
+    @Test
+    fun `reconnecting to authenticated bypasses retry backoff sleep immediately`() = runTest {
+        val state = MutableStateFlow(ConnectionState.AUTHENTICATED)
+        var attempts = 0
+        val cache = FakeLocalCache()
+        val queue = SendQueue(
+            ownerUid = "u1",
+            localCache = cache,
+            connectionState = state,
+            sender = MessageSender { msg ->
+                attempts += 1
+                if (attempts == 1) {
+                    throw TransportUnavailableException("offline")
+                }
+                MessageAckPayload(msg.chatId, msg.clientMsgId, 42L, 0)
+            },
+            scope = backgroundScope,
+            clock = { testScheduler.currentTime },
+        )
+
+        queue.enqueue(message("c1", "wake-retry", "u1"))
+        runCurrent()
+        assertEquals(1, attempts)
+
+        // 先失连进入指数退避（至少 500ms），不推进虚拟时钟，仅恢复 AUTHENTICATED 应立即补发成功。
+        state.value = ConnectionState.DISCONNECTED
+        runCurrent()
+        state.value = ConnectionState.AUTHENTICATED
+        runCurrent()
+
+        assertEquals(2, attempts)
+        assertEquals(OutgoingMessageState.SUCCESS, cache.getOutgoingMessage("c1", "wake-retry")?.state)
+        queue.close()
+    }
+
     private fun message(chatId: String, clientMsgId: String, senderUid: String) = Message(
         chatId = chatId,
         clientMsgId = clientMsgId,

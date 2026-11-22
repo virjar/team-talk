@@ -108,6 +108,29 @@ class TransportConnectionOwnerTest {
         assertFalse(owner.execute { error("destroyed owner ran work") })
     }
 
+    @Test
+    fun `reconnectNowIfDisconnected cancels pending timer and connects immediately`() {
+        val backend = ControlledTransportBackend()
+        val owner = owner(backend, ended = { true })
+        owner.connect("localhost", 5100)
+        backend.drain()
+        assertEquals(1, backend.channels.size)
+
+        backend.channels.single().close()
+        backend.drain()
+        assertEquals(ConnectionState.DISCONNECTED, owner.state.value)
+        assertEquals(1, backend.timers.size)
+
+        owner.reconnectNowIfDisconnected()
+        backend.drain()
+        assertTrue(backend.timers.isEmpty(), "立即重连应取消原退避定时器")
+        assertEquals(2, backend.channels.size)
+        assertEquals(ConnectionState.CONNECTING, owner.state.value)
+
+        owner.destroy()
+        backend.drain()
+    }
+
     private fun owner(
         backend: ControlledTransportBackend,
         negotiate: (Long) -> Boolean = { true },

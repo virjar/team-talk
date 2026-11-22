@@ -136,9 +136,9 @@ internal class FakeOutgoingMessageStore(
         rows.values.mapTo(mutableSetOf()) { it.message.chatId to it.message.clientMsgId }
     }
 
-    fun claim(now: Long): OutgoingMessage? = synchronized(lock) {
+    fun claim(now: Long, ignoreBackoff: Boolean = false): OutgoingMessage? = synchronized(lock) {
         val head = rows.values.firstOrNull { it.isActive() } ?: return@synchronized null
-        if (head.nextAttemptAt > now) return@synchronized null
+        if (!ignoreBackoff && head.nextAttemptAt > now) return@synchronized null
         head.copy(
             state = OutgoingMessageState.IN_FLIGHT,
             attemptCount = head.attemptCount + 1L,

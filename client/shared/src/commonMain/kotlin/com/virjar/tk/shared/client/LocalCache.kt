@@ -505,6 +505,10 @@ interface LocalCache : LocalDocumentProjection {
     /** 原子认领最旧的就绪行。未来的队头行刻意阻塞更新的行。 */
     fun claimNextOutgoingMessage(now: Long): OutgoingMessage?
 
+    /** 原子认领最旧的待发消息；[ignoreBackoff] 为 true 时跳过重试退避时间检查（用于重连恢复后瞬时补发）。 */
+    fun claimNextOutgoingMessage(now: Long, ignoreBackoff: Boolean): OutgoingMessage? =
+        claimNextOutgoingMessage(now)
+
     /** 持久化一次可恢复失败与其下一次符合条件的尝试。 */
     fun markOutgoingMessageRetry(
         localOrdinal: Long,

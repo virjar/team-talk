@@ -78,6 +78,7 @@ class SendQueue(
     private val ackTimeoutMs: Long = 30_000L,
 ) {
     private val wake = Channel<Unit>(Channel.CONFLATED)
+    private val reconnectBypassBackoff = PlatformAtomicBoolean(false)
     private val scope = CoroutineScope(
         scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]),
     )
@@ -103,9 +104,14 @@ class SendQueue(
             localCache.recoverOutgoingState(clock())
             refreshSnapshot()
         }
+        var previousConnection = connectionState.value
         connectionState
-            .onEach {
-                if (it == ConnectionState.AUTHENTICATED) {
+            .onEach { current ->
+                val recoveredAuth = previousConnection != ConnectionState.AUTHENTICATED &&
+                    current == ConnectionState.AUTHENTICATED
+                previousConnection = current
+                if (current == ConnectionState.AUTHENTICATED) {
+                    if (recoveredAuth) reconnectBypassBackoff.set(true)
                     callbackGate.runIfActive(callbackLease) { wake.trySend(Unit) }
                 }
             }
@@ -226,13 +232,15 @@ class SendQueue(
                 continue
             }
             val now = clock()
-            if (checkNotNull(head).nextAttemptAt > now) {
-                delay((checkNotNull(head).nextAttemptAt - now).coerceAtMost(MAX_RETRY_DELAY_MS))
+            val remainingMs = (checkNotNull(head).nextAttemptAt - now).coerceAtMost(MAX_RETRY_DELAY_MS)
+            if (remainingMs > 0L && !reconnectBypassBackoff.get()) {
+                withTimeoutOrNull(remainingMs) { wake.receive() }
                 continue
             }
+            val ignoreBackoff = reconnectBypassBackoff.compareAndSet(true, false)
             var claimed: OutgoingMessage? = null
             if (!callbackGate.runIfActive(callbackLease) {
-                    claimed = localCache.claimNextOutgoingMessage(clock())
+                    claimed = localCache.claimNextOutgoingMessage(clock(), ignoreBackoff)
                     if (claimed != null) refreshSnapshot()
                 }
             ) return

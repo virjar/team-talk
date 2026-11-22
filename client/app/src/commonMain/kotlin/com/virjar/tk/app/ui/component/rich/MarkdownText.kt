@@ -2,7 +2,9 @@ package com.virjar.tk.app.ui.component.rich
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -260,6 +262,14 @@ private fun CodeFenceBox(
     contentColor: Color,
     modifier: Modifier = Modifier,
 ) {
+    val copyText = com.virjar.tk.app.ui.platform.rememberClipboardTextWriter()
+    var copiedHint by remember(block.code) { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(copiedHint) {
+        if (copiedHint) {
+            kotlinx.coroutines.delay(1_500L)
+            copiedHint = false
+        }
+    }
     Box(
         modifier
             .fillMaxWidth()
@@ -267,19 +277,36 @@ private fun CodeFenceBox(
             .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm),
     ) {
         Column {
-            if (block.lang != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    block.lang,
+                    block.lang.orEmpty(),
                     style = MaterialTheme.typography.labelSmall,
                     color = contentColor.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(bottom = 2.dp),
+                )
+                Text(
+                    text = if (copiedHint) "已复制" else "复制",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (copiedHint) MaterialTheme.colorScheme.primary else contentColor.copy(alpha = 0.72f),
+                    modifier = Modifier
+                        .clickable {
+                            copyText(block.code)
+                            copiedHint = true
+                        }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
                 )
             }
-            Text(
-                block.code,
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, lineHeight = 18.sp),
-                color = contentColor,
-            )
+            Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                Text(
+                    block.code,
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, lineHeight = 18.sp),
+                    color = contentColor,
+                    softWrap = false,
+                )
+            }
         }
     }
 }

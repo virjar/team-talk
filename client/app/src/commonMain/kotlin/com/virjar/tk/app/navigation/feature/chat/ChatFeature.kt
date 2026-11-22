@@ -1,6 +1,7 @@
 package com.virjar.tk.app.navigation.feature.chat
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -172,24 +173,47 @@ class ChatFeature(
 
     /** 系统账号会话（内测反馈 T058）是否已在本会话拉起。 */
     private var systemChatsEnsured = false
+    private var systemChatsJob: Job? = null
 
     /**
      * 登录后拉起固定系统账号会话（文件传输助手/服务号）：幂等 RPC，已存在时不产生事件。
-     * 失败静默（网络/旧服务端 minor 2 协商下会被本地拒绝），下次登录重试。
+     * 离线或瞬态失败静默记录日志，并在连接恢复至 AUTHENTICATED 时自动重试，不弹窗打扰。
      */
     fun ensureSystemChats() {
-        if (systemChatsEnsured) return
-        systemChatsEnsured = true
+        if (systemChatsEnsured || systemChatsJob?.isActive == true) return
         destroyGate.runIfOpen {
-            scope.launch {
-                for (systemUid in listOf("sys_assistant", "sys_service")) {
-                    runCatching { session.chatRepo.getOrCreateSystemChat(systemUid) }
-                        .onFailure { failure ->
-                            if (failure !is kotlinx.coroutines.CancellationException) {
-                                reportError(failure, "拉起系统会话失败")
-                            }
+            systemChatsJob = scope.launch {
+                val systemUids = listOf("sys_assistant", "sys_service")
+                suspend fun attemptAll(): Boolean {
+                    var allSucceeded = true
+                    for (systemUid in systemUids) {
+                        val outcome = try {
+                            session.chatRepo.getOrCreateSystemChat(systemUid)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            allSucceeded = false
+                            session.diagnosticLogger("ChatFeature").trace(
+                                "ensureSystemChats deferred for $systemUid: ${failure::class.simpleName}",
+                            )
+                            continue
                         }
+                        if (outcome is com.virjar.tk.shared.Outcome.Failure) {
+                            allSucceeded = false
+                            session.diagnosticLogger("ChatFeature").trace(
+                                "ensureSystemChats failed for $systemUid: ${outcome.error::class.simpleName}",
+                            )
+                        }
+                    }
+                    return allSucceeded
                 }
+                if (!attemptAll()) {
+                    // 首次处于离线或连接未就绪时，待连接认证成功后自动补拉一次系统会话。
+                    session.connectionState.first { state ->
+                        state == com.virjar.tk.shared.client.ConnectionState.AUTHENTICATED && attemptAll()
+                    }
+                }
+                systemChatsEnsured = true
             }
         }
     }

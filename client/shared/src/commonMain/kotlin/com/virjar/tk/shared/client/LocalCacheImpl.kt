@@ -632,7 +632,10 @@ class LocalCacheImpl internal constructor(
 
     override fun peekNextOutgoingMessage(): OutgoingMessage? = messages.peekNextOutgoingMessage()
     override fun claimNextOutgoingMessage(now: Long): OutgoingMessage? =
-        messages.claimNextOutgoingMessage(now)
+        messages.claimNextOutgoingMessage(now, ignoreBackoff = false)
+
+    override fun claimNextOutgoingMessage(now: Long, ignoreBackoff: Boolean): OutgoingMessage? =
+        messages.claimNextOutgoingMessage(now, ignoreBackoff = ignoreBackoff)
 
     override fun markOutgoingMessageRetry(
         localOrdinal: Long,

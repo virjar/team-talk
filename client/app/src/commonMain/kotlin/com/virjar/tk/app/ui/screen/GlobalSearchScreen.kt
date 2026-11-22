@@ -39,6 +39,7 @@ import com.virjar.tk.app.navigation.feature.ContentSearchSection
 import com.virjar.tk.shared.client.ContentSearchInvalidation
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
 import com.virjar.tk.app.ui.component.ChatAvatar
+import com.virjar.tk.app.ui.component.PinyinInitials
 import com.virjar.tk.app.ui.component.ScreenHeader
 import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.app.ui.component.MessagePreview
@@ -56,6 +57,17 @@ enum class GlobalSearchScope(val label: String) {
     SERVICES("服务"),
 }
 
+private fun matchesNameOrPinyinInitials(text: String, term: String): Boolean {
+    if (text.contains(term, ignoreCase = true)) return true
+    if (term.all { it.code < 128 }) {
+        val normalized = term.trim().lowercase()
+        if (normalized.isNotEmpty() && PinyinInitials.initialsOf(text).contains(normalized)) {
+            return true
+        }
+    }
+    return false
+}
+
 internal fun filterConversationsForSearch(
     conversations: List<Conversation>,
     query: String,
@@ -71,8 +83,10 @@ internal fun filterConversationsForSearch(
         } else {
             listOfNotNull(conversation.chatName)
         }
-        (identityTerms + listOfNotNull(conversation.peerUid?.let(peerRemarks::get), conversation.lastMessage, conversation.chatId))
-            .any { it.contains(term, ignoreCase = true) }
+        val remark = conversation.peerUid?.let(peerRemarks::get)
+        // 禁止用内部 UUID chatId 匹配搜索词，避免输入 "a"/"12" 等短词误命中无关会话；名称支持拼音首字母匹配。
+        (identityTerms + listOfNotNull(remark)).any { matchesNameOrPinyinInitials(it, term) } ||
+            conversation.lastMessage?.contains(term, ignoreCase = true) == true
     }
 }
 
@@ -80,8 +94,9 @@ internal fun filterContactsForSearch(contacts: List<Contact>, query: String): Li
     val term = query.trim()
     if (term.isBlank()) return emptyList()
     return contacts.filter { contact ->
-        listOfNotNull(contact.remark, contact.user?.name, contact.user?.username, contact.user?.phone)
-            .any { it.contains(term, ignoreCase = true) }
+        listOfNotNull(contact.remark, contact.user?.name, contact.user?.username)
+            .any { matchesNameOrPinyinInitials(it, term) } ||
+            contact.user?.phone?.contains(term, ignoreCase = true) == true
     }.mapNotNull { it.user }
 }
 

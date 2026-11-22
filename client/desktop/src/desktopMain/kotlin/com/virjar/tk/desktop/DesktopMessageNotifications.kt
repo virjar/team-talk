@@ -26,12 +26,13 @@ internal fun DesktopMessageNotifications(
     val presentation by rememberUpdatedState(windowActive to connectionState)
     LaunchedEffect(localCache) {
         while (true) {
-            val (active, connection) = presentation
-            if (!active && connection == ConnectionState.AUTHENTICATED && AppTray.isActive) {
+            val (_, connection) = presentation
+            // "稍后提醒"是用户主动设定的定点闹钟，即使桌面主窗口正在前台使用也必须按时触发。
+            if (connection == ConnectionState.AUTHENTICATED && AppTray.isActive) {
                 val due = withContext(Dispatchers.IO) { localCache.dueMessageReminders(System.currentTimeMillis()) }
                 for (reminder in due) {
-                    val (stillActive, stillConnected) = presentation
-                    if (stillActive || stillConnected != ConnectionState.AUTHENTICATED || !AppTray.isActive) break
+                    val (_, stillConnected) = presentation
+                    if (stillConnected != ConnectionState.AUTHENTICATED || !AppTray.isActive) break
                     AppLog.trace("Notification", "posting message reminder chatId=${reminder.chatId}")
                     AppTray.showNotification("消息提醒", reminder.snippet)
                     withContext(Dispatchers.IO) {

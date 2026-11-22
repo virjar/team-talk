@@ -181,6 +181,8 @@ internal fun ChatMessageList(
         val showMentionJumpPill = !consumedMentionJump && mentionJumpIndex != null &&
             mentionJumpIndex > viewportOldestIndex && !loading
         val listScope = rememberCoroutineScope()
+        // 剪贴板协程作用域提升到消息列表层：菜单点击后立即关闭弹窗，不得因 DropdownMenu 退出组合而中断异步写入。
+        val copyText = rememberClipboardTextWriter()
         Box(modifier) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = Tk.spacing.md),
@@ -302,6 +304,7 @@ internal fun ChatMessageList(
                             menuItems = messageMenuItems(
                                 msg = msg,
                                 isMe = isMe,
+                                copyText = copyText,
                                 outgoingFailureCode = outgoingFailureCodes[msg.clientMsgId],
                                 voiceMode = voiceMode,
                                 editingSessionActive = editingSessionActive,
@@ -319,6 +322,7 @@ internal fun ChatMessageList(
                                     reactionPickerVisible = true
                                 },
                                 onSaveMessage = onSaveMessage?.takeIf { !isSavedChat },
+                                isPersonal = isPersonal,
                                 isSavedChat = isSavedChat,
                                 onRemindLater = onRemindLater,
                                 onShowReadStates = onShowReadStates,
@@ -452,6 +456,7 @@ private fun messageCopiedTextFallback(msg: Message): String =
 private fun messageMenuItems(
     msg: Message,
     isMe: Boolean,
+    copyText: (String) -> Unit,
     outgoingFailureCode: OutgoingFailureCode?,
     voiceMode: Boolean,
     editingSessionActive: Boolean,
@@ -466,8 +471,9 @@ private fun messageMenuItems(
     onToggleReaction: (serverSeq: Long, emoji: String) -> Unit,
     onOpenReactionPicker: () -> Unit,
     onSaveMessage: ((Message) -> Unit)?,
+    isPersonal: Boolean,
     isSavedChat: Boolean,
-    /** 稍后提醒（MSG-01/F4，纯本地）：null 隐藏入口（语音/编辑态不提供）。 */
+    /** 稍后提醒（MSG-01/F4，纯本地）：null 隐藏入口（语音/编辑态或未接平台提醒不提供）。 */
     onRemindLater: ((Message, remindAt: Long) -> Unit)? = null,
     /** 已读情况（MSG-01/F5）：仅发送者与群管理员/群主可见；null 隐藏。 */
     onShowReadStates: ((Message) -> Unit)? = null,
@@ -475,7 +481,6 @@ private fun messageMenuItems(
     /** 多选入口（MSG-01/F6）：仅已确认消息。 */
     onStartSelection: ((Message) -> Unit)? = null,
 ): @Composable ColumnScope.() -> Unit = {
-    val copyText = rememberClipboardTextWriter()
     val fileDownloads = LocalFileDownloads.current
     if (msg.serverSeq > 0L) {
         // 快捷回应栏：已确认消息直接从菜单选择 emoji；chips 点击负责取消
@@ -585,9 +590,13 @@ private fun messageMenuItems(
             modifier = Modifier.testTag("chat.failed.discard.${msg.clientMsgId.take(12)}"),
         )
     }
-    // 撤回时限是防扰动的私聊/群聊 UI 规则；"保存的消息"是自有副本，随时可删除。
-    val canRevoke = isMe && msg.serverSeq > 0L &&
-        (isSavedChat || platformCurrentTimeMillis() - msg.timestamp < 2 * 60 * 1000)
+    val canRevoke = canShowRevokeMessageAction(
+        msg = msg,
+        isMe = isMe,
+        isPersonal = isPersonal,
+        isSavedChat = isSavedChat,
+        myRole = myRole,
+    )
     // "收藏"进入保存的消息；与"保存到设备"（导出文件）是两个动作，文案必须区分（T007）。
     if (onSaveMessage != null && msg.serverSeq > 0L) {
         DropdownMenuItem(
@@ -631,6 +640,28 @@ private fun messageMenuItems(
 
 internal fun canDiscardFailedMessage(message: Message, isMe: Boolean): Boolean =
     isMe && message.serverSeq == 0L && message.sendStatus == Message.SEND_STATUS_FAILED
+
+/**
+ * 判断消息操作菜单是否展示"撤回"入口。
+ *
+ * 与服务端 `MessageService.revokeMessage` 权限一致：群主/管理员可撤回群内任意已确认消息；
+ * 普通成员撤回本人消息保留 2 分钟防误扰窗口（附加 30 秒本地/服务端时钟偏差容差），
+ * "保存的消息"会话内本人消息可随时撤回删除。
+ */
+internal fun canShowRevokeMessageAction(
+    msg: Message,
+    isMe: Boolean,
+    isPersonal: Boolean,
+    isSavedChat: Boolean,
+    myRole: GroupMemberRole?,
+    nowMillis: Long = platformCurrentTimeMillis(),
+): Boolean {
+    if (msg.serverSeq <= 0L) return false
+    if (!isPersonal && !isSavedChat && myRole?.isAtLeast(GroupMemberRole.ADMIN) == true) {
+        return true
+    }
+    return isMe && (isSavedChat || (nowMillis - msg.timestamp) < 2 * 60 * 1000L + 30_000L)
+}
 
 internal fun canEditAndResendFailedMessage(
     message: Message,

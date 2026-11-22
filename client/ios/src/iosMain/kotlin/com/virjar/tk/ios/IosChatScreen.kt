@@ -112,6 +112,7 @@ internal fun IosChatScreen(route: IosRoute, ui: IosSessionUi) {
         imageContent = { attachment, modifier -> IosAttachmentImage(attachment, ui.media, modifier) },
         embeddedAssetImports = ui.imports, onPasteEmbeddedAsset = { ui.native.importClipboard(ui.imports) },
         onPickMedia = { pickFromAlbum() },
+        onCapture = { captureFromCamera() },
         onPickDocument = { officePicker = OfficeReferenceKind.DOCUMENT },
         onPickGroupFile = if (chatType == ChatType.GROUP.code) { { officePicker = OfficeReferenceKind.GROUP_FILE } } else null,
         onPickTask = { taskPicker = true },

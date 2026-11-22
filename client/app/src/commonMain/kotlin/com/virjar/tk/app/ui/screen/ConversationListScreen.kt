@@ -102,12 +102,14 @@ fun ConversationListScreen(
     groupAvatars: Map<String, Attachment> = emptyMap(),
 ) {
     // 首次收藏前不占用会话列表；收藏后与普通会话一起排序，置顶仅由用户决定。
-    val sorted = conversations
-        .filter { it.chatType != ChatType.SAVED.code || it.lastSeq > 0L }
-        .sortedWith(
-            compareByDescending<Conversation> { it.isPinned }
-                .thenByDescending { it.lastMsgTimestamp ?: 0L },
-        )
+    val sorted = remember(conversations) {
+        conversations
+            .filter { it.chatType != ChatType.SAVED.code || it.lastSeq > 0L }
+            .sortedWith(
+                compareByDescending<Conversation> { it.isPinned }
+                    .thenByDescending { it.lastMsgTimestamp ?: 0L },
+            )
+    }
     if (sorted.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
@@ -291,7 +293,7 @@ private fun ConversationItem(
                     }
                     if (conversation.unreadCount > 0) {
                         Spacer(Modifier.width(Tk.spacing.sm))
-                        UnreadBadge(conversation.unreadCount)
+                        UnreadBadge(conversation.unreadCount, muted = conversation.isMuted)
                     }
                 }
                 Spacer(Modifier.height(2.dp))

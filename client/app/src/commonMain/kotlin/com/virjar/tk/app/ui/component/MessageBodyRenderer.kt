@@ -60,13 +60,14 @@ fun MessageBodyRenderer(
     onUrlClick: ((String) -> Unit)? = null,
     resolveSender: ((uid: String) -> User?)? = null,
     onOpenFullMessage: ((Message) -> Unit)? = null,
+    onReplyQuoteClick: ((serverSeq: Long) -> Unit)? = null,
 ) {
     val preview = androidx.compose.runtime.remember(message.body, onOpenFullMessage != null) {
         if (onOpenFullMessage != null) collapsedMessagePreview(message.body) else null
     }
     if (preview != null && onOpenFullMessage != null) {
         Column {
-            (message.body as? ReplyBody)?.let { ReplyQuote(it, resolveSender) }
+            (message.body as? ReplyBody)?.let { ReplyQuote(it, resolveSender, onReplyQuoteClick) }
             Text(preview, maxLines = 6, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.testTag("chat.message.collapsed.${message.clientMsgId}"))
@@ -210,6 +211,7 @@ fun MessageBodyRenderer(
             onEmbeddedMediaClick = onEmbeddedMediaClick,
             onMessageLongClick = onMessageLongClick,
             imageContent = imageContent,
+            onReplyQuoteClick = onReplyQuoteClick,
         )
         is com.virjar.tk.protocol.body.OfficeRefBody -> OfficeRefCard(
             body = body,
@@ -342,9 +344,10 @@ private fun ReplyView(
     onEmbeddedMediaClick: ((Message, EmbeddedAsset) -> Unit)?,
     onMessageLongClick: (() -> Unit)?,
     imageContent: @Composable (Attachment, Modifier) -> Unit,
+    onReplyQuoteClick: ((serverSeq: Long) -> Unit)? = null,
 ) {
     Column {
-        ReplyQuote(body, resolveSender)
+        ReplyQuote(body, resolveSender, onReplyQuoteClick)
         // 回复正文
         if (body.content.isNotBlank()) {
             Spacer(Modifier.height(Tk.spacing.xs))
@@ -476,10 +479,25 @@ private fun ObjectReferenceCard(
 }
 
 @Composable
-private fun ReplyQuote(body: ReplyBody, resolveSender: ((String) -> User?)?) {
-    // 引用块：3dp 主色竖线 + 引用者 + 截断内容
+private fun ReplyQuote(
+    body: ReplyBody,
+    resolveSender: ((String) -> User?)?,
+    onReplyQuoteClick: ((serverSeq: Long) -> Unit)? = null,
+) {
+    // 引用块：3dp 主色竖线 + 引用者 + 截断内容；存在合法原消息 seq 时支持点击定位原消息。
+    val targetSeq = body.replyToMsgId.toLongOrNull()?.takeIf { it > 0L }
     Row(
-        modifier = Modifier.widthIn(max = 260.dp).padding(vertical = 1.dp),
+        modifier = Modifier
+            .widthIn(max = 260.dp)
+            .clip(MaterialTheme.shapes.extraSmall)
+            .let { base ->
+                if (targetSeq != null && onReplyQuoteClick != null) {
+                    base.clickable { onReplyQuoteClick(targetSeq) }.testTag("chat.reply.quote.$targetSeq")
+                } else {
+                    base
+                }
+            }
+            .padding(vertical = 2.dp),
     ) {
         Box(
             Modifier

@@ -346,12 +346,12 @@ internal class LocalMessageStore(
         }
     }
 
-    fun claimNextOutgoingMessage(now: Long): OutgoingMessage? = cacheUseGate.use {
+    fun claimNextOutgoingMessage(now: Long, ignoreBackoff: Boolean = false): OutgoingMessage? = cacheUseGate.use {
         synchronized(stateLock) {
             var claimed: com.virjar.tk.shared.database.Outgoing_message? = null
             queries.transaction {
                 val head = queries.selectNextActiveOutgoingMessage().executeAsOneOrNull()
-                if (head != null && head.next_attempt_at <= now) {
+                if (head != null && (ignoreBackoff || head.next_attempt_at <= now)) {
                     queries.markOutgoingMessageInFlight(now, head.local_ordinal)
                     claimed = queries.selectOutgoingMessageByOrdinal(head.local_ordinal).executeAsOneOrNull()
                     claimed?.let { row ->
