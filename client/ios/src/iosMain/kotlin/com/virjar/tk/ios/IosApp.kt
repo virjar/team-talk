@@ -75,7 +75,11 @@ object IosApplicationRuntime {
     private val lifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var backgroundDraftFlush: Job? = null
 
-    fun didBecomeActive() { foreground.value = true }
+    fun didBecomeActive() {
+        foreground.value = true
+        // 切回前台时若处于断线退避等待期，跳过退避立即发起重连。
+        sessionUi?.session?.reconnectNowIfDisconnected()
+    }
     fun didEnterBackground() {
         foreground.value = false
         sessionUi?.let { ui ->

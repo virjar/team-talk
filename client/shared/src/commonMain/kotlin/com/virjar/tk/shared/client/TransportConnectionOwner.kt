@@ -398,6 +398,29 @@ internal class TransportConnectionOwner(
         }
     }
 
+    /** 前台恢复或系统休眠唤醒时，若当前处于已调度的断线自动重连退避期，则取消退避定时器并立即重连。 */
+    override fun reconnectNowIfDisconnected() {
+        if (terminallyDestroyed.get()) return
+        execute {
+            if (
+                destroyed ||
+                terminallyDestroyed.get() ||
+                authenticationTerminal() ||
+                pausedReconnectOwnerForTest == ownerGeneration ||
+                preparedInitialOwnerGeneration != null ||
+                ownerGeneration <= 0L ||
+                channel != null ||
+                connectingChannel != null ||
+                _state.value != ConnectionState.DISCONNECTED ||
+                reconnectFuture == null
+            ) return@execute
+            reconnectFuture?.cancel()
+            reconnectFuture = null
+            retryCount = 0
+            createAndConnect()
+        }
+    }
+
     private fun disconnectCurrentTransport() {
         requireEventLoop()
         if (

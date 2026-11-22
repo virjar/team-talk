@@ -375,6 +375,9 @@ internal fun WindowScope.MainAppContent(
                     },
                 )
             }
+            val unreadChatCount = remember(conversations) {
+                conversations.filter { !it.isMuted && it.unreadCount > 0 }.sumOf { it.unreadCount }
+            }
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
             // ── 左栏：细导航栏（56dp 图标式，规格 §1.5）──
             SlimNavRail(
@@ -388,6 +391,7 @@ internal fun WindowScope.MainAppContent(
                     }
                 },
                 onOpenSettings = presentationGate.guard(nav::openSettings),
+                unreadChatCount = unreadChatCount,
                 pendingApplyCount = pendingApplyCount,
                 currentUserName = resolveUser(userSession.uid)?.name,
                 currentUserAvatar = resolveUser(userSession.uid)?.avatar,
@@ -407,9 +411,9 @@ internal fun WindowScope.MainAppContent(
         // 通话引擎工厂一次性注入（协议 minor 0.5）：引擎按通话创建，平台资源随会话退役
         LaunchedEffect(nav) {
             nav.callCenter.bindEngineFactory { com.virjar.tk.desktop.call.DesktopCallEngine() }
-            // 媒体联调开关：TEAMTALK_DEBUG_AUTOACCEPT=true 时来电自动接听（生产勿设）
+            // 媒体联调开关：TEAMTALK_DEBUG_AUTOACCEPT=true 时来电自动接听（生产勿设）；复用组合协程生命周期。
             if (System.getenv("TEAMTALK_DEBUG_AUTOACCEPT") == "true") {
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+                launch {
                     nav.callCenter.state.collect { state ->
                         if (state?.phase == com.virjar.tk.shared.call.CallPhase.RINGING &&
                             state.direction == com.virjar.tk.shared.call.CallDirection.INCOMING

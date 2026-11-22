@@ -353,6 +353,8 @@ class FakeLocalCache(
     override fun recoverOutgoingState(now: Long) = outgoing.recoverState(now)
     override fun peekNextOutgoingMessage(): OutgoingMessage? = outgoing.peek()
     override fun claimNextOutgoingMessage(now: Long): OutgoingMessage? = outgoing.claim(now)
+    override fun claimNextOutgoingMessage(now: Long, ignoreBackoff: Boolean): OutgoingMessage? =
+        outgoing.claim(now, ignoreBackoff)
     override fun markOutgoingMessageRetry(
         localOrdinal: Long,
         error: String,

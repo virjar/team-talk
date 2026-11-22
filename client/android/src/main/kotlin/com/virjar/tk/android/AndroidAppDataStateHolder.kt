@@ -232,6 +232,15 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
         notificationForeground.value = foreground
     }
 
+    /** 应用从后台回到前台时，若长连接处于退避等待期则立即发起重连，缩短消息延迟。 */
+    fun onAppForegrounded() {
+        sessionOwner.withOwner { owner ->
+            if (owner?.isBusinessActive == true) {
+                owner.reconnectNowIfDisconnected()
+            }
+        }
+    }
+
     /** 只对确切保留的 ClientSession 放行 AuthController 的终结动作。 */
     fun runIfSessionOwner(session: ClientSession, action: () -> Unit): Boolean =
         sessionOwner.runIfOwner(session, action)

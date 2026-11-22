@@ -613,11 +613,13 @@ class ImClient(
         }
     }
 
-    /**
-     * 模拟网络断开（测试钩子，SDK 集成测试用）：关闭底层 channel 但不置 destroyed，
+    /** 模拟网络断开（测试钩子，SDK 集成测试用）：关闭底层 channel 但不置 destroyed，
      * 触发 channelInactive；durable refresh/普通连接进入自动重连，一次性登录/注册终结。
      */
     fun simulateNetworkDrop() = transport.simulateNetworkDrop()
+
+    /** 前台恢复或系统唤醒时，若当前处于可恢复的断线状态则取消退避并立即重连。 */
+    fun reconnectNowIfDisconnected() = transport.reconnectNowIfDisconnected()
 
     /**
      * 测试钩子：只关闭本 client 的通道，并将其自动重连保持到

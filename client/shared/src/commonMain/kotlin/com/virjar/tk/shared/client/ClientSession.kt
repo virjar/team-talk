@@ -130,6 +130,13 @@ class ClientSession internal constructor(
     val isBusinessActive: Boolean get() = lifecycle.phase == SessionLifecyclePhase.ACTIVE
     val connectionState: StateFlow<ConnectionState> get() = imClient.state
     val protocolCompatibility: StateFlow<ProtocolCompatibility?> get() = imClient.protocolCompatibility
+
+    /** 前台激活或系统休眠唤醒时触发断线即时重连；会话已退役或正在连接时静默忽略。 */
+    fun reconnectNowIfDisconnected() {
+        if (isBusinessActive) {
+            imClient.reconnectNowIfDisconnected()
+        }
+    }
     val userSession: UserSessionView get() = ownedUserSession
 
     /** 供 shell 创建的平台资源使用的、会话门禁的动态 HTTP 凭据。 */

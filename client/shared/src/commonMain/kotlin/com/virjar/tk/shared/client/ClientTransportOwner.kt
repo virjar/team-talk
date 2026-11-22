@@ -29,6 +29,7 @@ internal interface ClientTransportOwner : MessageSendTransport {
     fun simulateNetworkDrop()
     fun simulateNetworkDropAndPauseReconnect()
     fun resumeReconnectAfterSimulatedDrop()
+    fun reconnectNowIfDisconnected() {}
 }
 
 internal fun createClientTransportOwner(
