@@ -25,6 +25,7 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
+import java.io.ByteArrayInputStream
 import java.util.UUID
 import kotlin.test.*
 
@@ -426,6 +427,8 @@ class OemPushIntegrationTest {
             ),
         )
         send(sender, friendChat.chatId)
+        val imagePath = ctx.fileStore.store(peer, "p.png", "image/png", ByteArrayInputStream("png".encodeToByteArray()))
+        val imageAttachment = requireNotNull(ctx.fileStore.getAttachment(imagePath))
         ctx.messageService.sendMessage(
             peer,
             Message(
@@ -434,9 +437,7 @@ class OemPushIntegrationTest {
                 senderUid = peer,
                 messageType = MessageType.IMAGE.code,
                 timestamp = System.currentTimeMillis() + 100L,
-                body = com.virjar.tk.protocol.body.ImageBody(
-                    com.virjar.tk.protocol.model.Attachment("img/p.png", "p.png", "image/png", 128L),
-                ),
+                body = com.virjar.tk.protocol.body.ImageBody(imageAttachment),
             ),
         )
         dispatch(service, recipient.principal.uid)
