@@ -29,6 +29,27 @@ internal fun IosMainContent(ui: IosSessionUi, connection: ConnectionState,
     val backDistance = with(LocalDensity.current) { 80.dp.toPx() }
     val foreground by IosApplicationRuntime.foreground.collectAsState()
     val target by IosApplicationRuntime.notification.collectAsState()
+    val conversations by data.conversationViewModel.conversations.collectAsState()
+    val unreadTotal = remember(conversations) {
+        conversations.filter { !it.isMuted && it.unreadCount > 0 }.sumOf { it.unreadCount }
+    }
+    LaunchedEffect(unreadTotal) {
+        syncIosApplicationBadgeCount(unreadTotal)
+    }
+    var previousUnreadChats by remember(ui) { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(conversations) {
+        val currentUnreadChats = conversations.filter { it.unreadCount > 0 }.mapTo(linkedSetOf()) { it.chatId }
+        val clearedChats = previousUnreadChats - currentUnreadChats
+        previousUnreadChats = currentUnreadChats
+        if (clearedChats.isNotEmpty()) {
+            removeIosDeliveredNotificationsForChats(clearedChats)
+        }
+    }
+    LaunchedEffect(route.page, route.id, foreground) {
+        if (foreground && route.page == IosPage.CHAT && route.id.isNotBlank()) {
+            removeIosDeliveredNotificationsForChats(setOf(route.id))
+        }
+    }
     val snackbar = remember(ui) { SnackbarHostState() }
     val eventOwner = remember(ui) { Any() }
     LaunchedEffect(data.errorSignal) {

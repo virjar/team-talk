@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import platform.UIKit.*
+import platform.UserNotifications.UNNotification
+import platform.UserNotifications.UNUserNotificationCenter
 
 fun MainViewController(): UIViewController = ComposeUIViewController {
     // Compose 的 isSystemInDarkTheme 在纯 UIKit 宿主中不可靠：系统深色事实源
@@ -39,7 +41,7 @@ fun MainViewController(): UIViewController = ComposeUIViewController {
 internal data class IosNotificationTarget(val chatId: String, val deployment: String, val dataset: String, val uid: String)
 internal data class IosPushToken(val token: String, val environment: String)
 
-/** Swift delegates application events only; authenticated business ownership stays in Kotlin. */
+/** Swift 仅负责转发应用生命周期事件；已认证业务所有权始终留在 Kotlin 层。 */
 object IosApplicationRuntime {
     internal var rootViewController: UIViewController? = null
 
@@ -84,8 +86,8 @@ object IosApplicationRuntime {
             try { ui.captureDrafts() }
             catch (failure: Throwable) { logUnhandledError("IosBackgroundDraft", failure) }
         }
-        // Capture stays synchronous with the editor frame. Persistence owns no UIKit/SDK objects
-        // and may finish during the finite background interval without blocking this callback.
+        // 草稿捕获与当前编辑帧保持同步；持久化模块不持有 UIKit/SDK 对象，
+        // 可在系统授予的有限后台窗口内异步完成而不阻塞回调线程。
         backgroundDraftFlush?.cancel()
         val completion = draftPersistence.requestFlush()
         val application = UIApplication.sharedApplication
@@ -129,15 +131,50 @@ object IosApplicationRuntime {
     }
     fun openNotification(chatId: String, deploymentFingerprint: String, datasetId: String, uid: String) {
         if (chatId.isBlank() || chatId.length > 128) return
-        // Keep cold-start clicks until an authenticated account can verify all three owner coordinates.
+        // 暂存冷启动通知点击目标，待已认证账号校对部署/数据集/账号三元组后再跳转。
         notification.value = IosNotificationTarget(chatId, deploymentFingerprint, datasetId, uid)
     }
     internal fun retire(session: ClientSession, reason: SessionEndReason) = onIosMain {
         val current = sessionUi?.takeIf { it.session === session } ?: return@onIosMain
         sessionUi = null
         notification.value = null
+        if (reason == SessionEndReason.USER_LOGOUT || reason == SessionEndReason.AUTH_REVOKED) {
+            clearAllIosDeliveredNotifications()
+        }
         current.close(reason)
     }
+}
+
+/** 同步系统应用图标未读角标（iOS 16+ 使用 UNUserNotificationCenter.setBadgeCount）。 */
+internal fun syncIosApplicationBadgeCount(unreadTotal: Int) {
+    val target = unreadTotal.coerceAtLeast(0).toLong()
+    UNUserNotificationCenter.currentNotificationCenter().setBadgeCount(target) { _ -> }
+}
+
+/** 从系统通知中心移除指定会话已送达的横幅通知。 */
+internal fun removeIosDeliveredNotificationsForChats(chatIds: Set<String>) {
+    if (chatIds.isEmpty()) return
+    val center = UNUserNotificationCenter.currentNotificationCenter()
+    center.getDeliveredNotificationsWithCompletionHandler { delivered ->
+        val identifiers = delivered.orEmpty().mapNotNull { entry ->
+            val notification = entry as? UNNotification ?: return@mapNotNull null
+            val content = notification.request.content
+            val targetChatId = content.threadIdentifier.ifBlank {
+                content.userInfo["chatId"] as? String ?: ""
+            }
+            if (targetChatId in chatIds) notification.request.identifier else null
+        }
+        if (identifiers.isNotEmpty()) {
+            center.removeDeliveredNotificationsWithIdentifiers(identifiers)
+        }
+    }
+}
+
+/** 清空系统通知中心所有已送达通知并将应用图标角标归零。 */
+internal fun clearAllIosDeliveredNotifications() {
+    val center = UNUserNotificationCenter.currentNotificationCenter()
+    center.removeAllDeliveredNotifications()
+    center.setBadgeCount(0L) { _ -> }
 }
 
 @Composable
@@ -181,7 +218,7 @@ private fun IosAppRoot() {
         deviceFlag = 3, createCache = { deployment, dataset, uid -> createIosLocalCache(deployment, dataset, uid) },
         beforeSessionRetirement = IosApplicationRuntime::retire,
         beforeAccountDataCleanup = {
-            // Account cleanup must never race an already admitted process-owned disk write.
+            // 账号清理绝不能与已受理的进程级草稿落盘写入产生竞态。
             check(IosApplicationRuntime.draftPersistence.awaitQuiescence()) { "Document drafts have not settled" }
         },
         runtimeInfo = remember { iosRuntimeInfo() }, accountDataCleanup = cleanup,
@@ -190,8 +227,11 @@ private fun IosAppRoot() {
     val session = auth.session
     val composeScope = rememberCoroutineScope()
     when {
-        auth.accountBanState != null -> AccountBanSurface(checkNotNull(auth.accountBanState), auth.dismissAccountBan,
-            { showIosError("本地清理尚未完成，请从应用切换器关闭并重新打开应用") }, exitActionLabel = "查看重新打开方式")
+        auth.accountBanState != null -> {
+            LaunchedEffect(Unit) { clearAllIosDeliveredNotifications() }
+            AccountBanSurface(checkNotNull(auth.accountBanState), auth.dismissAccountBan,
+                { showIosError("本地清理尚未完成，请从应用切换器关闭并重新打开应用") }, exitActionLabel = "查看重新打开方式")
+        }
         auth.requiresProtocolUpgrade -> Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("当前版本不支持服务器协议，请安装组织提供的新版本")
@@ -262,7 +302,7 @@ private fun IosPushRegistration(ui: IosSessionUi, connection: ConnectionState, c
 }
 
 private fun iosRuntimeInfo() = ClientRuntimeInfo(
-    // Released HTTP telemetry schemas do not know an IOS enum value. Keep its extensible fields precise.
+    // 已冻结的 HTTP 遥测枚举尚无 IOS 值，保持扩展字段精确填写即可。
     platform = ClientPlatform.UNKNOWN, osName = "iOS", osVersion = UIDevice.currentDevice.systemVersion,
     architecture = "arm64", deviceModel = UIDevice.currentDevice.model,
     appVersion = ClientBuildConfig.APP_VERSION, buildNumber = ClientBuildConfig.BUILD_NUMBER.toString(),

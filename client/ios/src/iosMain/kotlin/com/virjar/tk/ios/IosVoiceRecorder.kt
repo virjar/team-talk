@@ -9,7 +9,7 @@ import platform.Foundation.NSURL
 
 internal data class IosRecordedVoice(val file: PlatformFile, val durationSeconds: Int)
 
-/** Permission completion never starts recording; only a currently admitted press can do so. */
+/** 授权完成回调本身绝不直接开始录音，只有当前仍被按住准入的手势才能启动录制。 */
 internal class IosVoiceRecorder(private val resources: IosMediaResources) : AutoCloseable {
     private var recorder: AVAudioRecorder? = null
     private var file: PlatformFile? = null

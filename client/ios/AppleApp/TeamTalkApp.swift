@@ -102,7 +102,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func resumeForeground() {
         IosApplicationRuntime.shared.didBecomeActive()
-        // Registration is renewed after Settings changes and APNs token rotation.
+        // 回到前台时重新同步系统通知授权与 APNs token，及时捕获系统设置变更或 token 轮换。
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional {
                 DispatchQueue.main.async { UIApplication.shared.registerForRemoteNotifications() }
@@ -133,14 +133,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        let payload = notification.request.content.userInfo
-        DispatchQueue.main.async {
-            guard let scope = NotificationScope(payload),
-                  IosApplicationRuntime.shared.acceptsNotification(
-                    deploymentFingerprint: scope.deployment, datasetId: scope.dataset, uid: scope.uid
-                  ) else { completionHandler([]); return }
-            completionHandler([.banner, .list, .sound, .badge])
-        }
+        // App 处于前台活跃时不弹出重复的系统通知横幅与提示音，消息列表已在应用内实时收敛。
+        completionHandler([])
     }
 
     func userNotificationCenter(

@@ -101,6 +101,8 @@ data class DeploymentConfig(
                             put("keyId", push.keyId)
                             put("privateKeyFile", push.privateKeyFile.path)
                             put("environments", push.environments.sorted().joinToString(","))
+                            put("contentMode", push.contentMode)
+                            push.title?.let { put("title", it) }
                         }
                     }
                     if (oemPush.isNotEmpty()) {

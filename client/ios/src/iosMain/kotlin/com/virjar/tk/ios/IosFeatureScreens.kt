@@ -28,7 +28,7 @@ import platform.Foundation.*
 import platform.ImageIO.*
 import platform.UIKit.*
 
-/** Native picker results belong to this route, while accepted commands retain the session owner. */
+/** 原生选择器结果归属当前页面路由，而已经受理的提交命令保留会话所有权。 */
 private class IosFeatureActions(val ui: IosSessionUi, private val route: IosRoute) : AutoCloseable {
     private var active = true
     private val mediaJobs = mutableSetOf<Job>()
@@ -463,7 +463,7 @@ private fun IosEditProfileScreen(actions: IosFeatureActions) {
         } }, onBack = actions.back)
 }
 
-/** A save already admitted by the session can outlive the route that displayed its preview. */
+/** 会话已受理的保存操作即使超出预览路由生命周期也可继续完成上传。 */
 private class IosPreparedAvatar(val file: PlatformFile, val preview: ImageBitmap) : AutoCloseable {
     private var uploaded: Attachment? = null
     private var saving = false
@@ -481,7 +481,7 @@ private class IosPreparedAvatar(val file: PlatformFile, val preview: ImageBitmap
     override fun close() { closed = true; if (!saving) file.delete() }
 }
 
-/** ImageIO applies EXIF orientation while decoding a bounded thumbnail, before square rendering. */
+/** 在进入方形裁切渲染前，先用 ImageIO 解码有界缩略图并自动应用 EXIF 方向校正。 */
 private suspend fun prepareIosAvatar(selection: EmbeddedAssetLocalSelection, directory: PlatformFile): IosPreparedAvatar {
     val output = directory.resolve("avatar-${platformRandomUuid()}.png")
     try {

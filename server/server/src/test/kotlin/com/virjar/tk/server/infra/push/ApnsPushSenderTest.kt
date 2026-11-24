@@ -1,5 +1,16 @@
 package com.virjar.tk.server.infra.push
 
+import com.virjar.tk.protocol.MessageType
+import com.virjar.tk.protocol.body.FileBody
+import com.virjar.tk.protocol.body.ImageBody
+import com.virjar.tk.protocol.body.OfficeRefBody
+import com.virjar.tk.protocol.body.buildMentionMarkdown
+import com.virjar.tk.protocol.body.buildRichTextBody
+import com.virjar.tk.protocol.model.Attachment
+import com.virjar.tk.protocol.model.ChatType
+import com.virjar.tk.protocol.model.EmbeddedAsset
+import com.virjar.tk.protocol.model.MentionPolicy
+import com.virjar.tk.protocol.model.Message
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
@@ -78,6 +89,168 @@ class ApnsPushSenderTest {
                 }
                 assertTrue(result.accepted)
             }
+        }
+    }
+
+    @Test fun `sender uses formatted alert title body and badge when populated`() = runBlocking {
+        val config = apnsFixtureConfiguration()
+        OemPushSender(OemPushConfiguration(apns = config)).use { owner ->
+            val custom = OemPushNotification(
+                vendor = ApnsEnvironment.PRODUCTION.channel,
+                registrationId = "ab".repeat(32),
+                deploymentFingerprint = "f".repeat(64),
+                datasetId = "dataset",
+                uid = "user",
+                chatId = "chat",
+                jobKey = "job",
+                registeredAt = 1_000,
+                deliveredSeq = 9L,
+                alertTitle = "研发群",
+                alertBody = "[有人@你] 张三 发来一张[图片]",
+                badgeCount = 5,
+            )
+            val result = owner.sendApnsPush(custom, clock = { 1_700_000_000_000 }) { request ->
+                val body = Json.parseToJsonElement(requestBody(request)).jsonObject
+                val aps = body.getValue("aps").jsonObject
+                val alert = aps.getValue("alert").jsonObject
+                assertEquals("研发群", alert["title"]?.jsonPrimitive?.content)
+                assertEquals("[有人@你] 张三 发来一张[图片]", alert["body"]?.jsonPrimitive?.content)
+                assertEquals(5, aps["badge"]?.jsonPrimitive?.int)
+                assertEquals("chat", aps["thread-id"]?.jsonPrimitive?.content)
+                response(200)
+            }
+            assertTrue(result.accepted)
+        }
+    }
+
+    @Test fun `formatter obeys sender_only preview and generic privacy modes across message types`() {
+        val secretText = "机密口令-998877"
+        val secretDocName = "高管薪酬表.xlsx"
+        val richTextMsg = Message(
+            chatId = "chat-1",
+            clientMsgId = "c-1",
+            senderUid = "sender-1",
+            messageType = MessageType.RICH_TEXT.code,
+            timestamp = 1_000L,
+            body = buildRichTextBody("${buildMentionMarkdown("李四", "u-target")} $secretText"),
+        )
+        val embeddedAssetId = "11111111-1111-4111-8111-111111111111"
+        val embeddedImgAsset = EmbeddedAsset(
+            assetId = embeddedAssetId,
+            attachment = Attachment(path = "a/b.png", name = "secret.png", contentType = "image/png", size = 100L),
+            width = 100,
+            height = 100,
+        )
+        val pureEmbeddedImageMsg = Message(
+            chatId = "chat-2",
+            clientMsgId = "c-2",
+            senderUid = "sender-1",
+            messageType = MessageType.RICH_TEXT.code,
+            timestamp = 2_000L,
+            body = buildRichTextBody("![图](${EmbeddedAsset.uri(embeddedAssetId)})", listOf(embeddedImgAsset)),
+        )
+        val fileMsg = Message(
+            chatId = "chat-1",
+            clientMsgId = "c-3",
+            senderUid = "sender-1",
+            messageType = MessageType.FILE.code,
+            timestamp = 3_000L,
+            body = FileBody(Attachment(path = "f/x.xlsx", name = secretDocName, contentType = "application/octet-stream", size = 200L)),
+        )
+        val docMsg = Message(
+            chatId = "chat-2",
+            clientMsgId = "c-4",
+            senderUid = "sender-1",
+            messageType = MessageType.OFFICE_REF.code,
+            timestamp = 4_000L,
+            body = OfficeRefBody(OfficeRefBody.REF_TYPE_DOCUMENT, "space-1", "doc-1", "机密文档标题"),
+        )
+        val allMentionMsg = Message(
+            chatId = "chat-2",
+            clientMsgId = "c-5",
+            senderUid = "sender-1",
+            messageType = MessageType.IMAGE.code,
+            timestamp = 5_000L,
+            body = ImageBody(Attachment(path = "a/i.png", name = "i.png", contentType = "image/png", size = 10L)),
+        )
+        val allMentionTextMsg = Message(
+            chatId = "chat-2",
+            clientMsgId = "c-6",
+            senderUid = "sender-1",
+            messageType = MessageType.RICH_TEXT.code,
+            timestamp = 6_000L,
+            body = buildRichTextBody("${buildMentionMarkdown("所有人", MentionPolicy.ALL)} 请查收"),
+        )
+
+        val personalSenderOnly = ApnsNotificationFormatter.format(
+            ApnsContentMode.SENDER_ONLY, "TeamTalk", ChatType.PERSONAL.code, null, "老王", "u-target", richTextMsg,
+        )
+        assertEquals("老王", personalSenderOnly.title)
+        assertEquals("发来一条消息", personalSenderOnly.body)
+        assertFalse(personalSenderOnly.body.contains(secretText))
+
+        val personalFileSenderOnly = ApnsNotificationFormatter.format(
+            ApnsContentMode.SENDER_ONLY, "TeamTalk", ChatType.PERSONAL.code, null, "老王", "u-target", fileMsg,
+        )
+        assertEquals("发来一个[文件]", personalFileSenderOnly.body)
+        assertFalse(personalFileSenderOnly.body.contains(secretDocName))
+
+        val groupMentionSenderOnly = ApnsNotificationFormatter.format(
+            ApnsContentMode.SENDER_ONLY, "TeamTalk", ChatType.GROUP.code, "研发群", "张三", "u-target", richTextMsg,
+        )
+        assertEquals("研发群", groupMentionSenderOnly.title)
+        assertEquals("[有人@你] 张三 发来一条消息", groupMentionSenderOnly.body)
+        assertFalse(groupMentionSenderOnly.body.contains(secretText))
+
+        val groupEmbeddedImg = ApnsNotificationFormatter.format(
+            ApnsContentMode.SENDER_ONLY, "TeamTalk", ChatType.GROUP.code, "研发群", "张三", "u-target", pureEmbeddedImageMsg,
+        )
+        assertEquals("张三 发来一张[图片]", groupEmbeddedImg.body)
+
+        val groupDoc = ApnsNotificationFormatter.format(
+            ApnsContentMode.SENDER_ONLY, "TeamTalk", ChatType.GROUP.code, "研发群", "张三", "u-target", docMsg,
+        )
+        assertEquals("张三 分享了一篇[文档]", groupDoc.body)
+
+        val groupAll = ApnsNotificationFormatter.format(
+            ApnsContentMode.SENDER_ONLY, "TeamTalk", ChatType.GROUP.code, "研发群", "张三", "u-target", allMentionTextMsg,
+        )
+        assertEquals("[@所有人] 张三 发来一条消息", groupAll.body)
+
+        val groupPlainImage = ApnsNotificationFormatter.format(
+            ApnsContentMode.SENDER_ONLY, "TeamTalk", ChatType.GROUP.code, "研发群", "张三", "u-target", allMentionMsg,
+        )
+        assertEquals("张三 发来一张[图片]", groupPlainImage.body)
+
+        val previewPersonal = ApnsNotificationFormatter.format(
+            ApnsContentMode.PREVIEW, "TeamTalk", ChatType.PERSONAL.code, null, "老王", "u-target", fileMsg,
+        )
+        assertEquals("老王", previewPersonal.title)
+        assertEquals("[文件] $secretDocName", previewPersonal.body)
+
+        val generic = ApnsNotificationFormatter.format(
+            ApnsContentMode.GENERIC, "TeamTalk", ChatType.GROUP.code, "研发群", "张三", "u-target", richTextMsg,
+        )
+        assertEquals("TeamTalk", generic.title)
+        assertEquals(OEM_PUSH_CONTENT, generic.body)
+    }
+
+    @Test fun `apns configuration reads content mode from environment and defaults to sender_only`() {
+        val pem = apnsFixturePrivateKey()
+        fun env(mode: String?): Map<String, String> = buildMap {
+            put("APNS_PUSH_ENABLED", "true")
+            put("APNS_PUSH_TEAM_ID", "ABCDEFGHIJ")
+            put("APNS_PUSH_KEY_ID", "KLMNOPQRST")
+            put("APNS_PUSH_BUNDLE_ID", "com.example.app")
+            put("APNS_PUSH_TITLE", "TeamTalk")
+            put("APNS_PUSH_PRIVATE_KEY_BASE64", Base64.getEncoder().encodeToString(pem.toByteArray()))
+            if (mode != null) put("APNS_PUSH_CONTENT_MODE", mode)
+        }
+        assertEquals(ApnsContentMode.SENDER_ONLY, ApnsPushConfiguration.fromEnvironment { env(null)[it] }?.contentMode)
+        assertEquals(ApnsContentMode.PREVIEW, ApnsPushConfiguration.fromEnvironment { env("preview")[it] }?.contentMode)
+        assertEquals(ApnsContentMode.GENERIC, ApnsPushConfiguration.fromEnvironment { env("generic")[it] }?.contentMode)
+        assertFailsWith<IllegalArgumentException> {
+            ApnsPushConfiguration.fromEnvironment { env("invalid_mode")[it] }
         }
     }
 

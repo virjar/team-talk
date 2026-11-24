@@ -54,11 +54,13 @@ class ApnsPushDeploymentTest {
             val apple = Json.parseToJsonElement(snapshot).jsonObject["client"]!!.jsonObject["apnsPush"]!!.jsonObject
             assertEquals(keyFile.path, apple["privateKeyFile"]?.jsonPrimitive?.content)
             assertEquals("production,sandbox", apple["environments"]?.jsonPrimitive?.content)
+            assertEquals("sender_only", apple["contentMode"]?.jsonPrimitive?.content)
             assertFalse(snapshot.contains(privateKey))
             assertFalse(config.toString().contains(privateKey))
             val environment = config.apnsPushEnvironment()
             assertEquals("com.example.registered.iphone", environment["APNS_PUSH_BUNDLE_ID"])
             assertEquals("内部版", environment["APNS_PUSH_TITLE"])
+            assertEquals("sender_only", environment["APNS_PUSH_CONTENT_MODE"])
             assertEquals(keyFile.readText(), Base64.getDecoder().decode(environment.getValue("APNS_PUSH_PRIVATE_KEY_BASE64")).decodeToString())
             val secrets = Properties().apply {
                 requiredDeploymentSecretKeys.forEach { setProperty(it, "fixture-value") }
@@ -66,8 +68,32 @@ class ApnsPushDeploymentTest {
             }
             val env = generateEnvShContent(secrets, false, "443", "/opt/teamtalk", 8080, "5100")
             assertTrue(env.contains("APNS_PUSH_ENABLED=true"))
+            assertTrue(env.contains("APNS_PUSH_CONTENT_MODE='sender_only'"))
             assertTrue(env.contains("APNS_PUSH_PRIVATE_KEY_BASE64="))
             assertFalse(env.contains("BEGIN PRIVATE KEY"), "env.sh stores the key as one safely quoted line")
+
+            val customMode = deployment {
+                server { http { url = "https://private.example.com" } }
+                client {
+                    apnsPush {
+                        teamId = "ABCDEFGHIJ"; keyId = "KLMNOPQRST"; privateKeyFile = keyFile
+                        contentMode = "preview"; title = "私有工作区"
+                    }
+                }
+            }
+            assertEquals("preview", customMode.apnsPushEnvironment()["APNS_PUSH_CONTENT_MODE"])
+            assertEquals("私有工作区", customMode.apnsPushEnvironment()["APNS_PUSH_TITLE"])
+            assertFailsWith<IllegalArgumentException> {
+                deployment {
+                    server { http { url = "https://private.example.com" } }
+                    client {
+                        apnsPush {
+                            teamId = "ABCDEFGHIJ"; keyId = "KLMNOPQRST"; privateKeyFile = keyFile
+                            contentMode = "unknown"
+                        }
+                    }
+                }
+            }
             keyFile.writeText("not a private key")
             assertFailsWith<IllegalArgumentException> { config.apnsPushEnvironment() }
         } finally {

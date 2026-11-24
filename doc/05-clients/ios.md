@@ -145,8 +145,13 @@ TestFlight 制品默认经 Xcode Cloud 流水线构建，仓库侧支持已内�
   JDK 21 并写入 `~/.gradle/gradle.properties`（`org.gradle.java.home`，buildSrc 需要 JDK 21 API），
   并把项目 `gradle.properties`
   的 Gradle daemon 堆临时提高到 6g——Release 归档的 Kotlin/Native 全程序优化
-  （devirtualization）在默认 3g 堆上会 OOM。全部通过文件落地，不依赖构建动作间的环境继承；
-  客户端构建不涉及任何秘密，APNs 密钥只存在于服务端 env.sh。
+  （devirtualization）在默认 3g 堆上会 OOM；同时支持通过可选 Base64 环境变量钩子
+  `TEAMTALK_DEPLOYMENT_LOCAL_KT_BASE64`、`TEAMTALK_TCP_TLS_CERT_PEM_BASE64` 与
+  `TEAMTALK_IOS_SIGNING_XCCONFIG_BASE64`，将私有部署配置、自签 TCP TLS 证书与 Xcode
+  签名覆写解码写入被 Git 忽略的本地路径（`buildSrc/deployment-local/Deployment.kt`、
+  `buildSrc/deployment-local/tcp-tls/certificate.pem`、`client/ios/Config/Signing.local.xcconfig`），
+  避免将私有地址或证书参数提交到公版仓库。全部通过文件落地，不依赖构建动作间的环境继承；
+  APNs `.p8` 私钥与推送凭据仍仅存在于服务端 `env.sh`，不进入客户端构建产物。
   本地做 Release 归档需要同样提高堆：`./gradlew "-Dorg.gradle.jvmargs=-Xmx6g …"`
   或临时向项目 `gradle.properties` 追加同一行（勿提交）。
 - App Store Connect 侧的前置：先用公版 bundle ID（`com.virjar.tk.ios`）创建 App 记录；
@@ -175,13 +180,19 @@ SecTrust 评测并拒绝。配置明确选用 HTTP 时，生成器只对该服�
 ## 前后台与 APNs
 
 前台 TCP 保持既有协商、认证、心跳和权威同步。进入后台捕获聊天/文档输入，停止前台交互与播放；
-操作系统可挂起进程，客户端不声明常驻后台网络。回到前台沿现有连接恢复和同步补齐，
-不把“进入后台”当作用户退出，也不清除待发送事实。
+操作系统可挂起进程，客户端不声明常驻后台网络。回到前台沿现有连接恢复和同步补齐，同时同步应用图标角标与已送达通知；不把“进入后台”当作用户退出，也不清除待发送事实。
 
 APNs 使用系统可见通知。服务端复用持久通知任务，按账号设置、群静音、已读及消息撤回处理，
-不会因 TCP 暂时仍在线就认定后台 iPhone 无需通知。payload 使用通用通知内容，携带精确
-deployment/dataset/uid/chatId，客户端验证范围后打开相应会话；消息正文仍从权威同步获取。
-没有 silent push 保活或依赖通知必达的同步分支。
+不会因 TCP 暂时仍在线就认定后台 iPhone 无需通知。通知展示粒度由部署配置
+`apnsPush.contentMode`（环境变量 `APNS_PUSH_CONTENT_MODE`）控制：默认 `sender_only`
+将标题设为发送者备注/显示名（私聊）或群聊名称，正文仅显示本地化消息类型摘要
+（如“发来一条消息”、`[图片]`、`[文件]`、`[有人@你]` 等），在识别发送来源的同时避免锁屏泄露原文或文件名；
+另支持 `preview`（截断脱敏预览）与 `generic`（通用未读提示）。请求使用
+`thread-id = chatId` 按会话折叠分组、`aps.badge` 携带非静音可读会话总未读数、`apns-collapse-id`
+按事件与会话生成去重键避免重试重复或跨会话覆盖，并携带精确 `deployment/dataset/uid/chatId` 供点击跳转校验。
+App 在前台收到推送时由 `willPresent` 抑制系统横幅与提示音（返回空选项 `[]`），交由前台实时连接与 UI
+消化；会话总未读变化时同步系统角标（`UNUserNotificationCenter.setBadgeCount`），进入或标为已读某会话时
+按 `chatId` 清理对应已送达通知。没有 silent push 保活或依赖通知必达的同步分支。
 
 APNs 注册使用协议 0.4 的 `device/4`；旧 `device/3` 保持原布局，供更早版本客户端使用。
 登录已发布的旧服务端时，设备标识按协商结果使用既有 UNKNOWN；新服务端使用 IOS。

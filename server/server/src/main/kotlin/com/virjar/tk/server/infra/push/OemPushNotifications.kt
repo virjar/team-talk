@@ -3,6 +3,8 @@ package com.virjar.tk.server.infra.push
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.model.AuthRules
+import com.virjar.tk.protocol.model.ChatType
+import com.virjar.tk.protocol.model.Contact
 import com.virjar.tk.protocol.model.ConversationCapacityPolicy
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.UserStatus
@@ -213,7 +215,7 @@ internal class OemPushNotifications(
                     OemPushDeliveryResult(accepted = false, reason = "TRANSPORT_FAILURE")
                 }
             }
-            finish(row, result)
+            finish(row, notification, result)
         }
         due.size
     }
@@ -221,8 +223,8 @@ internal class OemPushNotifications(
     private fun currentNotification(row: ResultRow): OemPushNotification? {
         val refreshHash = row[OemPushRegistrations.refreshTokenHash]
         val vendor = row[OemPushRegistrations.vendor]
-        val deviceFlag = if (ApnsEnvironment.fromChannel(vendor) != null) AuthRules.DEVICE_FLAG_IOS
-            else AuthRules.DEVICE_FLAG_ANDROID
+        val isApns = ApnsEnvironment.fromChannel(vendor) != null
+        val deviceFlag = if (isApns) AuthRules.DEVICE_FLAG_IOS else AuthRules.DEVICE_FLAG_ANDROID
         val credential = Credentials.join(Users, JoinType.INNER, Credentials.uid, Users.uid)
             .join(Devices, JoinType.INNER, Credentials.uid, Devices.uid).selectAll().where {
             (Credentials.tokenHash eq refreshHash) and (Credentials.tokenType eq REFRESH_TOKEN_TYPE) and
@@ -239,23 +241,95 @@ internal class OemPushNotifications(
         val pending = pendingChats(row)
         // 一条合并通知可以指向任意仍可读的待处理会话。读取最新会话
         // 不得抹掉同一批次中更早的未读会话。
-        val chatId = conversations.readableConversations(uid).andWhere {
+        val selected = conversations.readableConversations(uid).andWhere {
             (Conversations.chatId inList pending.keys.toList()) and (Conversations.isMuted eq false)
-        }.orderBy(Conversations.lastMsgTimestamp, SortOrder.DESC).toList().firstOrNull { conversation ->
+        }.orderBy(Conversations.lastMsgTimestamp, SortOrder.DESC).toList().firstNotNullOfOrNull { conversation ->
             val id = conversation[Conversations.chatId]
             val seq = pending.getValue(id)
-            if (conversation[Conversations.readSeq] >= seq || conversation[Conversations.lastMsgSeq] < seq) false
-            else messages.getMessage(id, seq)?.let { message ->
+            if (conversation[Conversations.readSeq] >= seq || conversation[Conversations.lastMsgSeq] < seq) null
+            else messages.getMessage(id, seq)?.takeIf { message ->
                 message.senderUid != uid && message.flags and Message.FLAG_REVOKED == 0
-            } == true
-        }?.get(Conversations.chatId) ?: return null
+            }?.let { message ->
+                Triple(conversation, seq, message)
+            }
+        } ?: return null
+        val (selectedConversation, selectedSeq, selectedMessage) = selected
+        val chatId = selectedConversation[Conversations.chatId]
+        var alertTitle: String? = null
+        var alertBody: String? = null
+        var badgeCount: Int? = null
+        if (isApns) {
+            val apns = configuration.apns
+            if (apns != null) {
+                val chatType = selectedConversation[Conversations.chatType]
+                val groupName = if (chatType == ChatType.GROUP.code) {
+                    GroupChats.select(GroupChats.name).where { GroupChats.chatId eq chatId }
+                        .singleOrNull()?.get(GroupChats.name)
+                } else null
+                val senderDisplayName = resolveApnsSenderDisplayName(
+                    recipientUid = uid,
+                    senderUid = selectedMessage.senderUid,
+                    chatId = chatId,
+                    chatType = chatType,
+                )
+                val formatted = ApnsNotificationFormatter.format(
+                    contentMode = apns.contentMode,
+                    fallbackTitle = apns.title,
+                    chatType = chatType,
+                    groupName = groupName,
+                    senderDisplayName = senderDisplayName,
+                    recipientUid = uid,
+                    message = selectedMessage,
+                )
+                alertTitle = formatted.title
+                alertBody = formatted.body
+                badgeCount = conversations.readableConversations(uid).andWhere {
+                    (Conversations.isMuted eq false) and (Conversations.lastMsgSeq greater Conversations.readSeq)
+                }.sumOf { rowConv ->
+                    (rowConv[Conversations.lastMsgSeq] - rowConv[Conversations.readSeq]).coerceAtLeast(0L)
+                }.coerceIn(1L, 99_999L).toInt()
+            }
+        }
         return OemPushNotification(
-            vendor, row[OemPushRegistrations.registrationId], row[OemPushRegistrations.deploymentFingerprint],
-            datasetId, uid, chatId,
-            // 同一待处理事件的重试保留 OEM 去重键，包括跨服务器重启的情况。
-            digest("${row[OemPushRegistrations.generation]}:${row[OemPushRegistrations.pendingEventId]}").take(20),
-            row[OemPushRegistrations.registeredAt],
+            vendor = vendor,
+            registrationId = row[OemPushRegistrations.registrationId],
+            deploymentFingerprint = row[OemPushRegistrations.deploymentFingerprint],
+            datasetId = datasetId,
+            uid = uid,
+            chatId = chatId,
+            // 同一待处理事件的重试保留去重键；多会话并发时各自持有独立 collapse id 避免后推覆盖前推。
+            jobKey = digest(
+                "${row[OemPushRegistrations.generation]}:${row[OemPushRegistrations.pendingEventId]}:$chatId:$selectedSeq",
+            ).take(20),
+            registeredAt = row[OemPushRegistrations.registeredAt],
+            deliveredSeq = selectedSeq,
+            alertTitle = alertTitle,
+            alertBody = alertBody,
+            badgeCount = badgeCount,
         )
+    }
+
+    private fun resolveApnsSenderDisplayName(
+        recipientUid: String,
+        senderUid: String,
+        chatId: String,
+        chatType: Int,
+    ): String? {
+        if (senderUid.isBlank()) return null
+        val remark = Friends.select(Friends.remark).where {
+            (Friends.uid eq recipientUid) and (Friends.friendUid eq senderUid) and (Friends.status eq Contact.STATUS_NORMAL)
+        }.limit(1).singleOrNull()?.get(Friends.remark)?.trim()?.takeIf { it.isNotEmpty() }
+        if (remark != null) return remark
+        if (chatType == ChatType.GROUP.code) {
+            val groupNickname = GroupMembers.select(GroupMembers.nickname).where {
+                (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq senderUid) and
+                    (GroupMembers.status eq GroupMembers.STATUS_ACTIVE)
+            }.limit(1).singleOrNull()?.get(GroupMembers.nickname)?.trim()?.takeIf { it.isNotEmpty() }
+            if (groupNickname != null) return groupNickname
+        }
+        val user = Users.select(Users.name, Users.username).where { Users.uid eq senderUid }.limit(1).singleOrNull()
+        return user?.get(Users.name)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: user?.get(Users.username)?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     private fun unread(uid: String, chatId: String, seq: Long): Boolean =
@@ -264,28 +338,77 @@ internal class OemPushNotifications(
                 (Conversations.readSeq less seq) and (Conversations.lastMsgSeq greaterEq seq)
         }.any()
 
-    private fun finish(row: ResultRow, result: OemPushDeliveryResult) = transaction(database) {
+    private fun finish(
+        row: ResultRow,
+        notification: OemPushNotification?,
+        result: OemPushDeliveryResult,
+    ) = transaction(database) {
         if (result.invalidRegistration) {
             OemPushRegistrations.deleteWhere { sameRegistration(row) }
-        } else {
+            return@transaction
+        }
+        if (!result.accepted) {
             // 即使 HTTP 期间又有更多消息到达，失败/退避仍归属于该注册。
-            // 只有成功的确认才会消费已捕获的待处理事件集合。
-            OemPushRegistrations.update({ if (result.accepted) sameAttempt(row) else sameRegistration(row) }) {
-                if (result.accepted) {
-                    it[deliveredEventId] = row[OemPushRegistrations.pendingEventId]
-                    it[OemPushRegistrations.pendingChats] = "{}"
-                    it[attempts] = 0
-                    it[nextAttemptAt] = clock()
-                    it[lastFailure] = null
-                } else {
-                    val attempt = (row[OemPushRegistrations.attempts] + 1).coerceAtMost(30)
-                    it[attempts] = attempt
-                    it[nextAttemptAt] = clock() + (5_000L * (1L shl minOf(attempt - 1, 10))).coerceAtMost(3_600_000L)
-                    it[lastFailure] = result.reason?.takeIf { reason -> reason.matches(Regex("[A-Z0-9_]{1,40}")) }
-                        ?: "PROVIDER_FAILURE"
+            OemPushRegistrations.update({ sameRegistration(row) }) {
+                val attempt = (row[OemPushRegistrations.attempts] + 1).coerceAtMost(30)
+                it[attempts] = attempt
+                it[nextAttemptAt] = clock() + (5_000L * (1L shl minOf(attempt - 1, 10))).coerceAtMost(3_600_000L)
+                it[lastFailure] = result.reason?.takeIf { reason -> reason.matches(Regex("[A-Z0-9_]{1,40}")) }
+                    ?: "PROVIDER_FAILURE"
+            }
+            return@transaction
+        }
+        val isApns = ApnsEnvironment.fromChannel(row[OemPushRegistrations.vendor]) != null
+        val remainingChats = if (isApns && notification != null) {
+            remainingUnreadPendingChats(row, notification)
+        } else {
+            emptyMap()
+        }
+        // 只有同代次且未在飞行期间被更新的事件集才能推进消费状态。
+        OemPushRegistrations.update({ sameAttempt(row) }) {
+            if (remainingChats.isNotEmpty()) {
+                it[OemPushRegistrations.pendingChats] = Json.encodeToString(remainingChats)
+                it[attempts] = 0
+                it[nextAttemptAt] = clock()
+                it[lastFailure] = null
+            } else {
+                it[deliveredEventId] = row[OemPushRegistrations.pendingEventId]
+                it[OemPushRegistrations.pendingChats] = "{}"
+                it[attempts] = 0
+                it[nextAttemptAt] = clock()
+                it[lastFailure] = null
+            }
+        }
+    }
+
+    private fun remainingUnreadPendingChats(
+        row: ResultRow,
+        delivered: OemPushNotification,
+    ): Map<String, Long> {
+        val currentPending = pendingChats(row).toMutableMap()
+        val deliveredPendingSeq = currentPending[delivered.chatId]
+        if (deliveredPendingSeq != null && deliveredPendingSeq <= delivered.deliveredSeq) {
+            currentPending.remove(delivered.chatId)
+        }
+        if (currentPending.isEmpty()) return emptyMap()
+        val uid = Credentials.select(Credentials.uid).where {
+            Credentials.tokenHash eq row[OemPushRegistrations.refreshTokenHash]
+        }.limit(1).singleOrNull()?.get(Credentials.uid) ?: return emptyMap()
+        val readable = conversations.readableConversations(uid).andWhere {
+            (Conversations.chatId inList currentPending.keys.toList()) and (Conversations.isMuted eq false)
+        }.toList()
+        val remaining = linkedMapOf<String, Long>()
+        for (conversation in readable) {
+            val id = conversation[Conversations.chatId]
+            val seq = currentPending[id] ?: continue
+            if (conversation[Conversations.readSeq] < seq && conversation[Conversations.lastMsgSeq] >= seq) {
+                val msg = messages.getMessage(id, seq)
+                if (msg != null && msg.senderUid != uid && msg.flags and Message.FLAG_REVOKED == 0) {
+                    remaining[id] = seq
                 }
             }
         }
+        return remaining
     }
 
     private fun sameRegistration(row: ResultRow): Op<Boolean> = with(SqlExpressionBuilder) {

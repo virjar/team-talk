@@ -12,6 +12,10 @@ data class ApnsPushDeployment(
     val keyId: String,
     val privateKeyFile: File,
     val environments: Set<String> = setOf("production"),
+    /** 通知展示粒度：sender_only（默认：发送者/群聊+消息类型）、preview（含摘要）、generic（仅通用提示）。 */
+    val contentMode: String = DEFAULT_CONTENT_MODE,
+    /** 可选通知回退标题；为 null 时使用 client.displayName。 */
+    val title: String? = null,
 ) {
     init {
         require(teamId.matches(Regex("[A-Z0-9]{10}"))) { "client.apnsPush.teamId must be an Apple Team ID" }
@@ -19,6 +23,17 @@ data class ApnsPushDeployment(
         require(environments.isNotEmpty() && environments.all { it in setOf("sandbox", "production") }) {
             "client.apnsPush.environments must contain sandbox and/or production"
         }
+        require(contentMode in CONTENT_MODES) {
+            "client.apnsPush.contentMode must be generic, sender_only or preview"
+        }
+        require(title == null || (title.isNotBlank() && title.length <= 80 && title.none(Char::isISOControl))) {
+            "client.apnsPush.title must be non-blank and at most 80 characters"
+        }
+    }
+
+    companion object {
+        const val DEFAULT_CONTENT_MODE = "sender_only"
+        val CONTENT_MODES = setOf("generic", "sender_only", "preview")
     }
 
     /** 在获取远程部署租约前完成校验；返回单行 env.sh 密钥。 */
@@ -47,9 +62,19 @@ class ApnsPushDeploymentBuilder internal constructor() {
     var keyId: String = ""
     var privateKeyFile: File? = null
     var environments: Set<String> = setOf("production")
+    /** 通知展示粒度：sender_only（默认：发送者/群聊+消息类型）、preview（含摘要）、generic（仅通用提示）。 */
+    var contentMode: String = ApnsPushDeployment.DEFAULT_CONTENT_MODE
+    /** 可选通知回退标题；留空时使用 client.displayName。 */
+    var title: String? = null
 
-    internal fun build() = ApnsPushDeployment(teamId, keyId,
-        requireNotNull(privateKeyFile) { "client.apnsPush.privateKeyFile must be configured" }, environments.toSet())
+    internal fun build() = ApnsPushDeployment(
+        teamId = teamId,
+        keyId = keyId,
+        privateKeyFile = requireNotNull(privateKeyFile) { "client.apnsPush.privateKeyFile must be configured" },
+        environments = environments.toSet(),
+        contentMode = contentMode,
+        title = title,
+    )
 }
 
 internal fun DeploymentConfig.apnsPushEnvironment(): Map<String, String> {
@@ -59,7 +84,8 @@ internal fun DeploymentConfig.apnsPushEnvironment(): Map<String, String> {
         "APNS_PUSH_TEAM_ID" to push.teamId,
         "APNS_PUSH_KEY_ID" to push.keyId,
         "APNS_PUSH_BUNDLE_ID" to client.iosBundleId,
-        "APNS_PUSH_TITLE" to client.displayName,
+        "APNS_PUSH_TITLE" to (push.title ?: client.displayName),
+        "APNS_PUSH_CONTENT_MODE" to push.contentMode,
         "APNS_PUSH_ENVIRONMENTS" to push.environments.sorted().joinToString(","),
         "APNS_PUSH_PRIVATE_KEY_BASE64" to push.encodedPrivateKey(),
     )

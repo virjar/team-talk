@@ -21,7 +21,7 @@ internal data class ChatHistoryBrowserRequest(
     val initialKeyword: String = "",
 )
 
-/** Route identities remain Kotlin values; user IDs are never interpolated into URL paths. */
+/** 路由标识始终保持为 Kotlin 值对象，绝不把用户 ID 直接拼接到 URL 路径中。 */
 internal class IosNavigator {
     private val stack = mutableStateListOf(IosRoute(IosPage.HOME))
     val current: IosRoute get() = stack.last()

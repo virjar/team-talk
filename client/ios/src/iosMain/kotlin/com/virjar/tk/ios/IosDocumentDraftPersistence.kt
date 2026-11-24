@@ -7,7 +7,7 @@ import com.virjar.tk.shared.platform.*
 import kotlinx.serialization.json.*
 import kotlinx.coroutines.*
 
-/** Process-owned writer. Editor admission only replaces a lazy, bounded snapshot. */
+/** 进程级拥有的草稿写入器；编辑器准入阶段仅惰性替换有界快照，不在主线程执行磁盘 IO。 */
 internal class IosDocumentDraftPersistence(
     private val storage: DocumentDraftPersistence = IosDocumentDraftStorage(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
@@ -55,17 +55,16 @@ internal class IosDocumentDraftPersistence(
             admitted
         }
 
-    /** The same in-flight drain is shared by lifecycle observers; no waiter task is added per edit. */
+    /** 多个生命周期观察者共用同一次在途刷盘过程，每次编辑不会额外堆积等待任务。 */
     fun requestFlush(): Deferred<Boolean> = synchronized(stateLock) {
         controlling ?: draining ?: CompletableDeferred(failedOwners.isEmpty() && !controlFailed)
     }
 
     suspend fun awaitFlush(): Boolean = withTimeoutOrNull(barrierTimeoutMillis) { requestFlush().await() } == true
     override suspend fun awaitDurability(): Boolean = awaitFlush()
-    /** Destructive account cleanup needs writer exit even when preserving its last frame failed. */
+    /** 破坏性账号清理即使在最后一帧保存失败时也必须等待写入线程真正退出。 */
     suspend fun awaitQuiescence(): Boolean = withTimeoutOrNull(barrierTimeoutMillis) {
-        // A control can time out while its preceding writer is still finishing. Recheck the actual
-        // owners after every completion; observing a failed control is not proof of writer exit.
+        // 控制屏障超时时，前序写入任务可能仍在收尾；每次完成后重新检查当前真实持有者，控制等待超时不能直接视作写入已退出。
         while (true) {
             val current = synchronized(stateLock) { controlling ?: draining } ?: break
             current.await()
@@ -73,13 +72,12 @@ internal class IosDocumentDraftPersistence(
         true
     } == true
 
-    /** Blocking adapter for the shared persistence contract; UI lifecycle uses requestFlush instead. */
+    /** 共享持久化契约的阻塞适配器；UI 生命周期应优先调用 [requestFlush]。 */
     override fun flush(): Boolean = runBlocking { awaitFlush() }
 
     override fun read(ownerKey: DocumentDraftOwnerKey, consume: (DocumentDraftRecordSource) -> Unit): DocumentDraftReadStatus =
         synchronized(admissionLock) {
-            // A failed replacement leaves the previous atomic manifest readable. A still-running
-            // write must finish before exposing its records to the restoration callback.
+            // 替换失败会完整保留上一版可读的原子清单；仍在进行的写入必须结束后再把记录暴露给恢复回调。
             if (awaitDrain() == null) DocumentDraftReadStatus.RETRYABLE
             else synchronized(ioLock) { storage.read(ownerKey, consume) }
         }
@@ -130,7 +128,7 @@ internal class IosDocumentDraftPersistence(
     }
 
     private fun awaitDrain(): Boolean? {
-        // A control barrier includes the preceding writer; it must never await itself.
+        // 控制屏障本身涵盖前序写入者，但绝不能等待自身，避免自死锁。
         val current = synchronized(stateLock) { draining } ?: return true
         return runBlocking { withTimeoutOrNull(barrierTimeoutMillis) { current.await() } }
     }
@@ -147,7 +145,7 @@ internal class IosDocumentDraftPersistence(
             } ?: return
             var succeeded = false
             try {
-                // All encoding, hashing, fsync and reclamation happen on the process writer.
+                // 所有编码、哈希校验、fsync 与旧文件回收均在进程写入线程内串行完成。
                 val payload = next.payload()
                 synchronized(ioLock) {
                     if (synchronized(stateLock) { pending.isCurrent(next) }) {
@@ -155,7 +153,7 @@ internal class IosDocumentDraftPersistence(
                     }
                 }
             } catch (_: Exception) {
-                // The barrier reports failure; no stale snapshot is acknowledged as durable.
+                // 失败通过控制屏障上抛，不向调用方确认任何陈旧快照为已持久化。
             } finally {
                 synchronized(stateLock) {
                     if (pending.isCurrent(next)) {
@@ -173,7 +171,7 @@ internal class IosDocumentDraftPersistence(
     }
 }
 
-/** Immutable records are installed first; the atomic manifest is the sole commit point. */
+/** 先落盘不可变内容记录，再以原子切换的 manifest 作为唯一提交点。 */
 internal class IosDocumentDraftStorage(private val root: PlatformFile = platformDataDir()) : DocumentDraftPersistence {
     private val lock = PlatformLock()
     private var lastWriteSucceeded = true
@@ -252,14 +250,12 @@ internal class IosDocumentDraftStorage(private val root: PlatformFile = platform
                     put(record.key, buildJsonObject { put("name", name); put("digest", digest); put("size", bytes.size) })
                 }
             }
-            // replaceText can throw while syncing the directory after rename. Once replacement
-            // begins, retain every new record even on failure: the manifest may already refer to it.
+            // replaceText 在重命名完成后同步目录仍可能抛出异常；一旦进入替换阶段，即使失败也必须保留所有新写入记录，因为 manifest 可能已指向它们。
             manifestReplacementStarted = true
             file(ownerKey, "manifest.json").replaceText(buildJsonObject {
                 put("manifest", snapshot.manifest); put("records", descriptors)
             }.toString(), MAX_STORAGE_MANIFEST_BYTES)
-            // As on Android/Desktop: immutable records, manifest commit, then tombstone compaction
-            // and reclamation. A failed generation must never erase the previous recovery point.
+            // 与 Android/Desktop 一致：先落盘不可变记录、提交 manifest，再执行 tombstone 压缩与回收；失败的一代绝不能抹掉上一个可恢复点。
             file(ownerKey, "tombstones.json").replaceText(
                 JsonArray(retired.intersect(snapshot.activeRecoveryKeys).map(::JsonPrimitive)).toString(),
                 MAX_DOCUMENT_DRAFT_MANIFEST_BYTES.toLong(),
@@ -282,7 +278,7 @@ internal class IosDocumentDraftStorage(private val root: PlatformFile = platform
     }
 
     override fun delete(ownerKey: DocumentDraftOwnerKey): Boolean = mutate {
-        // Keep a durable deleted marker until physical record cleanup has completed.
+        // 先保留持久化的已删除标记，直到物理记录清理全部完成。
         file(ownerKey, "manifest.json").replaceText("{\"deleted\":true}", MAX_STORAGE_MANIFEST_BYTES)
         val directory = directories(ownerKey).fold(root) { parent, child -> parent.resolve(child) }
         directory.listFiles()?.filter { it.name != "manifest.json" }?.forEach { check(it.delete()) }

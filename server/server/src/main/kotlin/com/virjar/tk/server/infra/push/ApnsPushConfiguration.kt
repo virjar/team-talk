@@ -20,6 +20,17 @@ internal enum class ApnsEnvironment(val wireName: String, val endpoint: URI) {
     }
 }
 
+/** APNs 通知展示粒度：仅通用未读提示 / 发送者与消息类型（默认） / 含正文摘要。 */
+internal enum class ApnsContentMode(val wireName: String) {
+    GENERIC("generic"),
+    SENDER_ONLY("sender_only"),
+    PREVIEW("preview");
+
+    companion object {
+        fun fromWire(value: String): ApnsContentMode? = entries.firstOrNull { it.wireName == value }
+    }
+}
+
 /** 仅服务端持有的密钥材料。密钥与 provider JWT 都不进入日志或快照。 */
 internal class ApnsPushConfiguration(
     val teamId: String,
@@ -28,6 +39,7 @@ internal class ApnsPushConfiguration(
     val title: String,
     privateKeyPem: String,
     val environments: Set<ApnsEnvironment> = setOf(ApnsEnvironment.PRODUCTION),
+    val contentMode: ApnsContentMode = ApnsContentMode.SENDER_ONLY,
 ) {
     val privateKey: ECPrivateKey
 
@@ -63,6 +75,11 @@ internal class ApnsPushConfiguration(
                 try { Base64.getDecoder().decode(keyBase64).toString(Charsets.US_ASCII) }
                 catch (_: IllegalArgumentException) { error("APNs private key encoding is invalid") }
             }
+            val modeWire = environment("APNS_PUSH_CONTENT_MODE")?.takeIf(String::isNotBlank)
+                ?: ApnsContentMode.SENDER_ONLY.wireName
+            val contentMode = requireNotNull(ApnsContentMode.fromWire(modeWire)) {
+                "APNS_PUSH_CONTENT_MODE is invalid"
+            }
             return ApnsPushConfiguration(
                 teamId = environment("APNS_PUSH_TEAM_ID").orEmpty(),
                 keyId = environment("APNS_PUSH_KEY_ID").orEmpty(),
@@ -72,6 +89,7 @@ internal class ApnsPushConfiguration(
                 environments = (environment("APNS_PUSH_ENVIRONMENTS") ?: "production").split(',').map { value ->
                     requireNotNull(ApnsEnvironment.fromWire(value)) { "APNS_PUSH_ENVIRONMENTS is invalid" }
                 }.toSet(),
+                contentMode = contentMode,
             )
         }
     }

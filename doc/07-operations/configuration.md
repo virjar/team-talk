@@ -329,6 +329,8 @@ apnsPush {
     teamId = "ABCDEFGHIJ" // Apple Team ID（示例）
     keyId = "KLMNOPQRST"  // APNs Key ID（示例）
     privateKeyFile = File(rootDir, "buildSrc/deployment-local/apns/AuthKey.p8")
+    title = "TeamTalk"
+    contentMode = "sender_only" // sender_only（默认）| preview | generic
     environments = setOf("production", "sandbox")
 }
 ```
@@ -338,10 +340,12 @@ apnsPush {
 Bundle ID、Team ID、Key ID 和密钥文件路径可以进入配置快照，`.p8` 内容不得进入 Git 或客户端产物。
 部署在修改远程状态前验证 PKCS#8/P-256 密钥，再写入权限 `0600` 的服务端 `env.sh`；禁用配置会显式关闭通道。
 
-服务端变量为 `APNS_PUSH_ENABLED / _TEAM_ID / _KEY_ID / _BUNDLE_ID / _TITLE / _ENVIRONMENTS`，
+服务端变量为 `APNS_PUSH_ENABLED / _TEAM_ID / _KEY_ID / _BUNDLE_ID / _TITLE / _CONTENT_MODE / _ENVIRONMENTS`，
 以及二选一的 `APNS_PUSH_PRIVATE_KEY_FILE`（服务端本地路径）或 `APNS_PUSH_PRIVATE_KEY_BASE64`
 （部署任务生成的单行秘密）。未开启时不读取密钥。HTTP/2 provider 请求使用 ES256 JWT，缓存 50 分钟，
-向固定 Apple 端点发送通用未读提示，不上传消息正文。APNs 410 与坏 token 清理注册；鉴权、限流及暂时失败
+向固定 Apple 端点发送可见通知：默认 `sender_only` 模式展示发送者（私聊）或群名（群聊）与安全消息类型提示，
+不直接泄露原文正文或文件名；可选 `preview`（发送截断脱敏正文预览）或 `generic`（退回仅展示通用未读提示）。
+APNs 410 与坏 token 清理注册；鉴权、限流及暂时失败
 走现有持久重试。新 token 注册时间与 generation 防止旧请求的失效响应删除更新后的注册。
 
 iOS 设备类型为 3，需要支持 protocol 0.4 的服务端；所有已发布到 `v0.0.4` 的旧服务端都拒绝此设备类型。
